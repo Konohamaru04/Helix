@@ -274,6 +274,8 @@ class ComfyUIRunner:
             "--extra-model-paths-config",
             str(context.extra_model_paths_config),
             "--disable-metadata",
+            "--lowvram",
+            "--fast",
             "--verbose",
             "WARNING",
         ]
@@ -518,15 +520,16 @@ class ComfyUIRunner:
         }
 
         if request.mode == "image-to-image":
-            if not staged_inputs.reference_image_names:
-                raise RuntimeError(
-                    "Attach at least one reference image before starting an image-to-image Qwen workflow job."
-                )
+            # Fall back to the pre-generated blank white image when no reference images
+            # are provided so the workflow can still run (text-driven edit on blank canvas).
+            effective_reference_names = staged_inputs.reference_image_names or [
+                staged_inputs.blank_image_name
+            ]
 
-            primary_reference_name = staged_inputs.reference_image_names[0]
+            primary_reference_name = effective_reference_names[0]
             secondary_reference_name = (
-                staged_inputs.reference_image_names[1]
-                if len(staged_inputs.reference_image_names) > 1
+                effective_reference_names[1]
+                if len(effective_reference_names) > 1
                 else primary_reference_name
             )
             prompt["4"] = {

@@ -470,9 +470,7 @@ export class GenerationService {
       throw new Error('Qwen Image Edit 2511 supports up to 3 reference images per job.');
     }
 
-    if (input.mode === 'image-to-image' && input.referenceImages.length === 0) {
-      throw new Error('Attach at least one reference image for Qwen Image Edit 2511 jobs.');
-    }
+    // No reference images is allowed — the runner will substitute blank white images.
 
     for (const attachment of input.referenceImages) {
       if (!attachment.filePath) {

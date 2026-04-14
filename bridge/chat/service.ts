@@ -2207,6 +2207,15 @@ export class ChatService {
       explicitToolId: directives.explicitToolId,
       modelAnalysis
     };
+    if (!activeTextBackend.ready) {
+      throw new Error(
+        activeTextBackend.error ??
+          (activeTextBackend.backend === 'ollama'
+            ? 'Ollama is not running or not reachable. Start Ollama and try again, or check the base URL in Settings.'
+            : 'NVIDIA backend is not reachable. Check the base URL and API key in Settings.')
+      );
+    }
+
     const routeDecision = this.router.decide(
       routeInput,
       settings,

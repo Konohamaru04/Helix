@@ -206,18 +206,13 @@ export function ChatPage() {
     ) ??
     getConfiguredImageGenerationModelOption(settings?.imageGenerationModel ?? null);
   const visibleGenerationJobs = useMemo(
-    () => {
-      if (!activeConversationId) {
-        return [];
-      }
-
-      return generationJobs
-        .filter((job) => job.conversationId === activeConversationId)
+    () =>
+      generationJobs
+        .filter((job) => job.conversationId === (activeConversationId ?? null))
         .sort(
           (left, right) =>
             new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime()
-        );
-    },
+        ),
     [activeConversationId, generationJobs]
   );
   const cancelTargetAssistantMessageId =

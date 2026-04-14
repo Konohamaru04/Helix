@@ -580,7 +580,7 @@ function applyLineEdit(originalContents: string, edit: EditInput): string {
 
   const toLines = (text: string): string[] => {
     const n = text.replace(/\r\n/g, '\n').replace(/\n$/, '');
-    return n === '' ? [] : n.split('\n');
+    return n === '' ? [] : n.split('\n').map((line) => line.replace(/^\d+\t/, ''));
   };
 
   let result: string[];
@@ -1088,8 +1088,13 @@ export class CapabilityService {
     const resolvedPath = this.resolveAllowedPath(candidatePath, workspaceRootPath);
     const contents = await readSafeTextFile(resolvedPath);
 
+    const numbered = contents
+      .split('\n')
+      .map((line, i) => `${i + 1}\t${line}`)
+      .join('\n');
+
     return {
-      assistantContent: `### Read\n\n\`${resolvedPath}\`\n\n\`\`\`text\n${contents}\n\`\`\``,
+      assistantContent: `### Read\n\n\`${resolvedPath}\`\n\n\`\`\`text\n${numbered}\n\`\`\``,
       toolInvocations: [
         createInvocation({
           toolId: 'read',
