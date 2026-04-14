@@ -1,0 +1,23 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": [
+      "ES2023"
+    ],
+    "types": [
+      "node",
+      "vitest/globals"
+    ]
+  },
+  "include": [
+    "bridge/**/*.d.ts",
+    "bridge/**/*.ts",
+    "electron/**/*.ts",
+    "electron.vite.config.ts",
+    "tailwind.config.ts",
+    "tests/node/**/*.ts"
+  ]
+}

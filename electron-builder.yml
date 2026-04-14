@@ -1,0 +1,37 @@
+appId: com.abstergo.helix
+productName: Helix
+directories:
+  output: release
+files:
+  - dist/**
+  - package.json
+asar: true
+extraResources:
+  - from: python_embeded
+    to: python_embeded
+    filter:
+      - '**/*'
+  - from: inference_server
+    to: inference_server
+    filter:
+      - '**/*'
+  - from: comfyui_backend
+    to: comfyui_backend
+    filter:
+      - '**/*'
+  - from: skills
+    to: skills
+    filter:
+      - '**/*'
+  - from: config
+    to: config
+    filter:
+      - '**/*'
+  - from: models
+    to: models
+    filter:
+      - '**/*'
+  - from: knowledge
+    to: knowledge
+    filter:
+      - '**/*'

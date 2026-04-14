@@ -1,0 +1,556 @@
+import { writeFileSync } from 'node:fs';
+import { BrowserWindow, Notification, dialog, ipcMain, shell } from 'electron';
+import type { DesktopAppContext } from '@bridge/app-context';
+import {
+  agentSessionSchema,
+  auditEventRecordSchema,
+  type ChatStreamEvent,
+  type GenerationJob,
+  IpcChannels,
+  attachmentPreviewInputSchema,
+  attachmentPreviewResultSchema,
+  cancelGenerationJobInputSchema,
+  cancelChatTurnInputSchema,
+  capabilityPermissionInputSchema,
+  capabilityPermissionSchema,
+  capabilityTaskSchema,
+  chatStartAcceptedSchema,
+  chatTurnAcceptedSchema,
+  chatTurnRequestSchema,
+  conversationIdSchema,
+  conversationSearchResultSchema,
+  conversationSummarySchema,
+  createWorkspaceInputSchema,
+  deleteConversationInputSchema,
+  editMessageInputSchema,
+  exportConversationInputSchema,
+  exportConversationResultSchema,
+  generationJobSchema,
+  generationStreamEventSchema,
+  imageGenerationModelCatalogSchema,
+  imageGenerationRequestSchema,
+  importConversationResultSchema,
+  importWorkspaceKnowledgeResultSchema,
+  knowledgeDocumentSchema,
+  knowledgeDocumentsInputSchema,
+  listImageGenerationModelsInputSchema,
+  listGenerationJobsInputSchema,
+  messageAttachmentSchema,
+  openLocalPathInputSchema,
+  pinMessageInputSchema,
+  planStateSchema,
+  scheduledPromptSchema,
+  skillDefinitionSchema,
+  retryGenerationJobInputSchema,
+  regenerateResponseInputSchema,
+  searchConversationsInputSchema,
+  storedMessageSchema,
+  systemStatusSchema,
+  teamSessionSchema,
+  toolDefinitionSchema,
+  updateWorkspaceRootInputSchema,
+  updateUserSettingsSchema,
+  userSettingsSchema,
+  worktreeSessionSchema,
+  workspaceDirectorySelectionSchema,
+  workspaceSummarySchema
+} from '@bridge/ipc/contracts';
+
+function toSafeFileStem(value: string): string {
+  const invalidFileNameCharacters = new Set(['<', '>', ':', '"', '/', '\\', '|', '?', '*']);
+  const sanitized = Array.from(value)
+    .filter((character) => {
+      const code = character.charCodeAt(0);
+
+      return !invalidFileNameCharacters.has(character) && (code < 0 || code > 31);
+    })
+    .join('')
+    .trim();
+
+  return sanitized || 'conversation';
+}
+
+export function registerIpcHandlers(context: DesktopAppContext): void {
+  const lastGenerationStatuses = new Map<string, GenerationJob['status']>();
+
+  function maybeShowGenerationNotification(job: GenerationJob): void {
+    const previousStatus = lastGenerationStatuses.get(job.id);
+    lastGenerationStatuses.set(job.id, job.status);
+
+    if (previousStatus === job.status) {
+      return;
+    }
+
+    if (job.status !== 'completed' && job.status !== 'failed') {
+      return;
+    }
+
+    if (!Notification.isSupported()) {
+      return;
+    }
+
+    const promptPreview =
+      job.prompt.length > 72 ? `${job.prompt.slice(0, 69).trimEnd()}...` : job.prompt;
+    const body =
+      job.status === 'completed'
+        ? `${promptPreview}\nSaved to your local generation library.`
+        : `${promptPreview}\n${job.errorMessage ?? 'Image generation failed.'}`;
+
+    try {
+      new Notification({
+        title:
+          job.status === 'completed' ? 'Image generation complete' : 'Image generation failed',
+        body
+      }).show();
+    } catch (error) {
+      context.logger.warn(
+        {
+          jobId: job.id,
+          error: error instanceof Error ? error.message : 'Unknown notification error'
+        },
+        'Unable to show a desktop notification for a generation job'
+      );
+    }
+  }
+
+  context.generationService.subscribe((streamEvent) => {
+    const event = generationStreamEventSchema.parse(streamEvent);
+
+    if (event.type === 'job-updated') {
+      maybeShowGenerationNotification(event.job);
+    }
+
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) {
+        window.webContents.send(IpcChannels.generationStreamEvent, event);
+      }
+    }
+  });
+
+  ipcMain.handle(IpcChannels.settingsGet, () =>
+    userSettingsSchema.parse(context.settingsService.get())
+  );
+
+  ipcMain.handle(IpcChannels.settingsUpdate, async (_event, payload) => {
+    const previousSettings = context.settingsService.get();
+    const nextSettings = context.settingsService.update(
+      updateUserSettingsSchema.parse(payload)
+    );
+
+    if (previousSettings.pythonPort !== nextSettings.pythonPort) {
+      await context.pythonManager.restart(nextSettings.pythonPort);
+    }
+
+    return userSettingsSchema.parse(nextSettings);
+  });
+
+  ipcMain.handle(IpcChannels.settingsPickAdditionalModelsDirectory, async () =>
+    workspaceDirectorySelectionSchema.parse(
+      await dialog.showOpenDialog({
+        title: 'Select additional image models directory',
+        properties: ['openDirectory']
+      }).then((result) => ({
+        path:
+          result.canceled || result.filePaths.length === 0
+            ? null
+            : result.filePaths[0] ?? null
+      }))
+    )
+  );
+
+  ipcMain.handle(IpcChannels.systemGetStatus, async () =>
+    systemStatusSchema.parse(await context.getSystemStatus())
+  );
+
+  ipcMain.handle(IpcChannels.generationStartImage, async (_event, payload) =>
+    generationJobSchema.parse(
+      await context.generationService.startImageJob(
+        imageGenerationRequestSchema.parse(payload)
+      )
+    )
+  );
+
+  ipcMain.handle(IpcChannels.generationListImageModels, (_event, payload) =>
+    imageGenerationModelCatalogSchema.parse(
+      context.generationService.listImageModels(
+        payload
+          ? listImageGenerationModelsInputSchema.parse(payload).additionalModelsDirectory
+          : undefined
+      )
+    )
+  );
+
+  ipcMain.handle(IpcChannels.generationListJobs, (_event, payload) =>
+    context.generationService
+      .listJobs(payload ? listGenerationJobsInputSchema.parse(payload) : undefined)
+      .map((job) => generationJobSchema.parse(job))
+  );
+
+  ipcMain.handle(IpcChannels.generationCancelJob, async (_event, payload) =>
+    generationJobSchema.parse(
+      await context.generationService.cancelJob(
+        cancelGenerationJobInputSchema.parse(payload)
+      )
+    )
+  );
+
+  ipcMain.handle(IpcChannels.generationRetryJob, async (_event, payload) =>
+    generationJobSchema.parse(
+      await context.generationService.retryJob(
+        retryGenerationJobInputSchema.parse(payload)
+      )
+    )
+  );
+
+  ipcMain.handle(IpcChannels.chatStart, async (event, payload) => {
+    const request = chatTurnRequestSchema.parse(payload);
+    const accepted = await context.chatService.submitPrompt(
+      request,
+      (streamEvent: ChatStreamEvent) => {
+        event.sender.send(IpcChannels.chatStreamEvent, streamEvent);
+      }
+    );
+
+    return chatStartAcceptedSchema.parse(accepted);
+  });
+
+  ipcMain.handle(IpcChannels.chatPickAttachments, async () => {
+    const result = await dialog.showOpenDialog({
+      title: 'Select attachments',
+      properties: ['openFile', 'multiSelections'],
+      filters: [
+        {
+          name: 'Supported files',
+          extensions: [
+            'txt',
+            'md',
+            'mdx',
+            'json',
+            'yaml',
+            'yml',
+            'ts',
+            'tsx',
+            'js',
+            'jsx',
+            'py',
+            'sql',
+            'csv',
+            'html',
+            'css',
+            'xml',
+            'toml',
+            'svg',
+            'pdf',
+            'png',
+            'jpg',
+            'jpeg',
+            'webp'
+          ]
+        },
+        { name: 'All files', extensions: ['*'] }
+      ]
+    });
+
+    if (result.canceled || result.filePaths.length === 0) {
+      return [];
+    }
+
+    return (await context.chatService.prepareAttachments(result.filePaths)).map((attachment) =>
+      messageAttachmentSchema.parse(attachment)
+    );
+  });
+
+  ipcMain.handle(IpcChannels.chatEditAndResend, async (event, payload) => {
+    const accepted = await context.chatService.editMessageAndResend(
+      editMessageInputSchema.parse(payload),
+      (streamEvent: ChatStreamEvent) => {
+        event.sender.send(IpcChannels.chatStreamEvent, streamEvent);
+      }
+    );
+
+    return chatTurnAcceptedSchema.parse(accepted);
+  });
+
+  ipcMain.handle(IpcChannels.chatRegenerateResponse, async (event, payload) => {
+    const accepted = await context.chatService.regenerateResponse(
+      regenerateResponseInputSchema.parse(payload),
+      (streamEvent: ChatStreamEvent) => {
+        event.sender.send(IpcChannels.chatStreamEvent, streamEvent);
+      }
+    );
+
+    return chatTurnAcceptedSchema.parse(accepted);
+  });
+
+  ipcMain.handle(IpcChannels.chatCancelTurn, (_event, payload) => {
+    context.chatService.cancelChatTurn(cancelChatTurnInputSchema.parse(payload));
+  });
+
+  ipcMain.handle(IpcChannels.chatDeleteConversation, (_event, payload) => {
+    context.chatService.deleteConversation(
+      deleteConversationInputSchema.parse(payload).conversationId
+    );
+  });
+
+  ipcMain.handle(IpcChannels.chatPinMessage, (_event, payload) => {
+    const request = pinMessageInputSchema.parse(payload);
+
+    return storedMessageSchema.parse(
+      context.chatService.pinMessage(request.messageId, request.pinned)
+    );
+  });
+
+  ipcMain.handle(IpcChannels.chatGetAttachmentPreview, async (_event, payload) =>
+    attachmentPreviewResultSchema.parse(
+      await context.chatService.getAttachmentPreview(
+        attachmentPreviewInputSchema.parse(payload).filePath
+      )
+    )
+  );
+
+  ipcMain.handle(IpcChannels.chatOpenLocalPath, async (_event, payload) => {
+    const filePath = openLocalPathInputSchema.parse(payload).filePath;
+    const normalizedPath = await context.chatService.openLocalPath(filePath);
+    const openError = await shell.openPath(normalizedPath);
+
+    if (typeof openError === 'string' && openError.trim().length > 0) {
+      throw new Error(openError.trim());
+    }
+  });
+
+  ipcMain.handle(IpcChannels.chatListWorkspaces, () =>
+    context.chatService
+      .listWorkspaces()
+      .map((workspace) => workspaceSummarySchema.parse(workspace))
+  );
+
+  ipcMain.handle(IpcChannels.chatCreateWorkspace, async (_event, payload) =>
+    workspaceSummarySchema.parse(
+      await context.chatService.createWorkspace(createWorkspaceInputSchema.parse(payload))
+    )
+  );
+
+  ipcMain.handle(IpcChannels.chatPickWorkspaceDirectory, async () => {
+    const openResult = await dialog.showOpenDialog({
+      title: 'Connect workspace folder',
+      properties: ['openDirectory']
+    });
+
+    return workspaceDirectorySelectionSchema.parse({
+      path:
+        openResult.canceled || openResult.filePaths.length === 0
+          ? null
+          : openResult.filePaths[0] ?? null
+    });
+  });
+
+  ipcMain.handle(IpcChannels.chatUpdateWorkspaceRoot, async (_event, payload) =>
+    workspaceSummarySchema.parse(
+      await context.chatService.updateWorkspaceRoot(
+        updateWorkspaceRootInputSchema.parse(payload)
+      )
+    )
+  );
+
+  ipcMain.handle(IpcChannels.chatListConversations, () =>
+    context.chatService
+      .listConversations()
+      .map((conversation) => conversationSummarySchema.parse(conversation))
+  );
+
+  ipcMain.handle(IpcChannels.chatSearchConversations, (_event, payload) =>
+    context.chatService
+      .searchConversations(searchConversationsInputSchema.parse(payload).query)
+      .map((result) => conversationSearchResultSchema.parse(result))
+  );
+
+  ipcMain.handle(IpcChannels.chatGetMessages, (_event, conversationId) =>
+    context.chatService
+      .listMessages(conversationIdSchema.parse(conversationId))
+      .map((message) => storedMessageSchema.parse(message))
+  );
+
+  ipcMain.handle(IpcChannels.chatListTools, () =>
+    context.chatService.listTools().map((tool) => toolDefinitionSchema.parse(tool))
+  );
+
+  ipcMain.handle(IpcChannels.chatListSkills, () =>
+    context.chatService.listSkills().map((skill) => skillDefinitionSchema.parse(skill))
+  );
+
+  ipcMain.handle(IpcChannels.chatListKnowledgeDocuments, (_event, payload) =>
+    context.chatService
+      .listKnowledgeDocuments(knowledgeDocumentsInputSchema.parse(payload).workspaceId)
+      .map((document) => knowledgeDocumentSchema.parse(document))
+  );
+
+  ipcMain.handle(IpcChannels.chatImportWorkspaceKnowledge, async (_event, payload) => {
+    const request = knowledgeDocumentsInputSchema.parse(payload);
+    const openResult = await dialog.showOpenDialog({
+      title: 'Import workspace knowledge',
+      properties: ['openFile', 'multiSelections'],
+      filters: [
+        {
+          name: 'Supported files',
+          extensions: [
+            'txt',
+            'md',
+            'mdx',
+            'json',
+            'yaml',
+            'yml',
+            'ts',
+            'tsx',
+            'js',
+            'jsx',
+            'py',
+            'sql',
+            'csv',
+            'html',
+            'css',
+            'xml',
+            'toml',
+            'svg',
+            'pdf'
+          ]
+        },
+        { name: 'All files', extensions: ['*'] }
+      ]
+    });
+
+    if (openResult.canceled || openResult.filePaths.length === 0) {
+      throw new Error('Knowledge import was cancelled.');
+    }
+
+    const attachments = await context.chatService.prepareAttachments(openResult.filePaths);
+
+    return importWorkspaceKnowledgeResultSchema.parse(
+      context.chatService.importWorkspaceKnowledge(request.workspaceId, attachments)
+    );
+  });
+
+  ipcMain.handle(IpcChannels.chatImportConversation, async () => {
+    const openResult = await dialog.showOpenDialog({
+      title: 'Import conversation',
+      properties: ['openFile'],
+      filters: [
+        { name: 'Conversation exports', extensions: ['json', 'md'] },
+        { name: 'JSON', extensions: ['json'] },
+        { name: 'Markdown', extensions: ['md'] }
+      ]
+    });
+
+    if (openResult.canceled || openResult.filePaths.length === 0) {
+      throw new Error('Conversation import was cancelled.');
+    }
+
+    const selectedPath = openResult.filePaths[0];
+
+    if (!selectedPath) {
+      throw new Error('Conversation import was cancelled.');
+    }
+
+    return importConversationResultSchema.parse(
+      await context.chatService.importConversationFromFile(selectedPath)
+    );
+  });
+
+  ipcMain.handle(IpcChannels.chatExportConversation, async (event, payload) => {
+    const request = exportConversationInputSchema.parse(payload);
+    const conversation = context.chatService
+      .listConversations()
+      .find((item) => item.id === request.conversationId);
+
+    if (!conversation) {
+      throw new Error(`Conversation ${request.conversationId} was not found.`);
+    }
+
+    const saveResult = await dialog.showSaveDialog({
+      title: 'Export conversation',
+      defaultPath: `${toSafeFileStem(conversation.title)}.${
+        request.format === 'json' ? 'json' : 'md'
+      }`,
+      filters: [
+        request.format === 'json'
+          ? { name: 'JSON', extensions: ['json'] }
+          : { name: 'Markdown', extensions: ['md'] }
+      ]
+    });
+
+    if (saveResult.canceled || !saveResult.filePath) {
+      throw new Error('Conversation export was cancelled.');
+    }
+
+    const contents = context.chatService.exportConversation(request);
+    writeFileSync(saveResult.filePath, contents, 'utf8');
+
+    return exportConversationResultSchema.parse({
+      path: saveResult.filePath
+    });
+  });
+
+  ipcMain.handle(IpcChannels.capabilitiesListPermissions, () =>
+    context.capabilityService
+      .listPermissions()
+      .map((permission) => capabilityPermissionSchema.parse(permission))
+  );
+
+  ipcMain.handle(IpcChannels.capabilitiesGrantPermission, (_event, payload) =>
+    capabilityPermissionSchema.parse(
+      context.capabilityService.grantPermission(
+        capabilityPermissionInputSchema.parse(payload)
+      )
+    )
+  );
+
+  ipcMain.handle(IpcChannels.capabilitiesRevokePermission, (_event, payload) => {
+    context.capabilityService.revokePermission(
+      capabilityPermissionInputSchema.parse(payload)
+    );
+  });
+
+  ipcMain.handle(IpcChannels.capabilitiesListTasks, () =>
+    context.capabilityService
+      .listTasks()
+      .map((task) => capabilityTaskSchema.parse(task))
+  );
+
+  ipcMain.handle(IpcChannels.capabilitiesGetTask, (_event, taskId) => {
+    const task = context.capabilityService.getTask(conversationIdSchema.parse(taskId));
+    return task ? capabilityTaskSchema.parse(task) : null;
+  });
+
+  ipcMain.handle(IpcChannels.capabilitiesListSchedules, () =>
+    context.capabilityService
+      .listSchedules()
+      .map((schedule) => scheduledPromptSchema.parse(schedule))
+  );
+
+  ipcMain.handle(IpcChannels.capabilitiesListAgents, () =>
+    context.capabilityService
+      .listAgents()
+      .map((agent) => agentSessionSchema.parse(agent))
+  );
+
+  ipcMain.handle(IpcChannels.capabilitiesListTeams, () =>
+    context.capabilityService
+      .listTeams()
+      .map((team) => teamSessionSchema.parse(team))
+  );
+
+  ipcMain.handle(IpcChannels.capabilitiesListWorktrees, () =>
+    context.capabilityService
+      .listWorktrees()
+      .map((worktree) => worktreeSessionSchema.parse(worktree))
+  );
+
+  ipcMain.handle(IpcChannels.capabilitiesGetPlanState, () =>
+    planStateSchema.parse(context.capabilityService.getPlanState())
+  );
+
+  ipcMain.handle(IpcChannels.capabilitiesListAuditEvents, () =>
+    context.capabilityService
+      .listAuditEvents()
+      .map((event) => auditEventRecordSchema.parse(event))
+  );
+}

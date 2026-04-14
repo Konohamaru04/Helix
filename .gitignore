@@ -1,0 +1,75 @@
+# ── Dependencies ──────────────────────────────────────────────────────────────
+node_modules/
+
+# ── Build outputs ─────────────────────────────────────────────────────────────
+dist/
+out/
+release/
+
+# ── TypeScript incremental cache ──────────────────────────────────────────────
+*.tsbuildinfo
+
+# ── Runtime data (placeholder dirs tracked via README.md) ─────────────────────
+data/*
+!data/README.md
+
+logs/*
+!logs/README.md
+
+models/*
+!models/README.md
+
+config/*
+!config/README.md
+
+# ── Bundled Python runtime (large binary — not source) ────────────────────────
+python_embeded/*
+!python_embeded/__init__.py
+
+# ── Python artifacts ──────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
+.venv/
+venv/
+
+# ── Environment / secrets ─────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── OS ────────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Claude Code / agent local config ─────────────────────────────────────────
+.claude/
+.agents/
+CLAUDE.md
+AGENTS.md
+
+# ── Lock files ────────────────────────────────────────────────────────────────
+package-lock.json
+
+# ── Editor ────────────────────────────────────────────────────────────────────
+.idea/
+*.suo
+*.user
+.vscode/settings.json
+.vscode/launch.json
+
+# ── Electron-builder / packaging ──────────────────────────────────────────────
+app-update.yml
+latest*.yml
+*.blockmap
+*.snap
+
+# ── Misc ──────────────────────────────────────────────────────────────────────
+*.log
+*.lock.db
+coverage/
+.nyc_output/
