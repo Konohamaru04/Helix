@@ -2301,7 +2301,7 @@ describe('ChatService', () => {
       expect(assistantMessage?.content).toBe('Created a tracked task for Milestone 4.1.');
       expect(assistantMessage?.toolInvocations?.[0]?.toolId).toBe('task-create');
       expect(assistantMessage?.toolInvocations?.[0]?.status).toBe('completed');
-      expect(harness.capabilityService.listTasks()).toHaveLength(1);
+      expect(harness.capabilityService.listTasks(null)).toHaveLength(1);
       expect(streamChat).not.toHaveBeenCalled();
       expect(completeChat).toHaveBeenCalledTimes(3);
     } finally {

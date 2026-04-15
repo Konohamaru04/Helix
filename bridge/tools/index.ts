@@ -839,13 +839,13 @@ export class ToolDispatcher {
       .filter((definition): definition is OllamaToolDefinition => definition !== null);
   }
 
-  getPlanContext(): { planState: PlanState | null; tasks: CapabilityTask[] } {
+  getPlanContext(workspaceId: string | null): { planState: PlanState | null; tasks: CapabilityTask[] } {
     if (!this.capabilityService) {
       return { planState: null, tasks: [] };
     }
     return {
-      planState: this.capabilityService.getPlanState(),
-      tasks: this.capabilityService.listTasks()
+      planState: this.capabilityService.getPlanState(workspaceId),
+      tasks: this.capabilityService.listTasks(workspaceId)
     };
   }
 

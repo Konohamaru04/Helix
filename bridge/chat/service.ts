@@ -2681,7 +2681,7 @@ export class ChatService {
         input.routePlan.activeSkill?.prompt && toolContextPrompt
           ? `${input.routePlan.activeSkill.prompt}\n\n${toolContextPrompt}`
           : input.routePlan.activeSkill?.prompt ?? toolContextPrompt,
-      planContextPrompt: buildPlanContextPrompt(this.toolDispatcher.getPlanContext()),
+      planContextPrompt: buildPlanContextPrompt(this.toolDispatcher.getPlanContext(workspace?.id ?? null)),
       availableTools: this.toolDispatcher
         .listDefinitions()
         .filter((tool) => tool.availability === 'available'),
@@ -3712,7 +3712,7 @@ export class ChatService {
       input.workflowMode,
       input.includeRepositoryAnalysisGuidance,
       input.toolDefinitions,
-      this.toolDispatcher.getPlanContext()
+      this.toolDispatcher.getPlanContext(input.workspaceId)
     );
     const toolInvocations: ToolInvocation[] = [];
     const contextSources: ContextSource[] = [];

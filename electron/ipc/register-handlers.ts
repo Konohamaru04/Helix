@@ -509,9 +509,9 @@ export function registerIpcHandlers(context: DesktopAppContext): void {
     );
   });
 
-  ipcMain.handle(IpcChannels.capabilitiesListTasks, () =>
+  ipcMain.handle(IpcChannels.capabilitiesListTasks, (_event, workspaceId: string | null) =>
     context.capabilityService
-      .listTasks()
+      .listTasks(workspaceId)
       .map((task) => capabilityTaskSchema.parse(task))
   );
 
@@ -548,8 +548,8 @@ export function registerIpcHandlers(context: DesktopAppContext): void {
       .map((worktree) => worktreeSessionSchema.parse(worktree))
   );
 
-  ipcMain.handle(IpcChannels.capabilitiesGetPlanState, () =>
-    planStateSchema.parse(context.capabilityService.getPlanState())
+  ipcMain.handle(IpcChannels.capabilitiesGetPlanState, (_event, workspaceId: string | null) =>
+    planStateSchema.parse(context.capabilityService.getPlanState(workspaceId))
   );
 
   ipcMain.handle(IpcChannels.capabilitiesListAuditEvents, () =>

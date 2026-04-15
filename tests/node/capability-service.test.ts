@@ -417,7 +417,7 @@ End
 
       const createdTaskId = createResult.toolInvocations[0]?.outputSummary;
       expect(createdTaskId).toBeTruthy();
-      expect(harness.service.listTasks()).toHaveLength(1);
+      expect(harness.service.listTasks(null)).toHaveLength(1);
 
       const lookupResult = await harness.service.executeTool({
         toolId: 'task-get',

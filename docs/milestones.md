@@ -1,6 +1,6 @@
 # Milestone Tracker
 
-Updated: 2026-04-11
+Updated: 2026-04-16
 
 ## Milestone 1: Foundation
 
@@ -90,6 +90,7 @@ Comment: The current tool surface now includes a constrained dependency-free Jav
 - [x] renderer settings surface for capability permissions and runtime state
 - [x] native Ollama `/api/chat` tool exposure so models can automatically select the implemented capability surface
 - [x] node and renderer coverage for permission enforcement, capability discovery, and native capability tool calls
+- [x] migration 013: workspace-scoped tasks and plan state (composite primary key)
 
 Status: Complete
 Comment: Milestone 4.1 is now a shipped implementation milestone. The bridge persists permission grants, tasks, schedules, agent sessions, worktree sessions, plan state, and audit events in SQLite; exposes them through typed preload IPC; and advertises the implemented capability set to Ollama-native tool calling so models can auto-select tools without the old manual picker UI. The original design handoff remains in [docs/tool-spike.md](./tool-spike.md).

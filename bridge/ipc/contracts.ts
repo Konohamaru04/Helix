@@ -306,6 +306,7 @@ export const capabilityPermissionSchema = z.object({
 export const capabilityTaskSchema = z.object({
   id: uuidSchema,
   sequence: z.number().int().nonnegative(),
+  workspaceId: uuidSchema.nullable(),
   title: z.string().min(1),
   status: capabilityTaskStatusSchema,
   details: z.string().nullable(),
@@ -373,6 +374,7 @@ export const worktreeSessionSchema = z.object({
 
 export const planStateSchema = z.object({
   conversationId: uuidSchema.nullable(),
+  workspaceId: uuidSchema.nullable(),
   status: planModeStatusSchema,
   summary: z.string().nullable(),
   createdAt: timestampSchema.nullable(),
@@ -549,6 +551,7 @@ export const workspaceDirectorySelectionSchema = z.object({
 export const createCapabilityTaskInputSchema = z.object({
   title: z.string().trim().min(1).max(160),
   details: z.string().trim().max(10_000).optional(),
+  workspaceId: uuidSchema.optional(),
   parentTaskId: uuidSchema.optional()
 });
 
@@ -936,14 +939,14 @@ export interface DesktopApi {
     listPermissions: () => Promise<CapabilityPermission[]>;
     grantPermission: (input: CapabilityPermissionInput) => Promise<CapabilityPermission>;
     revokePermission: (input: CapabilityPermissionInput) => Promise<void>;
-    listTasks: () => Promise<CapabilityTask[]>;
+    listTasks: (workspaceId: string | null) => Promise<CapabilityTask[]>;
     getTask: (taskId: string) => Promise<CapabilityTask | null>;
     deleteTask: (taskId: string) => Promise<void>;
     listSchedules: () => Promise<ScheduledPrompt[]>;
     listAgents: () => Promise<AgentSession[]>;
     listTeams: () => Promise<TeamSession[]>;
     listWorktrees: () => Promise<WorktreeSession[]>;
-    getPlanState: () => Promise<PlanState>;
+    getPlanState: (workspaceId: string | null) => Promise<PlanState>;
     listAuditEvents: () => Promise<AuditEventRecord[]>;
   };
 }

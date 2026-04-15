@@ -447,12 +447,10 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
         availableTools,
         availableSkills,
         capabilityPermissions,
-        capabilityTasks,
         capabilitySchedules,
         capabilityAgents,
         capabilityTeams,
         capabilityWorktrees,
-        capabilityPlanState,
         capabilityAuditEvents
       ] =
         await Promise.all([
@@ -466,25 +464,30 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
           api.chat.listTools(),
           api.chat.listSkills(),
           api.capabilities.listPermissions(),
-          api.capabilities.listTasks(),
           api.capabilities.listSchedules(),
           api.capabilities.listAgents(),
           api.capabilities.listTeams(),
           api.capabilities.listWorktrees(),
-          api.capabilities.getPlanState(),
           api.capabilities.listAuditEvents()
         ]);
       const activeWorkspaceId = workspaces[0]?.id ?? null;
       const activeConversationId =
         getFirstConversationIdForWorkspace(conversations, activeWorkspaceId) ??
         getFirstConversationIdForWorkspace(conversations, null);
-      const [messages, knowledgeDocuments] = await Promise.all([
+      const [
+        messages,
+        knowledgeDocuments,
+        capabilityTasks,
+        capabilityPlanState
+      ] = await Promise.all([
         activeConversationId === null
           ? Promise.resolve([])
           : api.chat.getConversationMessages(activeConversationId),
         activeWorkspaceId === null
           ? Promise.resolve([])
-          : api.chat.listKnowledgeDocuments({ workspaceId: activeWorkspaceId })
+          : api.chat.listKnowledgeDocuments({ workspaceId: activeWorkspaceId }),
+        api.capabilities.listTasks(activeWorkspaceId),
+        api.capabilities.getPlanState(activeWorkspaceId)
       ]);
 
       set({
@@ -538,6 +541,7 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
 
   refreshCapabilitySurface: async () => {
     const api = getDesktopApi();
+    const { activeWorkspaceId } = get();
     const [
       capabilityPermissions,
       capabilityTasks,
@@ -549,12 +553,12 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
       capabilityAuditEvents
     ] = await Promise.all([
       api.capabilities.listPermissions(),
-      api.capabilities.listTasks(),
+      api.capabilities.listTasks(activeWorkspaceId),
       api.capabilities.listSchedules(),
       api.capabilities.listAgents(),
       api.capabilities.listTeams(),
       api.capabilities.listWorktrees(),
-      api.capabilities.getPlanState(),
+      api.capabilities.getPlanState(activeWorkspaceId),
       api.capabilities.listAuditEvents()
     ]);
 

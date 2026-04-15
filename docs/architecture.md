@@ -136,6 +136,7 @@ Implemented so far:
 - FTS5-backed conversation search
 - hybrid FTS5 plus local-embedding workspace knowledge retrieval
 - multimodal image forwarding to Ollama by base64-encoding local image attachments in Electron main
+- migration 013: workspace-scoped capability_tasks and plan_state with composite primary key
 
 The renderer never queries SQLite directly.
 

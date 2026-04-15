@@ -1,6 +1,6 @@
 # Tool Spike
 
-Updated: 2026-04-11
+Updated: 2026-04-16
 
 ## Outcome
 
@@ -105,6 +105,7 @@ The spike defines these required persistent records before the new tool surface 
   - title
   - status
   - details
+  - workspace_id (nullable, scoped to workspace)
   - owner type
   - dependency graph metadata
 - `scheduled_prompts`
@@ -122,6 +123,12 @@ The spike defines these required persistent records before the new tool surface 
   - worktree path
   - branch
   - active / closed state
+- `plan_state`
+  - conversation_id (nullable)
+  - workspace_id (nullable, part of composite primary key)
+  - status (inactive/active)
+  - summary
+  - primary key: (workspace_id, conversation_id)
 
 ## Renderer requirements
 

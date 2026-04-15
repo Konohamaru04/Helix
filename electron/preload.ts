@@ -306,9 +306,10 @@ const desktopApi: DesktopApi = {
         capabilityPermissionInputSchema.parse(input)
       );
     },
-    listTasks: async () => {
+    listTasks: async (workspaceId: string | null) => {
       const payload = (await ipcRenderer.invoke(
-        IpcChannels.capabilitiesListTasks
+        IpcChannels.capabilitiesListTasks,
+        workspaceId
       )) as unknown[];
 
       return payload.map((task) => capabilityTaskSchema.parse(task));
@@ -355,9 +356,9 @@ const desktopApi: DesktopApi = {
 
       return payload.map((worktree) => worktreeSessionSchema.parse(worktree));
     },
-    getPlanState: async () =>
+    getPlanState: async (workspaceId: string | null) =>
       planStateSchema.parse(
-        await ipcRenderer.invoke(IpcChannels.capabilitiesGetPlanState)
+        await ipcRenderer.invoke(IpcChannels.capabilitiesGetPlanState, workspaceId)
       ),
     listAuditEvents: async () => {
       const payload = (await ipcRenderer.invoke(

@@ -14,6 +14,7 @@ import generationBackendComfyUiMigration from './migrations/009_generation_job_b
 import capabilitySurfaceMigration from './migrations/010_capability_surface.sql?raw';
 import toolInvocationOutputTextMigration from './migrations/011_tool_invocation_output_text.sql?raw';
 import taskSequenceMigration from './migrations/012_task_sequence.sql?raw';
+import workspaceScopedTasksMigration from './migrations/013_workspace_scoped_tasks.sql?raw';
 
 const bundledMigrations = [
   {
@@ -63,6 +64,10 @@ const bundledMigrations = [
   {
     version: '012_task_sequence.sql',
     sql: taskSequenceMigration
+  },
+  {
+    version: '013_workspace_scoped_tasks.sql',
+    sql: workspaceScopedTasksMigration
   }
 ];
 

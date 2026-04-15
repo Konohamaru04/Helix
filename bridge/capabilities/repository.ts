@@ -45,6 +45,7 @@ interface PermissionGrantRow {
 interface CapabilityTaskRow {
   id: string;
   sequence: number;
+  workspace_id: string | null;
   title: string;
   status: CapabilityTask['status'];
   details: string | null;
@@ -110,6 +111,7 @@ interface WorktreeSessionRow {
 
 interface PlanStateRow {
   conversation_id: string;
+  workspace_id: string | null;
   status: PlanState['status'];
   summary: string | null;
   created_at: string;
@@ -247,6 +249,7 @@ export class CapabilityRepository {
     const task = capabilityTaskSchema.parse({
       id: randomUUID(),
       sequence: nextSequence,
+      workspaceId: input.workspaceId ?? null,
       title: input.title,
       status: 'pending',
       details: input.details ?? null,
@@ -264,6 +267,7 @@ export class CapabilityRepository {
           INSERT INTO capability_tasks (
             id,
             sequence,
+            workspace_id,
             title,
             status,
             details,
@@ -275,12 +279,13 @@ export class CapabilityRepository {
             started_at,
             completed_at
           )
-          VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)
         `
       )
       .run(
         task.id,
         task.sequence,
+        task.workspaceId,
         task.title,
         task.status,
         task.details,
@@ -295,13 +300,13 @@ export class CapabilityRepository {
     return task;
   }
 
-  listTasks(): CapabilityTask[] {
-    const rows = this.database.connection
-      .prepare(
-        `
+  listTasks(workspaceId?: string): CapabilityTask[] {
+    const sql = workspaceId
+      ? `
           SELECT
             id,
             sequence,
+            workspace_id,
             title,
             status,
             details,
@@ -312,10 +317,31 @@ export class CapabilityRepository {
             started_at,
             completed_at
           FROM capability_tasks
+          WHERE workspace_id = ?
           ORDER BY sequence ASC, created_at ASC
         `
-      )
-      .all() as unknown as CapabilityTaskRow[];
+      : `
+          SELECT
+            id,
+            sequence,
+            workspace_id,
+            title,
+            status,
+            details,
+            output_path,
+            parent_task_id,
+            created_at,
+            updated_at,
+            started_at,
+            completed_at
+          FROM capability_tasks
+          WHERE workspace_id IS NULL
+          ORDER BY sequence ASC, created_at ASC
+        `;
+    const params = workspaceId ? [workspaceId] : [];
+    const rows = this.database.connection
+      .prepare(sql)
+      .all(...params) as unknown as CapabilityTaskRow[];
 
     return rows.map((row) => this.parseTaskRow(row));
   }
@@ -327,6 +353,7 @@ export class CapabilityRepository {
           SELECT
             id,
             sequence,
+            workspace_id,
             title,
             status,
             details,
@@ -825,22 +852,31 @@ export class CapabilityRepository {
     return session;
   }
 
-  getPlanState(): PlanState {
-    const row = this.database.connection
-      .prepare(
+  getPlanState(workspaceId?: string): PlanState {
+    const sql = workspaceId
+      ? `
+          SELECT conversation_id, workspace_id, status, summary, created_at, updated_at
+          FROM plan_state
+          WHERE workspace_id = ? AND status = 'active'
+          ORDER BY updated_at DESC
+          LIMIT 1
         `
-          SELECT conversation_id, status, summary, created_at, updated_at
+      : `
+          SELECT conversation_id, workspace_id, status, summary, created_at, updated_at
           FROM plan_state
           WHERE status = 'active'
           ORDER BY updated_at DESC
           LIMIT 1
-        `
-      )
-      .get() as PlanStateRow | undefined;
+        `;
+    const params = workspaceId ? [workspaceId] : [];
+    const row = this.database.connection
+      .prepare(sql)
+      .get(...params) as PlanStateRow | undefined;
 
     if (!row) {
       return planStateSchema.parse({
         conversationId: null,
+        workspaceId: workspaceId ?? null,
         status: 'inactive',
         summary: null,
         createdAt: null,
@@ -853,13 +889,14 @@ export class CapabilityRepository {
 
   upsertPlanState(input: {
     conversationId: string;
+    workspaceId?: string | null;
     status: PlanState['status'];
     summary?: string | null | undefined;
   }): PlanState {
     const current = this.database.connection
       .prepare(
         `
-          SELECT conversation_id, status, summary, created_at, updated_at
+          SELECT conversation_id, workspace_id, status, summary, created_at, updated_at
           FROM plan_state
           WHERE conversation_id = ?
           LIMIT 1
@@ -872,17 +909,24 @@ export class CapabilityRepository {
     this.database.connection
       .prepare(
         `
-          INSERT INTO plan_state (conversation_id, status, summary, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?)
-          ON CONFLICT(conversation_id) DO UPDATE SET
+          INSERT INTO plan_state (conversation_id, workspace_id, status, summary, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?)
+          ON CONFLICT(workspace_id, conversation_id) DO UPDATE SET
             status = excluded.status,
             summary = excluded.summary,
             updated_at = excluded.updated_at
         `
       )
-      .run(input.conversationId, input.status, input.summary ?? null, createdAt, updatedAt);
+      .run(
+        input.conversationId,
+        input.workspaceId ?? null,
+        input.status,
+        input.summary ?? null,
+        createdAt,
+        updatedAt
+      );
 
-    return this.getPlanState();
+    return this.getPlanState(input.workspaceId ?? undefined);
   }
 
   writeAuditEvent(input: {
@@ -1003,6 +1047,7 @@ export class CapabilityRepository {
     return capabilityTaskSchema.parse({
       id: row.id,
       sequence: row.sequence,
+      workspaceId: row.workspace_id,
       title: row.title,
       status: row.status,
       details: row.details,
@@ -1046,6 +1091,7 @@ export class CapabilityRepository {
   private parsePlanStateRow(row: PlanStateRow): PlanState {
     return planStateSchema.parse({
       conversationId: row.conversation_id,
+      workspaceId: row.workspace_id,
       status: row.status,
       summary: row.summary,
       createdAt: row.created_at,

@@ -591,7 +591,7 @@ function applyLineEdit(originalContents: string, edit: EditInput): string {
     const end = edit.endLine - 1;
     if (start < 0 || end >= totalLines || start > end) {
       throw new Error(
-        `Line range ${edit.startLine}–${edit.endLine} is out of bounds (file has ${totalLines} lines).`
+        `Line range ${edit.startLine}–${edit.endLine} is out of bounds (file has ${totalLines} lines). Use Read tool to see the exact lines numbers and content.`
       );
     }
     result = [...lines.slice(0, start), ...toLines(edit.newText), ...lines.slice(end + 1)];
@@ -599,7 +599,7 @@ function applyLineEdit(originalContents: string, edit: EditInput): string {
     const after = edit.line;
     if (after < 0 || after > totalLines) {
       throw new Error(
-        `Insert line ${edit.line} is out of bounds (file has ${totalLines} lines).`
+        `Insert line ${edit.line} is out of bounds (file has ${totalLines} lines). Use Read tool to see the exact lines numbers and content.`
       );
     }
     result = [...lines.slice(0, after), ...toLines(edit.newText), ...lines.slice(after)];
@@ -839,8 +839,8 @@ export class CapabilityService {
     });
   }
 
-  listTasks(): CapabilityTask[] {
-    return this.repository.listTasks();
+  listTasks(workspaceId: string | null): CapabilityTask[] {
+    return this.repository.listTasks(workspaceId ?? undefined);
   }
 
   getTask(taskId: string): CapabilityTask | null {
@@ -867,8 +867,8 @@ export class CapabilityService {
     return this.repository.listWorktreeSessions();
   }
 
-  getPlanState(): PlanState {
-    return this.repository.getPlanState();
+  getPlanState(workspaceId: string | null): PlanState {
+    return this.repository.getPlanState(workspaceId ?? undefined);
   }
 
   listAuditEvents(): AuditEventRecord[] {
@@ -948,7 +948,7 @@ export class CapabilityService {
       case 'task-get':
         return this.executeTaskGet(input.prompt);
       case 'task-list':
-        return this.executeTaskList();
+        return this.executeTaskList(input.workspaceId ?? null);
       case 'task-output':
         return this.executeTaskOutput(input.prompt, input.workspaceRootPath ?? null);
       case 'task-stop':
@@ -956,7 +956,7 @@ export class CapabilityService {
       case 'task-update':
         return this.executeTaskUpdate(input.prompt);
       case 'todo-write':
-        return this.executeTodoWrite(input.prompt);
+        return this.executeTodoWrite(input.prompt, input.workspaceId ?? null);
       case 'cron-create':
         return this.executeCronCreate(input.prompt);
       case 'cron-delete':
@@ -975,9 +975,9 @@ export class CapabilityService {
       case 'team-delete':
         return this.executeTeamDelete(input.prompt);
       case 'enter-plan-mode':
-        return this.executeEnterPlanMode(input.conversationId ?? null);
+        return this.executeEnterPlanMode(input.conversationId ?? null, input.workspaceId ?? null);
       case 'exit-plan-mode':
-        return this.executeExitPlanMode(input.conversationId ?? null, input.prompt);
+        return this.executeExitPlanMode(input.conversationId ?? null, input.workspaceId ?? null, input.prompt);
       case 'enter-worktree':
         return this.executeEnterWorktree(input.prompt);
       case 'exit-worktree':
@@ -991,7 +991,7 @@ export class CapabilityService {
       case 'read-mcp-resource':
         return this.executeReadMcpResource(input.prompt);
       case 'tool-search':
-        return this.executeToolSearch(input.prompt);
+        return this.executeToolSearch(input.prompt, input.workspaceId ?? null);
       case 'web-fetch':
         return this.executeWebFetch(input.prompt);
       case 'skill':
@@ -1504,8 +1504,8 @@ export class CapabilityService {
     };
   }
 
-  private executeTaskList(): CapabilityToolExecutionResult {
-    const tasks = this.repository.listTasks();
+  private executeTaskList(workspaceId: string | null): CapabilityToolExecutionResult {
+    const tasks = this.repository.listTasks(workspaceId ?? undefined);
 
     return {
       assistantContent:
@@ -1678,7 +1678,10 @@ export class CapabilityService {
     };
   }
 
-  private executeTodoWrite(prompt: string): CapabilityToolExecutionResult {
+  private executeTodoWrite(
+    prompt: string,
+    workspaceId: string | null
+  ): CapabilityToolExecutionResult {
     const payload = parseLooseJson<{ items?: string[] }>(prompt);
     const items =
       payload?.items && Array.isArray(payload.items)
@@ -1693,7 +1696,9 @@ export class CapabilityService {
       throw new Error('Todo Write expects at least one checklist item.');
     }
 
-    const createdTasks = items.map((item) => this.repository.createTask({ title: item }));
+    const createdTasks = items.map((item) =>
+      this.repository.createTask({ title: item, workspaceId: workspaceId ?? undefined })
+    );
 
     return {
       assistantContent: [
@@ -2126,13 +2131,17 @@ export class CapabilityService {
     };
   }
 
-  private executeEnterPlanMode(conversationId: string | null): CapabilityToolExecutionResult {
+  private executeEnterPlanMode(
+    conversationId: string | null,
+    workspaceId: string | null
+  ): CapabilityToolExecutionResult {
     if (!conversationId) {
       throw new Error('Enter Plan Mode requires an active conversation.');
     }
 
     const planState = this.repository.upsertPlanState({
       conversationId,
+      workspaceId,
       status: 'active',
       summary: 'Plan mode enabled.'
     });
@@ -2155,6 +2164,7 @@ export class CapabilityService {
 
   private executeExitPlanMode(
     conversationId: string | null,
+    workspaceId: string | null,
     prompt: string
   ): CapabilityToolExecutionResult {
     if (!conversationId) {
@@ -2164,6 +2174,7 @@ export class CapabilityService {
     const summary = prompt.trim() || 'Plan mode disabled.';
     const planState = this.repository.upsertPlanState({
       conversationId,
+      workspaceId,
       status: 'inactive',
       summary
     });
@@ -2521,7 +2532,10 @@ export class CapabilityService {
     };
   }
 
-  private executeToolSearch(prompt: string): CapabilityToolExecutionResult {
+  private executeToolSearch(
+    prompt: string,
+    workspaceId: string | null
+  ): CapabilityToolExecutionResult {
     const query = prompt.trim().toLowerCase();
 
     if (!query) {
@@ -2544,7 +2558,7 @@ export class CapabilityService {
         })
       );
     const tasks = this.repository
-      .listTasks()
+      .listTasks(workspaceId ?? undefined)
       .filter((task) =>
         `${task.id} ${task.title} ${task.details ?? ''} ${task.status}`
           .toLowerCase()

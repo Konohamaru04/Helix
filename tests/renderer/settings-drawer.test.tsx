@@ -62,6 +62,7 @@ function createCapabilityProps() {
     capabilityWorktrees: [],
     capabilityPlanState: {
       conversationId: null,
+      workspaceId: null,
       status: 'inactive' as const,
       summary: null,
       createdAt: null,
