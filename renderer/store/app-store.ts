@@ -375,6 +375,7 @@ interface AppStoreState {
   updateSettings: (patch: UpdateUserSettings) => Promise<void>;
   grantCapabilityPermission: (capabilityId: string) => Promise<void>;
   revokeCapabilityPermission: (capabilityId: string) => Promise<void>;
+  deleteTask: (taskId: string) => Promise<void>;
   startImageGeneration: (
     input: ImageGenerationRequest
   ) => Promise<void>;
@@ -804,6 +805,11 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
       scopeKind: 'global',
       scopeId: null
     });
+    await get().refreshCapabilitySurface();
+  },
+
+  deleteTask: async (taskId) => {
+    await getDesktopApi().capabilities.deleteTask(taskId);
     await get().refreshCapabilitySurface();
   },
 

@@ -321,6 +321,12 @@ const desktopApi: DesktopApi = {
 
       return payload ? capabilityTaskSchema.parse(payload) : null;
     },
+    deleteTask: async (taskId) => {
+      await ipcRenderer.invoke(
+        IpcChannels.capabilitiesDeleteTask,
+        conversationIdSchema.parse(taskId)
+      );
+    },
     listSchedules: async () => {
       const payload = (await ipcRenderer.invoke(
         IpcChannels.capabilitiesListSchedules

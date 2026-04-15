@@ -520,6 +520,10 @@ export function registerIpcHandlers(context: DesktopAppContext): void {
     return task ? capabilityTaskSchema.parse(task) : null;
   });
 
+  ipcMain.handle(IpcChannels.capabilitiesDeleteTask, (_event, taskId) => {
+    context.capabilityService.deleteTask(conversationIdSchema.parse(taskId));
+  });
+
   ipcMain.handle(IpcChannels.capabilitiesListSchedules, () =>
     context.capabilityService
       .listSchedules()

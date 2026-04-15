@@ -847,6 +847,10 @@ export class CapabilityService {
     return this.repository.getTask(taskId);
   }
 
+  deleteTask(taskId: string): void {
+    this.repository.deleteTask(taskId);
+  }
+
   listSchedules(): ScheduledPrompt[] {
     return this.repository.listSchedules();
   }

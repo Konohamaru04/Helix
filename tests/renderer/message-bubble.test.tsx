@@ -58,6 +58,7 @@ describe('MessageBubble', () => {
         revokePermission: vi.fn(),
         listTasks: vi.fn().mockResolvedValue([]),
         getTask: vi.fn().mockResolvedValue(null),
+        deleteTask: vi.fn(),
         listSchedules: vi.fn().mockResolvedValue([]),
         listAgents: vi.fn().mockResolvedValue([]),
         listTeams: vi.fn().mockResolvedValue([]),

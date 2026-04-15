@@ -831,6 +831,9 @@ export function ChatPage() {
 
       <PlanDrawer
         onClose={() => togglePlanDrawer()}
+        onDeleteTask={(taskId) => {
+          void useAppStore.getState().deleteTask(taskId);
+        }}
         open={planDrawerOpen}
         planState={capabilityPlanState}
         tasks={capabilityTasks}

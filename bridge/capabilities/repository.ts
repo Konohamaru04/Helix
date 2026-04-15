@@ -408,6 +408,12 @@ export class CapabilityRepository {
     return next;
   }
 
+  deleteTask(taskId: string): void {
+    this.database.connection
+      .prepare('DELETE FROM capability_tasks WHERE id = ?')
+      .run(taskId);
+  }
+
   createSchedule(input: CreateScheduledPromptInput, nextRunAt: string | null): ScheduledPrompt {
     const timestamp = nowIso();
     const schedule = scheduledPromptSchema.parse({

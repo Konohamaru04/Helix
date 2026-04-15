@@ -5,7 +5,8 @@ interface PlanDrawerProps {
   open: boolean;
   planState: PlanState | null;
   tasks: CapabilityTask[];
-  onClose?: () => void;
+  onClose?: (() => void) | undefined;
+  onDeleteTask?: ((taskId: string) => void) | undefined;
 }
 
 function statusBadgeClass(status: CapabilityTask['status']) {
@@ -38,8 +39,8 @@ function statusLabel(status: CapabilityTask['status']) {
   }
 }
 
-function TaskRow(props: { task: CapabilityTask }) {
-  const { task } = props;
+function TaskRow(props: { task: CapabilityTask; onDelete?: (() => void) | undefined }) {
+  const { task, onDelete } = props;
   return (
     <div className="rounded-2xl border border-white/10 bg-slate-950/50 px-4 py-3">
       <div className="flex items-start justify-between gap-3">
@@ -56,12 +57,29 @@ function TaskRow(props: { task: CapabilityTask }) {
       {task.details ? (
         <p className="mt-1.5 text-xs leading-5 text-slate-400">{task.details}</p>
       ) : null}
-      <p className="mt-2 text-[11px] text-slate-500">{formatTimestamp(task.createdAt)}</p>
+      <div className="mt-2 flex items-center justify-between gap-3">
+        <p className="text-[11px] text-slate-500">{formatTimestamp(task.createdAt)}</p>
+        {onDelete ? (
+          <button
+            aria-label="Delete task"
+            className="shrink-0 rounded px-2 py-1 text-[10px] font-medium text-rose-300 transition hover:bg-rose-400/10 hover:text-rose-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-400"
+            onClick={onDelete}
+            type="button"
+          >
+            Delete
+          </button>
+        ) : null}
+      </div>
     </div>
   );
 }
 
-function TaskGroup(props: { title: string; tasks: CapabilityTask[]; emptyText: string }) {
+function TaskGroup(props: {
+  title: string;
+  tasks: CapabilityTask[];
+  emptyText: string;
+  onDeleteTask?: ((taskId: string) => void) | undefined;
+}) {
   return (
     <section className="space-y-3 rounded-[1.5rem] border border-white/10 bg-slate-900/60 px-4 py-4">
       <div className="flex items-center justify-between gap-3">
@@ -75,7 +93,11 @@ function TaskGroup(props: { title: string; tasks: CapabilityTask[]; emptyText: s
       ) : (
         <div className="space-y-2">
           {props.tasks.map((task) => (
-            <TaskRow key={task.id} task={task} />
+            <TaskRow
+              key={task.id}
+              task={task}
+              onDelete={props.onDeleteTask ? () => props.onDeleteTask?.(task.id) : undefined}
+            />
           ))}
         </div>
       )}
@@ -133,16 +155,19 @@ export function PlanDrawer(props: PlanDrawerProps) {
           <div className="grid gap-5 lg:grid-cols-3">
             <TaskGroup
               emptyText="No tasks in progress."
+              onDeleteTask={props.onDeleteTask}
               tasks={activeTasks}
               title="In progress"
             />
             <TaskGroup
               emptyText="No pending tasks."
+              onDeleteTask={props.onDeleteTask}
               tasks={pendingTasks}
               title="Pending"
             />
             <TaskGroup
               emptyText="No completed tasks yet."
+              onDeleteTask={props.onDeleteTask}
               tasks={doneTasks}
               title="Completed / done"
             />

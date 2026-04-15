@@ -564,6 +564,10 @@ export const stopCapabilityTaskInputSchema = z.object({
   taskId: uuidSchema
 });
 
+export const deleteCapabilityTaskInputSchema = z.object({
+  taskId: uuidSchema
+});
+
 export const createScheduledPromptInputSchema = z.object({
   title: z.string().trim().min(1).max(160),
   prompt: z.string().trim().min(1).max(10_000),
@@ -871,6 +875,7 @@ export const IpcChannels = {
   capabilitiesRevokePermission: 'capabilities:revoke-permission',
   capabilitiesListTasks: 'capabilities:list-tasks',
   capabilitiesGetTask: 'capabilities:get-task',
+  capabilitiesDeleteTask: 'capabilities:delete-task',
   capabilitiesListSchedules: 'capabilities:list-schedules',
   capabilitiesListAgents: 'capabilities:list-agents',
   capabilitiesListTeams: 'capabilities:list-teams',
@@ -933,6 +938,7 @@ export interface DesktopApi {
     revokePermission: (input: CapabilityPermissionInput) => Promise<void>;
     listTasks: () => Promise<CapabilityTask[]>;
     getTask: (taskId: string) => Promise<CapabilityTask | null>;
+    deleteTask: (taskId: string) => Promise<void>;
     listSchedules: () => Promise<ScheduledPrompt[]>;
     listAgents: () => Promise<AgentSession[]>;
     listTeams: () => Promise<TeamSession[]>;
