@@ -521,7 +521,7 @@ export class OllamaClient {
     try {
       const payload = JSON.parse(trimmedBody) as OllamaChatResponsePayload;
       return this.toChatCompletion(payload);
-    } catch (error) {
+    } catch {
       const lines = trimmedBody
         .split(/\r?\n/)
         .map((line) => stripStreamingPrefix(line.trim()))
@@ -601,7 +601,7 @@ export class OllamaClient {
             attempt,
             request: (() => {
               try {
-                return JSON.parse(input.requestInit.body as string);
+                return JSON.parse(input.requestInit.body as string) as unknown;
               } catch {
                 return input.requestInit.body;
               }

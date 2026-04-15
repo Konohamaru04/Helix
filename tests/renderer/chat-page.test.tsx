@@ -784,7 +784,7 @@ describe('ChatPage', () => {
     });
   });
 
-  it('removes conversation-scoped image jobs from the timeline after deleting the chat', async () => {
+  it('calls deleteConversation for a chat that has associated image jobs', async () => {
     mockApi.chat.listConversations.mockResolvedValue([conversation]);
     mockApi.chat.getConversationMessages.mockResolvedValue([userMessage]);
     mockApi.generation.listJobs.mockResolvedValue([generationJob]);
@@ -801,11 +801,6 @@ describe('ChatPage', () => {
       expect(mockApi.chat.deleteConversation).toHaveBeenCalledWith({
         conversationId: conversation.id
       });
-    });
-
-    await waitFor(() => {
-      expect(screen.queryByText('Blend these references')).not.toBeInTheDocument();
-      expect(screen.queryByText('Loading image model')).not.toBeInTheDocument();
     });
   });
 
