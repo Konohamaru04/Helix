@@ -106,6 +106,7 @@ describe('app-store stream buffering', () => {
         createWorkspace: vi.fn(),
         pickWorkspaceDirectory: vi.fn(),
         updateWorkspaceRoot: vi.fn(),
+        deleteWorkspace: vi.fn(),
         listConversations: vi.fn(),
         searchConversations: vi.fn(),
         getConversationMessages: vi.fn().mockResolvedValue([]),

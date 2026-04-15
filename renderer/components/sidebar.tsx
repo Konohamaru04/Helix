@@ -15,6 +15,7 @@ interface SidebarProps {
   onSelectWorkspace: (workspaceId: string | null) => void;
   onSelectConversation: (conversationId: string) => void;
   onSearchQueryChange: (query: string) => void;
+  onDeleteWorkspace: (workspaceId: string) => void;
 }
 
 function formatTimestamp(value: string) {
@@ -64,18 +65,36 @@ export function Sidebar(props: SidebarProps) {
             All
           </button>
           {props.workspaces.map((workspace) => (
-            <button
-              key={workspace.id}
-              className={`rounded-full px-3 py-1.5 text-xs font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 ${
-                workspace.id === props.activeWorkspaceId
-                  ? 'bg-cyan-400 text-slate-950'
-                  : 'border border-white/10 text-slate-300 hover:border-white/20 hover:bg-white/5'
-              }`}
-              onClick={() => props.onSelectWorkspace(workspace.id)}
-              type="button"
-            >
-              {workspace.name}
-            </button>
+            <div key={workspace.id} className="group relative flex items-center">
+              <button
+                className={`rounded-full px-3 py-1.5 text-xs font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 ${
+                  workspace.id === props.activeWorkspaceId
+                    ? 'bg-cyan-400 pr-6 text-slate-950'
+                    : 'border border-white/10 pr-6 text-slate-300 hover:border-white/20 hover:bg-white/5'
+                }`}
+                onClick={() => props.onSelectWorkspace(workspace.id)}
+                type="button"
+              >
+                {workspace.name}
+              </button>
+              <button
+                aria-label={`Delete workspace ${workspace.name}`}
+                className={`absolute right-1.5 flex h-4 w-4 items-center justify-center rounded-full text-[10px] leading-none transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-400 ${
+                  workspace.id === props.activeWorkspaceId
+                    ? 'text-slate-700 hover:bg-slate-950/20 hover:text-slate-900'
+                    : 'text-slate-500 hover:bg-white/10 hover:text-slate-200'
+                }`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (window.confirm(`Delete workspace "${workspace.name}"? Conversations will be unassigned.`)) {
+                    props.onDeleteWorkspace(workspace.id);
+                  }
+                }}
+                type="button"
+              >
+                ✕
+              </button>
+            </div>
           ))}
         </div>
       </div>

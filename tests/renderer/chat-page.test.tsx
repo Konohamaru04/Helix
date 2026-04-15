@@ -200,6 +200,7 @@ const mockApi = {
     createWorkspace: vi.fn(),
     pickWorkspaceDirectory: vi.fn(),
     updateWorkspaceRoot: vi.fn(),
+    deleteWorkspace: vi.fn(),
     listConversations: vi.fn(),
     searchConversations: vi.fn(),
     getConversationMessages: vi.fn(),
@@ -502,7 +503,7 @@ describe('ChatPage', () => {
       await waitFor(() => {
         expect(mockApi.system.getStatus).toHaveBeenCalledTimes(2);
       });
-      expect(screen.getByText('2.0 / 16.0 GB used')).toBeInTheDocument();
+      expect(screen.getByText('2048 / 16384 MiB')).toBeInTheDocument();
     } finally {
       setIntervalSpy.mockRestore();
       clearIntervalSpy.mockRestore();

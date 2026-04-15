@@ -59,6 +59,6 @@ describe('StatusBar', () => {
       />
     );
 
-    expect(screen.getByText('1.0 / 16.0 GB used')).toBeInTheDocument();
+    expect(screen.getByText('1024 / 16384 MiB')).toBeInTheDocument();
   });
 });

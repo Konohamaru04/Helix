@@ -364,6 +364,7 @@ interface AppStoreState {
   createWorkspace: (input: { name: string; rootPath?: string }) => Promise<void>;
   pickWorkspaceDirectory: () => Promise<string | null>;
   updateWorkspaceRoot: (workspaceId: string, rootPath: string | null) => Promise<void>;
+  deleteWorkspace: (workspaceId: string) => Promise<void>;
   setSearchQuery: (query: string) => Promise<void>;
   clearSearch: () => void;
   selectConversation: (conversationId: string | null) => Promise<void>;
@@ -683,6 +684,47 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
 
     set((state) => ({
       workspaces: upsertWorkspace(state.workspaces, workspace)
+    }));
+  },
+
+  deleteWorkspace: async (workspaceId) => {
+    await getDesktopApi().chat.deleteWorkspace({ workspaceId });
+
+    const state = get();
+    const remaining = state.workspaces.filter((w) => w.id !== workspaceId);
+    const nextWorkspaceId = remaining[0]?.id ?? null;
+    const nextConversationId = getFirstConversationIdForWorkspace(
+      state.conversations,
+      nextWorkspaceId
+    );
+
+    const deletedConversationIds = new Set(
+      state.conversations
+        .filter((c) => c.workspaceId === workspaceId)
+        .map((c) => c.id)
+    );
+
+    set((currentState) => ({
+      workspaces: remaining,
+      conversations: currentState.conversations.filter(
+        (c) => !deletedConversationIds.has(c.id)
+      ),
+      messagesByConversation: Object.fromEntries(
+        Object.entries(currentState.messagesByConversation).filter(
+          ([id]) => !deletedConversationIds.has(id)
+        )
+      ),
+      activeWorkspaceId: nextWorkspaceId,
+      activeConversationId: deletedConversationIds.has(
+        currentState.activeConversationId ?? ''
+      )
+        ? nextConversationId
+        : currentState.activeConversationId,
+      knowledgeDocumentsByWorkspace: Object.fromEntries(
+        Object.entries(currentState.knowledgeDocumentsByWorkspace).filter(
+          ([id]) => id !== workspaceId
+        )
+      )
     }));
   },
 

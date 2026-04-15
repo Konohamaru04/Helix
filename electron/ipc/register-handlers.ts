@@ -21,6 +21,7 @@ import {
   conversationSearchResultSchema,
   conversationSummarySchema,
   createWorkspaceInputSchema,
+  deleteWorkspaceInputSchema,
   deleteConversationInputSchema,
   editMessageInputSchema,
   exportConversationInputSchema,
@@ -351,6 +352,10 @@ export function registerIpcHandlers(context: DesktopAppContext): void {
       )
     )
   );
+
+  ipcMain.handle(IpcChannels.chatDeleteWorkspace, (_event, payload) => {
+    context.chatService.deleteWorkspace(deleteWorkspaceInputSchema.parse(payload).workspaceId);
+  });
 
   ipcMain.handle(IpcChannels.chatListConversations, () =>
     context.chatService

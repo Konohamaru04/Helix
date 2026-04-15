@@ -537,6 +537,10 @@ export const updateWorkspaceRootInputSchema = z.object({
   rootPath: z.string().trim().min(1).nullable()
 });
 
+export const deleteWorkspaceInputSchema = z.object({
+  workspaceId: uuidSchema
+});
+
 export const capabilityPermissionInputSchema = z.object({
   capabilityId: z.string().trim().min(1),
   scopeKind: permissionScopeKindSchema,
@@ -808,6 +812,7 @@ export type GenerationStreamEvent = z.infer<typeof generationStreamEventSchema>;
 export type SearchConversationsInput = z.infer<typeof searchConversationsInputSchema>;
 export type CreateWorkspaceInput = z.infer<typeof createWorkspaceInputSchema>;
 export type UpdateWorkspaceRootInput = z.infer<typeof updateWorkspaceRootInputSchema>;
+export type DeleteWorkspaceInput = z.infer<typeof deleteWorkspaceInputSchema>;
 export type CapabilityPermissionInput = z.infer<typeof capabilityPermissionInputSchema>;
 export type WorkspaceDirectorySelection = z.infer<
   typeof workspaceDirectorySelectionSchema
@@ -864,6 +869,7 @@ export const IpcChannels = {
   chatCreateWorkspace: 'chat:create-workspace',
   chatPickWorkspaceDirectory: 'chat:pick-workspace-directory',
   chatUpdateWorkspaceRoot: 'chat:update-workspace-root',
+  chatDeleteWorkspace: 'chat:delete-workspace',
   chatListConversations: 'chat:list-conversations',
   chatSearchConversations: 'chat:search-conversations',
   chatGetMessages: 'chat:get-messages',
@@ -922,6 +928,7 @@ export interface DesktopApi {
     createWorkspace: (input: CreateWorkspaceInput) => Promise<WorkspaceSummary>;
     pickWorkspaceDirectory: () => Promise<WorkspaceDirectorySelection>;
     updateWorkspaceRoot: (input: UpdateWorkspaceRootInput) => Promise<WorkspaceSummary>;
+    deleteWorkspace: (input: DeleteWorkspaceInput) => Promise<void>;
     listConversations: () => Promise<ConversationSummary[]>;
     searchConversations: (input: SearchConversationsInput) => Promise<ConversationSearchResult[]>;
     getConversationMessages: (conversationId: string) => Promise<StoredMessage[]>;

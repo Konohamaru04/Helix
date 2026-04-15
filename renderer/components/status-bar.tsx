@@ -52,9 +52,9 @@ function formatVramDetail(systemStatus: SystemStatus | null) {
   }
 
   const usedMb = Math.max(0, vram.totalMb - vram.freeMb);
-  const usedGb = (usedMb / 1024).toFixed(1);
-  const totalGb = (vram.totalMb / 1024).toFixed(1);
-  return `${usedGb} / ${totalGb} GB used`;
+  const usedDisplay = Math.round(usedMb);
+  const totalDisplay = Math.round(vram.totalMb);
+  return `${usedDisplay} / ${totalDisplay} MiB`;
 }
 
 function formatPythonDetail(systemStatus: SystemStatus | null) {

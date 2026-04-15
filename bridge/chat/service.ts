@@ -1318,6 +1318,23 @@ export class ChatService {
     return updatedWorkspace;
   }
 
+  deleteWorkspace(workspaceId: string): void {
+    const workspace = this.repository.getWorkspace(workspaceId);
+
+    if (!workspace) {
+      throw new Error(`Workspace ${workspaceId} was not found.`);
+    }
+
+    const all = this.repository.listWorkspaces();
+
+    if (all.length <= 1) {
+      throw new Error('Cannot delete the last workspace.');
+    }
+
+    this.repository.deleteWorkspace(workspaceId);
+    this.logger.info({ workspaceId, name: workspace.name }, 'Deleted workspace');
+  }
+
   searchConversations(query: string) {
     return this.repository.searchConversations(query);
   }

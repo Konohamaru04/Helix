@@ -136,11 +136,33 @@ class ModelManager:
                 "allocated_mb": None,
             }
 
-        device = torch.device("cuda", torch.cuda.current_device())
-        free_bytes, total_bytes = torch.cuda.mem_get_info(device)
+        device_index = torch.cuda.current_device()
+        device = torch.device("cuda", device_index)
         reserved_bytes = torch.cuda.memory_reserved(device)
         allocated_bytes = torch.cuda.memory_allocated(device)
 
+        # torch.cuda.mem_get_info (cudaMemGetInfo) is unreliable on Windows WDDM —
+        # it ignores other processes' physical VRAM allocations (e.g. Ollama loaded
+        # models). Use NVML instead, which returns real dedicated VRAM across all
+        # processes, matching what Task Manager reports.
+        try:
+            from pynvml import nvmlInit, nvmlDeviceGetHandleByIndex, nvmlDeviceGetMemoryInfo  # type: ignore[import]
+            nvmlInit()
+            handle = nvmlDeviceGetHandleByIndex(device_index)
+            info = nvmlDeviceGetMemoryInfo(handle)
+            return {
+                "device": f"cuda:{device_index}",
+                "cuda_available": True,
+                "total_mb": round(info.total / (1024 * 1024), 2),
+                "free_mb": round(info.free / (1024 * 1024), 2),
+                "reserved_mb": round(reserved_bytes / (1024 * 1024), 2),
+                "allocated_mb": round(allocated_bytes / (1024 * 1024), 2),
+            }
+        except Exception:
+            pass
+
+        # Fallback: torch built-in (inaccurate on Windows WDDM, accurate on Linux)
+        free_bytes, total_bytes = torch.cuda.mem_get_info(device)
         return {
             "device": str(device),
             "cuda_available": True,

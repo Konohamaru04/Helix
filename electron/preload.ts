@@ -26,6 +26,7 @@ import {
   conversationSearchResultSchema,
   conversationSummarySchema,
   createWorkspaceInputSchema,
+  deleteWorkspaceInputSchema,
   exportConversationInputSchema,
   exportConversationResultSchema,
   imageGenerationModelCatalogSchema,
@@ -212,6 +213,12 @@ const desktopApi: DesktopApi = {
           updateWorkspaceRootInputSchema.parse(input)
         )
       ),
+    deleteWorkspace: async (input) => {
+      await ipcRenderer.invoke(
+        IpcChannels.chatDeleteWorkspace,
+        deleteWorkspaceInputSchema.parse(input)
+      );
+    },
     listConversations: async () => {
       const payload = (await ipcRenderer.invoke(
         IpcChannels.chatListConversations

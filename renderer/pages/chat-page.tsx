@@ -135,6 +135,7 @@ export function ChatPage() {
   const createWorkspace = useAppStore((state) => state.createWorkspace);
   const pickWorkspaceDirectory = useAppStore((state) => state.pickWorkspaceDirectory);
   const updateWorkspaceRoot = useAppStore((state) => state.updateWorkspaceRoot);
+  const deleteWorkspace = useAppStore((state) => state.deleteWorkspace);
   const refreshWorkspaceKnowledge = useAppStore((state) => state.refreshWorkspaceKnowledge);
   const setSearchQuery = useAppStore((state) => state.setSearchQuery);
   const selectConversation = useAppStore((state) => state.selectConversation);
@@ -498,6 +499,7 @@ export function ChatPage() {
               resetComposer();
               void selectWorkspace(workspaceId);
             }}
+            onDeleteWorkspace={(workspaceId) => void deleteWorkspace(workspaceId)}
             searchQuery={searchQuery}
             searchResults={searchResults}
             workspaces={workspaces}

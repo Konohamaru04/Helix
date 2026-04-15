@@ -201,6 +201,19 @@ export class ChatRepository {
     return workspace;
   }
 
+  deleteWorkspace(workspaceId: string): void {
+    // Delete conversations first so messages cascade (conversations.workspace_id is ON DELETE SET NULL,
+    // not CASCADE — explicitly deleting here triggers the messages FK cascade chain).
+    this.database.connection
+      .prepare('DELETE FROM conversations WHERE workspace_id = ?')
+      .run(workspaceId);
+    // Deleting the workspace cascades: knowledge_documents, knowledge_chunks,
+    // capability_tasks, plan_state (all have ON DELETE CASCADE).
+    this.database.connection
+      .prepare('DELETE FROM workspaces WHERE id = ?')
+      .run(workspaceId);
+  }
+
   updateWorkspaceRoot(workspaceId: string, rootPath: string | null): WorkspaceSummary {
     const updatedAt = nowIso();
     this.database.connection
