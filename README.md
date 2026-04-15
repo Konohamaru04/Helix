@@ -1,5 +1,9 @@
 # Helix
 
+[![CI](https://github.com/Konohamaru04/Abstergo-Helix/actions/workflows/ci.yml/badge.svg)](https://github.com/Konohamaru04/Abstergo-Helix/actions/workflows/ci.yml)
+[![Build](https://github.com/Konohamaru04/Abstergo-Helix/actions/workflows/build.yml/badge.svg)](https://github.com/Konohamaru04/Abstergo-Helix/actions/workflows/build.yml)
+[![CodeQL](https://github.com/Konohamaru04/Abstergo-Helix/actions/workflows/codeql.yml/badge.svg)](https://github.com/Konohamaru04/Abstergo-Helix/actions/workflows/codeql.yml)
+
 **Local-first desktop AI workbench** — built with Electron, React, SQLite, and a managed Python inference server.
 
 Helix runs entirely on your machine. Chat with local Ollama models or NVIDIA-hosted models, use a full agentic tool surface, retrieve from your own knowledge base, and generate images — all without sending your data to a third-party service unless you opt in.
