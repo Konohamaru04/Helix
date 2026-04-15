@@ -3,6 +3,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { APP_USER_AGENT, APP_WORKTREE_DIRECTORY_NAME } from '@bridge/branding';
+import { isBinaryExtension } from '@bridge/tools';
 import type { ChatRepository } from '@bridge/chat/repository';
 import {
   type AgentSession,
@@ -722,6 +723,10 @@ function createSource(input: {
 }
 
 async function readSafeTextFile(filePath: string): Promise<string> {
+  if (isBinaryExtension(filePath)) {
+    throw new Error(`Cannot read \`${path.basename(filePath)}\` — binary files are not supported.`);
+  }
+
   const fileStat = await stat(filePath);
 
   if (!fileStat.isFile()) {
@@ -1108,7 +1113,7 @@ export class CapabilityService {
       contextSources: [
         createSource({
           label: path.basename(resolvedPath),
-          excerpt: contents.slice(0, 600),
+          excerpt: contents.slice(0, 600) || '(empty file)',
           sourcePath: resolvedPath
         })
       ]
@@ -1556,7 +1561,7 @@ export class CapabilityService {
       contextSources: [
         createSource({
           label: path.basename(resolvedPath),
-          excerpt: contents.slice(0, 600),
+          excerpt: contents.slice(0, 600) || '(empty file)',
           sourcePath: resolvedPath
         })
       ]

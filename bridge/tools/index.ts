@@ -1,6 +1,31 @@
 import { randomUUID } from 'node:crypto';
 import { readFile, readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
+
+export const BINARY_EXTENSIONS = new Set([
+  // Images
+  'png', 'jpg', 'jpeg', 'gif', 'bmp', 'ico', 'webp', 'svg', 'tiff', 'tif', 'avif',
+  // Audio/Video
+  'mp3', 'mp4', 'wav', 'avi', 'mov', 'mkv', 'flac', 'ogg', 'wma', 'wmv', 'webm', 'm4a', 'm4v',
+  // Archives
+  'zip', 'tar', 'gz', 'rar', '7z', 'bz2', 'xz', 'zst', 'tgz',
+  // Documents (binary formats)
+  'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'odt', 'ods', 'odp',
+  // Executables / Compiled
+  'exe', 'dll', 'so', 'dylib', 'bin', 'obj', 'o', 'class', 'jar', 'war',
+  'pyc', 'pyo', 'wasm',
+  // Database
+  'sqlite', 'sqlite3', 'db', 'mdb',
+  // Fonts
+  'ttf', 'otf', 'woff', 'woff2', 'eot',
+  // Other binary
+  'iso', 'dmg', 'pkg', 'deb', 'rpm', 'apk', 'app', 'msi',
+]);
+
+export function isBinaryExtension(filePath: string): boolean {
+  const ext = path.extname(filePath).toLowerCase().replace(/^\./, '');
+  return BINARY_EXTENSIONS.has(ext);
+}
 import type { CapabilityService } from '@bridge/capabilities';
 import type { ChatRepository } from '@bridge/chat/repository';
 import type { CapabilityTask, ContextSource, PlanState, ToolDefinition, ToolInvocation } from '@bridge/ipc/contracts';
@@ -608,6 +633,10 @@ async function buildRecursiveDirectorySnapshot(
 }
 
 async function readSearchableTextFile(filePath: string): Promise<string | null> {
+  if (isBinaryExtension(filePath)) {
+    return null;
+  }
+
   const fileStat = await stat(filePath);
 
   if (!fileStat.isFile() || fileStat.size > MAX_WORKSPACE_SEARCH_BYTES) {
@@ -1965,6 +1994,12 @@ export class ToolDispatcher {
 
     if (fileStat.size > MAX_FILE_READER_BYTES) {
       throw new Error('The file is too large for the safe reader limit.');
+    }
+
+    if (isBinaryExtension(resolvedPath)) {
+      throw new Error(
+        `Cannot read \`${path.basename(resolvedPath)}\` — binary files are not supported.`
+      );
     }
 
     const buffer = await readFile(resolvedPath);

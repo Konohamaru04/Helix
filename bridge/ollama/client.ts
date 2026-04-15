@@ -455,7 +455,7 @@ export class OllamaClient {
         body: JSON.stringify(
           this.buildChatRequestBody({
             model: input.model,
-            stream: true,
+            stream: false,
             messages: input.messages,
             ...(input.numCtx === undefined ? {} : { numCtx: input.numCtx }),
             ...(input.tools && input.tools.length > 0 ? { tools: input.tools } : {}),
@@ -463,7 +463,7 @@ export class OllamaClient {
           })
         )
       },
-      stream: true
+      stream: false
     });
 
     const rawBody = await response.text();
@@ -528,7 +528,9 @@ export class OllamaClient {
         .filter(Boolean);
 
       if (lines.length <= 1) {
-        throw error;
+        throw new Error(
+          `Ollama returned unexpected response format (not valid JSON and not line-delimited). First 200 chars: ${trimmedBody.slice(0, 200)}`
+        );
       }
 
       let content = '';

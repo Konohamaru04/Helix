@@ -175,7 +175,7 @@ export const contextSourceSchema = z.object({
   id: uuidSchema,
   kind: contextSourceKindSchema,
   label: z.string().min(1),
-  excerpt: z.string().min(1),
+  excerpt: z.string(),
   sourcePath: z.string().min(1).nullable(),
   documentId: uuidSchema.nullable(),
   score: z.number().nullable()
