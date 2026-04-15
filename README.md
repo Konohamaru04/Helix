@@ -1,161 +1,427 @@
 # Helix
 
-Local-first desktop AI workbench by Abstergo, built with Electron, React, typed IPC, SQLite, and a managed Python inference server.
+**Local-first desktop AI workbench** — built with Electron, React, SQLite, and a managed Python inference server.
 
-## Current milestone
+Helix runs entirely on your machine. Chat with local Ollama models or NVIDIA-hosted models, use a full agentic tool surface, retrieve from your own knowledge base, and generate images — all without sending your data to a third-party service unless you opt in.
 
-Milestones 1 through 6.3 are complete.
+---
 
-Still planned:
+## Features
 
-- `6.4 Future generation surfaces`
-- `7 MCP`
-- `8 Polish and release hardening`
+### Chat
 
-Milestones 4 and 5 now include:
+- Multi-workspace, multi-conversation chat with full SQLite history and FTS5 full-text search
+- Streaming replies with buffered rendering so fast models don't flicker
+- `<think>…</think>` blocks parsed and collapsed into expandable reasoning sections
+- Token usage, route trace, fallback visibility, and pin-to-memory controls per turn
+- Edit and resend last user message; regenerate or retry last assistant response
+- Stop in-flight replies without breaking the stream lifecycle
+- Attachment previews in the composer and transcript (images, files)
+- Import and export conversations through the bridge
 
-- routed chat with follow-up-aware heuristics
-- route traces, token usage, fallback visibility, and pin-to-memory controls in the transcript
-- safe built-in tools for calculator, code running, file reading, workspace listing, workspace opening, workspace search, workspace knowledge search, and web search
-- automatic skill activation for grounded answers, builder mode, debugger mode, reviewer mode, and stepwise reasoning
-- automatic tool and skill routing in the bridge, with explicit directive support still available for advanced flows
-- native Ollama `/api/chat` tool-calling support for the implemented capability surface so models can automatically choose local tools when needed
-- tool trace rendering and source provenance rendering
-- workspace knowledge import, chunking, local embeddings, hybrid retrieval, citation cards, and memory summarization/pruning
-- connectable workspace folders for project-relative tool access
-- transcript auto-scroll and bounded code-block rendering
-- in-flight chat replies can be stopped from the composer without breaking the stream lifecycle
-- permissioned agentic capability surfaces for tasks, schedules, worktrees, agent sessions, shell execution, file mutation, notebook edits, and audit logging
+### Routing
 
-Milestone 6 progress today includes:
+The bridge classifies every turn and picks a strategy from: `chat`, `skill-chat`, `tool`, `tool-chat`, `rag-chat`, `rag-tool`.
 
-- managed FastAPI image-generation routes through the bundled `python_embeded` runtime
-- persisted generation jobs and generated-image artifacts in SQLite
-- shared-composer image mode with image jobs rendered directly inside the chat timeline
-- normal chat submit in `Auto` mode can now auto-route image creation and image-edit prompts into inline generation jobs, including follow-up edits that reuse the latest generated image as the reference input
-- typed IPC progress updates for queued, running, completed, failed, and cancelled jobs
-- cancellation for image jobs from the queue
-- ordered Python-worker shutdown on app exit, including job cancellation, model unload, VRAM cleanup, and embedded ComfyUI teardown
-- image-generation settings now support an additional local models directory and discover compatible local diffusers directories and checkpoint files from roots such as `ComfyUI\models`
-- image-generation settings now also discover GGUF checkpoints from ComfyUI-style `diffusion_models` roots, with Qwen Image text models and Qwen Image Edit 2511 GGUF checkpoints selectable from the same catalog
-- the Qwen Image Edit 2511 flow now preserves workflow metadata, keeps reference attachments from the shared composer, and routes image-to-image jobs through a dedicated Qwen edit worker path with workflow-specific defaults
-- Python worker status now includes loaded image backend and VRAM telemetry, surfaced in the status bar
+Priority order:
+1. Explicit `/tool` directive
+2. Explicit `@skill` directive
+3. Model-assisted analysis (when confidence ≥ 0.55)
+4. Heuristic intent detection
+5. Follow-up carry-forward from the previous turn
+6. Plain chat
 
-Still pending after the current slice:
+Model roles per turn (configured in Settings):
+- **General** — default conversation and fallback
+- **Coding** — code-heavy prompts detected by heuristic or model analysis
+- **Vision** — image attachments or multimodal prompts
 
-- video and audio generation jobs
-- external MCP server config, connection management, tool manifests, and prompt sync
-- release hardening
+### Tools
 
-Terminology:
+Built-in heuristic-routed tools:
 
-- Workspace: a project-style container that groups related chats and local knowledge
-- Workspace folder: an optional local directory bound to a workspace so tools can resolve relative project paths safely
-- Chat: one conversation thread inside a workspace
+| Tool | Trigger |
+|---|---|
+| `calculator` | Math expressions, compute/evaluate/what-is |
+| `code-runner` | Run/execute + JS code block or `javascript` keyword |
+| `file-reader` | Read/show/summarize + file path |
+| `workspace-lister` | `ls`, `dir`, list/show + files/folders/tree |
+| `workspace-search` | Find/search/locate + function/component/class/file |
+| `workspace-opener` | Open/play/launch + file or folder target |
+| `knowledge-search` | Search/cite + doc/knowledge/manual |
+| `web-search` | "search the web", latest/current + search |
 
-Current UI simplification:
+Agentic tool surface (exposed to Ollama native tool calling):
+`Agent`, `AskUserQuestion`, `SendMessage`, `Read`, `Glob`, `Grep`, `Write`, `Edit`, `NotebookEdit`, `Bash`, `PowerShell`, `Monitor`, `TaskCreate`, `TaskGet`, `TaskList`, `TaskOutput`, `TaskStop`, `TaskUpdate`, `TodoWrite`, `CronCreate`, `CronDelete`, `CronList`, `EnterPlanMode`, `ExitPlanMode`, `EnterWorktree`, `ExitWorktree`, `LSP`, `ToolSearch`, `WebFetch`, `ListMcpResourcesTool`, `ReadMcpResourceTool`, `Skill`, `TeamCreate`, `TeamDelete`
 
-- the sidebar is navigation-focused for workspaces, search, and chat history
-- workspace actions stay inside the chat surface, with folder and docs controls now tucked into the composer gear menu beside the `+` button
-- settings open from the primary header action instead of being duplicated in the status bar
-- the composer no longer exposes manual tool or skill pickers; routing chooses them automatically when needed
-- chat model selection defaults to `Auto`, which uses Settings to route between General, Coding, and Vision models per turn
+Permissions are grant-stored in SQLite with a full audit log. The renderer exposes a capability settings UI.
 
-Model routing:
+### Skills
 
-- `Text backend` selects the provider for normal routed text chat turns
-- `Ollama` remains the default local-first text backend
-- `NVIDIA` uses the OpenAI-compatible NVIDIA chat API path and requires an API key in Settings
-- `General (base)` handles normal conversation and is the fallback route
-- `Coding` is used for code-heavy prompts such as HTML/CSS, debugging, and implementation tasks
-- `Vision` is used for image attachments and multimodal prompts
-- `Image Gen` is now active and drives the managed Python image worker
-- `Image Gen` can use the built-in placeholder backend, discovered local diffusers models, supported Qwen GGUF image checkpoints, and the dedicated Qwen Image Edit 2511 workflow for reference-guided jobs
-- in `Auto`, normal text prompts can create inline image jobs directly without switching the composer into image mode first
-- `Video Gen` remains visible but disabled until later Milestone 6 slices
-- the current NVIDIA slice is text-only; image attachment analysis and native tool-calling still stay on the Ollama path
+Five built-in Markdown-driven skills, auto-activated by intent:
 
-Auto routing behavior:
+| Skill | Auto-trigger |
+|---|---|
+| `grounded` | cite/source/reference + workspace has knowledge |
+| `reviewer` | review/audit/inspect/code review |
+| `debugger` | debug/fix/broken/error/exception |
+| `stepwise` | step-by-step/steps/plan/walk me through |
+| `builder` | create/build/implement + code intent |
 
-- direct `/tool` and `@skill` directives always win
-- ambiguous follow-ups can reuse the previous tool or skill
-- model-assisted routing is the default product path for tool and skill selection
-- the bridge can now auto-select safe workspace tools for file reads, file searches, folder listings, code execution, grounded knowledge lookups, and web lookups
-- the bridge can now open safe workspace files like videos, images, PDFs, and folders with the system default app from prompts such as `play video.mp4` or `open docs/guide.pdf`
-- the bridge can run dependency-free JavaScript snippets from prompts such as `Run this JavaScript: \`\`\`js ... \`\`\``
-- the bridge can search the public web for latest/current prompts and return source-linked snippets
-- the bridge can auto-select built-in skills for builder, debugger, reviewer, grounded, and stepwise response modes
-- the bridge can also expose the broader Milestone 4.1 capability surface to Ollama-native tool calling, including `Agent`, `AskUserQuestion`, `Read`, `Glob`, `Grep`, `Write`, `Edit`, `Bash`, `PowerShell`, `Monitor`, `Task*`, `TodoWrite`, `Cron*`, `Enter/ExitPlanMode`, `Enter/ExitWorktree`, `NotebookEdit`, `LSP`, `ListMcpResourcesTool`, `ReadMcpResourceTool`, `SendMessage`, `Team*`, `Skill`, `ToolSearch`, and `WebFetch`
-- when no tool or skill is needed, the turn stays as normal chat and uses the configured model roles
+User-defined skills go in `skills/user/`.
 
-Milestone 4.1 is now implemented; [docs/tool-spike.md](docs/tool-spike.md) remains as the design record for that capability map and permission model.
+### RAG & Memory
 
-Track progress in [docs/milestones.md](docs/milestones.md).
+- Document ingestion with text chunking
+- Local 96-dim hash-based embeddings (no external model required)
+- Hybrid FTS5 + semantic retrieval, configurable per workspace
+- Citation cards and source provenance in the transcript
+- Conversation memory summarization and pruning; pinned messages survive summarization
 
-## Run locally
+### Image Generation
 
-1. Install Node dependencies:
+Managed FastAPI worker launched from `python_embeded\python.exe`:
 
-```powershell
-npm install
+| Backend | Model source | Load strategy |
+|---|---|---|
+| `builtin:placeholder` | Built-in smoke test backend | — |
+| `diffusers` | Local directory with `model_index.json` | `diffusers-directory` |
+| `diffusers` | `.safetensors`/`.ckpt`/`.pt`/`.pth` checkpoint | `diffusers-single-file` |
+| `diffusers` | GGUF Qwen Image (text-to-image) | `diffusers-gguf` |
+| `comfyui` | GGUF Qwen Image Edit (image-to-image) | `comfyui-workflow` |
+
+GGUF architecture is sniffed from file headers (`qwen_image`, `wan`, `flux`). Wan and FLUX families are discovered but gated — not yet enabled.
+
+`Auto` chat submit routes image creation and follow-up edit prompts directly to inline generation jobs. The `Auto` flow reuses the latest generated image as the reference input for edit follow-ups.
+
+GPU headroom is enforced before loading models. The Python worker persists queued and running jobs to a restart-safe state file and replays them on boot. Desktop notifications fire on job completion and failure. Failed jobs can be retried from the chat timeline or the queue drawer.
+
+### Workspaces
+
+- Workspace folders bind a local directory for project-relative tool access
+- Per-workspace knowledge base — import, chunk, index, retrieve
+- Workspace prompt, skills, pinned memory, and RAG chunks assembled in a deterministic order per turn
+
+---
+
+## Tech Stack
+
+| | |
+|---|---|
+| Shell | Electron 41 |
+| Renderer | React 19, TypeScript 6, Tailwind CSS 3 |
+| Build | electron-vite, Vite 7 |
+| State | Zustand 5 |
+| Schema validation | Zod 4 |
+| Persistence | SQLite (WAL, FK enforced) — 13 numbered migrations |
+| Logging | Pino (structured, main process) |
+| Testing | Vitest, @testing-library/react, pytest |
+| Text inference | Ollama (local REST + streaming), NVIDIA OpenAI-compatible API |
+| Image inference | FastAPI + diffusers + ComfyUI (managed child process) |
+| Python runtime | Bundled `python_embeded\python.exe` |
+
+---
+
+## Repository Structure
+
+```
+├── package.json
+├── electron.vite.config.ts
+├── electron-builder.yml
+├── tsconfig.json
+├── tsconfig.base.json
+├── tsconfig.node.json
+├── tsconfig.renderer.json
+├── vitest.config.ts
+├── tailwind.config.ts
+├── postcss.config.cjs
+├── eslint.config.mjs
+├── pytest.ini
+├── CLAUDE.md
+├── AGENTS.md
+│
+├── renderer/
+│   ├── index.html
+│   ├── main.tsx
+│   ├── App.tsx
+│   ├── styles.css
+│   ├── components/
+│   ├── pages/
+│   ├── store/
+│   ├── hooks/
+│   └── lib/
+│
+├── electron/
+│   ├── main.ts
+│   ├── preload.ts
+│   └── ipc/
+│
+├── bridge/
+│   ├── app-context.ts
+│   ├── branding.ts
+│   ├── router.ts
+│   ├── context.ts
+│   ├── jsonish.ts
+│   ├── path-prompt.ts
+│   ├── rag.ts
+│   ├── embeddings.ts
+│   ├── memory.ts
+│   ├── queue.ts
+│   ├── chat/
+│   ├── tools/
+│   ├── capabilities/
+│   ├── skills/
+│   ├── generation/
+│   ├── ollama/
+│   ├── python/
+│   ├── mcp/
+│   ├── db/
+│   ├── settings/
+│   ├── nvidia/
+│   ├── ipc/
+│   └── logging/
+│
+├── inference_server/
+├── comfyui_backend/
+├── python_embeded/
+│
+├── skills/
+│   ├── builtin/
+│   └── user/
+│
+├── knowledge/
+│
+├── tests/
+│   ├── node/
+│   ├── renderer/
+│   └── python/
+│
+└── docs/
 ```
 
-2. Choose the text backend you want to use:
-   - `Ollama`: ensure Ollama is running locally and at least one model is available.
-   - `NVIDIA`: open Settings, switch `Text backend` to `NVIDIA`, and add a valid NVIDIA API key. The default base URL is `https://integrate.api.nvidia.com/v1`.
+### Root
 
-3. Ensure Python dependencies for the managed API are available in `python_embeded`.
-   The app treats `python_embeded\python.exe` as the bundled self-contained runtime and launches the root-level `inference_server/` package from there.
+| File | Description |
+|------|-------------|
+| `package.json` | Dependencies + npm scripts |
+| `electron.vite.config.ts` | Vite + Electron build config; defines `@bridge`, `@electron`, `@renderer` path aliases |
+| `electron-builder.yml` | Electron packaging + installer config |
+| `tsconfig.json` | Root TypeScript config |
+| `tsconfig.base.json` | Shared TS base (extended by node + renderer configs) |
+| `tsconfig.node.json` | Main process TS config |
+| `tsconfig.renderer.json` | Renderer TS config |
+| `vitest.config.ts` | Vitest test runner config |
+| `tailwind.config.ts` | Tailwind CSS config |
+| `postcss.config.cjs` | PostCSS config |
+| `eslint.config.mjs` | ESLint config |
+| `pytest.ini` | Python test config |
+| `CLAUDE.md` | AI assistant codebase instructions |
+| `AGENTS.md` | Agent instructions |
 
-4. Start the app:
+### `renderer/`
 
-```powershell
+| Path | Description |
+|------|-------------|
+| `index.html` | HTML shell |
+| `main.tsx` | Renderer entry point |
+| `App.tsx` | Root React component |
+| `styles.css` | Global styles |
+| `components/` | attachment-card, chat-composer, desktop-only-notice, generation-job-card, generation-thread-item, message-bubble, message-list, plan-drawer, queue-drawer, settings-drawer, sidebar, status-bar |
+| `pages/chat-page.tsx` | Main chat page |
+| `store/app-store.ts` | Zustand store |
+| `hooks/use-app-bootstrap.ts` | App bootstrap hook |
+| `lib/api.ts` | Renderer-side API helpers |
+| `lib/attachments.ts` | Attachment utilities |
+| `lib/format.ts` | Formatting utilities |
+| `lib/image-generation-models.ts` | Image model helpers |
+| `lib/message-content.ts` | Message content utilities |
+
+### `electron/`
+
+| Path | Description |
+|------|-------------|
+| `main.ts` | App entry — BrowserWindow, IPC registration, process lifecycle |
+| `preload.ts` | Typed bridge API exposed to renderer via contextBridge |
+| `ipc/register-handlers.ts` | IPC handler registrations |
+
+### `bridge/`
+
+| Path | Description |
+|------|-------------|
+| `app-context.ts` | Wires all services together; single source of service instances |
+| `branding.ts` | `APP_DISPLAY_NAME = 'Helix'` + package/company constants |
+| `router.ts` | Intent classifier + model routing (chat, skill-chat, tool, rag-chat…) |
+| `context.ts` | Context assembly in prompt order |
+| `jsonish.ts` | Loose JSON parsing (`parseLooseJson`, `asRecord` helpers) |
+| `path-prompt.ts` | Regex-based path token extraction from prompts |
+| `rag.ts` | Chunking + hybrid FTS5/semantic retrieval |
+| `embeddings.ts` | Local 96-dim hash-based embedding model (no external deps) |
+| `memory.ts` | Conversation memory summarization + pruning |
+| `queue.ts` | Generation job queue |
+| `chat/` | `service.ts`, `repository.ts`, `turn-metadata.ts`, `attachment-utils.ts` |
+| `tools/` | `index.ts` (schemas + dispatch), `code-runner.ts`, `web-search.ts` |
+| `capabilities/` | `index.ts` (type defs), `repository.ts`, `service.ts` |
+| `skills/index.ts` | Skill loader — reads Markdown from `skills/builtin/` + `skills/user/` |
+| `generation/` | `service.ts`, `catalog.ts`, `repository.ts` |
+| `ollama/client.ts` | OllamaClient — REST + streaming + native tool-call loop |
+| `python/lifecycle.ts` | PythonServerManager child process lifecycle |
+| `mcp/index.ts` | MCP surface wiring |
+| `db/` | `database.ts`, `migrations/`, `sql-raw.d.ts` |
+| `settings/service.ts` | SettingsService |
+| `nvidia/catalog.ts` | NVIDIA model catalog helpers |
+| `nvidia/client.ts` | NvidiaClient — GPU status detection, model listing |
+| `ipc/contracts.ts` | Zod schemas for all typed IPC payloads |
+| `logging/logger.ts` | Pino structured logger |
+
+### Other
+
+| Path | Description |
+|------|-------------|
+| `inference_server/` | FastAPI image-generation server (`/generation`, `/health`) |
+| `comfyui_backend/` | ComfyUI integration (`job_queue.py`, `model_manager.py`, `comfyui_runner.py`) |
+| `python_embeded/` | Bundled self-contained Python runtime (`python.exe`) |
+| `skills/builtin/` | Built-in skills: grounded, builder, debugger, reviewer, stepwise |
+| `skills/user/` | User-defined skill Markdown files |
+| `knowledge/` | Knowledge base files for RAG ingestion |
+| `tests/node/` | Node-side Vitest tests |
+| `tests/renderer/` | Renderer-side Vitest + @testing-library tests |
+| `tests/python/` | pytest tests |
+| `docs/` | architecture.md, decisions.md, milestones.md, security.md, testing.md, tool-spike.md, mcp.md |
+
+---
+
+## Getting Started
+
+### Prerequisites
+
+- Node.js 20+
+- One of:
+  - **Ollama** running locally with at least one model pulled
+  - **NVIDIA API key** for the cloud text backend
+- `python_embeded\python.exe` with inference server dependencies (bundled in packaged builds; required manually for dev)
+
+### Run in development
+
+```bash
+npm install
 npm run dev
 ```
 
-Use the Electron window that opens. The Vite localhost URL is only the renderer dev server and will not expose the desktop preload bridge in a normal browser.
+Open the Electron window. The Vite dev server URL printed in the terminal is the renderer dev server only — it does not expose the preload bridge in a browser.
 
-## Build a Windows `.exe`
+### Configure text backend
 
-Create a runnable Windows desktop build:
+Open **Settings** in the app header.
 
-```powershell
+| Backend | What to set |
+|---|---|
+| **Ollama** (default) | Ensure Ollama is running. Default URL: `http://127.0.0.1:11434` |
+| **NVIDIA** | Switch `Text backend` to `NVIDIA`. Add API key. Default URL: `https://integrate.api.nvidia.com/v1` |
+
+Set **General**, **Coding**, and **Vision** model slots to the models you have pulled. Leave a slot blank to fall back to the General model.
+
+---
+
+## Build
+
+```bash
+# Windows unpacked directory + installer
 npm run package:win
-```
 
-Fast packaging smoke check without the final installer:
-
-```powershell
+# Quick smoke check — no installer, faster
 npm run package:dir
 ```
 
-Artifacts are written to `release/`. The app executable is `release/win-unpacked/Helix.exe`, and it should stay beside the rest of the generated `win-unpacked` folder contents.
+Artifacts land in `release/`. The executable is `release/win-unpacked/Helix.exe` and must stay alongside the rest of the `win-unpacked/` contents.
 
-Packaged builds resolve runtime assets such as `python_embeded/`, `inference_server/`, `comfyui_backend/`, and `skills/` from the Electron `resources/` directory, while logs and mutable runtime data live under Electron `userData`.
+In packaged builds, `python_embeded/`, `inference_server/`, `comfyui_backend/`, and `skills/` are resolved from the Electron `resources/` directory. Logs and runtime data (`ollama-desktop.sqlite`, generation artifacts) live under Electron `userData`.
+
+---
 
 ## Validation
 
-```powershell
-npm run verify
+```bash
+npm run verify   # lint + typecheck + test + test:python + build
 ```
 
-That runs:
+| Command | What it runs |
+|---|---|
+| `npm run lint` | ESLint |
+| `npm run typecheck` | `tsc` for main and renderer tsconfigs |
+| `npm run test` | Vitest (Node + renderer) |
+| `npm run test:watch` | Vitest watch mode |
+| `npm run test:python` | pytest via `python_embeded\python.exe` |
+| `npm run build` | Production electron-vite build |
 
-- `npm run lint`
-- `npm run typecheck`
-- `npm run test`
-- `npm run test:python`
-- `npm run build`
+Run one file: `npx vitest run tests/node/my.test.ts`
 
-## Repository shape
+---
 
-The codebase is organized around strict layer boundaries:
+## Architecture
 
-- `renderer/`: React UI, Zustand state, presentational components
-- `electron/`: main process, preload, IPC registration
-- `bridge/`: orchestration, routing, tools, skills, RAG, SQLite access, Ollama client, Python lifecycle
-- `inference_server/`: FastAPI bootstrap server
-- `comfyui_backend/`: bundled ComfyUI sidecar tree
-- `tests/`: node, renderer, and python coverage
+Strict layer boundaries — never bypass them:
 
-See [docs/architecture.md](docs/architecture.md) for the implemented design.
+- `renderer/` communicates only through `window.ollamaDesktop` (contextBridge). No direct SQLite, Ollama, or Python access.
+- `bridge/` owns all orchestration and is imported only from `electron/main`. Never from `renderer/`.
+- The Python inference server is a localhost-only child process (`127.0.0.1:8765` by default). The renderer never calls it directly.
+
+Data flow:
+
+```
+User → Zustand → window.ollamaDesktop (preload) → IPC
+  → electron/main → ChatService → ChatRouter → OllamaClient
+  → stream events → IPC → renderer
+
+Image job:
+  renderer → IPC → GenerationService → PythonServerManager
+  → FastAPI (localhost) → polling → typed IPC updates → renderer
+```
+
+Context assembly order per turn:
+1. System base prompt
+2. Workspace prompt
+3. Skill prompt
+4. Pinned memory
+5. Retrieved knowledge chunks
+6. Summarized memory blobs
+7. Recent raw turns
+8. Current user turn
+
+SQLite lives at `userData/data/ollama-desktop.sqlite`. All schema changes go through numbered migrations in `bridge/db/migrations/`. The schema is currently at migration 013.
+
+See [docs/architecture.md](docs/architecture.md) for the full design record.
+
+---
+
+## Roadmap
+
+| Milestone | Description | Status |
+|---|---|---|
+| 1 | Foundation — Electron shell, IPC, SQLite, Ollama connectivity | ✅ Done |
+| 2 | Workspaces & chat UX — sidebar, search, attachments, model selector | ✅ Done |
+| 3 | Routing & context — intent classifier, token usage, RAG assembly | ✅ Done |
+| 4 | Tools & skills — built-in tools, skill loader, auto-routing | ✅ Done |
+| 4.1 | Agentic tool surface — full capability set, permissions, audit log, native tool calling | ✅ Done |
+| 5 | RAG & memory — chunking, embeddings, hybrid retrieval, citations, memory pruning | ✅ Done |
+| 6.1 | Image generation — FastAPI worker, job persistence, inline rendering, cancellation | ✅ Done |
+| 6.2 | VRAM management — headroom policy, backend eviction, status bar telemetry | ✅ Done |
+| 6.3 | Queue hardening & notifications — queue replay, desktop notifications, retry flows | ✅ Done |
+| 6.4 | Future generation surfaces — video jobs, gallery management | 🔲 Planned |
+| 7 | MCP — server config, connection manager, tool manifest sync, resources, prompts | 🔲 Planned |
+| 8 | Polish & release hardening — auto-update, crash recovery, accessibility, security pass | 🔲 Planned |
+
+Full detail and per-item status: [docs/milestones.md](docs/milestones.md)
+
+---
+
+## Security
+
+- The renderer has no direct access to the filesystem, SQLite, network services, or the Python worker. All calls go through the typed preload bridge.
+- Agentic tool grants are persisted per-capability and audited in SQLite.
+- The Python inference server binds to `127.0.0.1` only and is not reachable from outside the machine.
+- Dangerous file extensions (`.exe`, `.bat`, `.ps1`, `.sh`, `.js`, etc.) are blocked in the `workspace-opener` tool.
+- See [docs/security.md](docs/security.md) for the full threat model.
+
+---
+
+*Documentation generated by [Claude Sonnet 4.6](https://www.anthropic.com/claude) (claude-sonnet-4-6)*
