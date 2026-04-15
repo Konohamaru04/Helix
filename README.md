@@ -137,8 +137,6 @@ GPU headroom is enforced before loading models. The Python worker persists queue
 ├── postcss.config.cjs
 ├── eslint.config.mjs
 ├── pytest.ini
-├── CLAUDE.md
-├── AGENTS.md
 │
 ├── renderer/
 │   ├── index.html
@@ -215,8 +213,6 @@ GPU headroom is enforced before loading models. The Python worker persists queue
 | `postcss.config.cjs` | PostCSS config |
 | `eslint.config.mjs` | ESLint config |
 | `pytest.ini` | Python test config |
-| `CLAUDE.md` | AI assistant codebase instructions |
-| `AGENTS.md` | Agent instructions |
 
 ### `renderer/`
 
@@ -279,7 +275,7 @@ GPU headroom is enforced before loading models. The Python worker persists queue
 |------|-------------|
 | `inference_server/` | FastAPI image-generation server (`/generation`, `/health`) |
 | `comfyui_backend/` | ComfyUI integration (`job_queue.py`, `model_manager.py`, `comfyui_runner.py`) |
-| `python_embeded/` | Bundled self-contained Python runtime (`python.exe`) |
+| `python_embeded/` | Bundled self-contained Python runtime (`python.exe`) — contents gitignored (binary, not source-tracked) |
 | `skills/builtin/` | Built-in skills: grounded, builder, debugger, reviewer, stepwise |
 | `skills/user/` | User-defined skill Markdown files |
 | `knowledge/` | Knowledge base files for RAG ingestion |
