@@ -305,6 +305,7 @@ export const capabilityPermissionSchema = z.object({
 
 export const capabilityTaskSchema = z.object({
   id: uuidSchema,
+  sequence: z.number().int().nonnegative(),
   title: z.string().min(1),
   status: capabilityTaskStatusSchema,
   details: z.string().nullable(),

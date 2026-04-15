@@ -13,6 +13,7 @@ import generationWorkflowInputsMigration from './migrations/008_generation_workf
 import generationBackendComfyUiMigration from './migrations/009_generation_job_backend_comfyui.sql?raw';
 import capabilitySurfaceMigration from './migrations/010_capability_surface.sql?raw';
 import toolInvocationOutputTextMigration from './migrations/011_tool_invocation_output_text.sql?raw';
+import taskSequenceMigration from './migrations/012_task_sequence.sql?raw';
 
 const bundledMigrations = [
   {
@@ -58,6 +59,10 @@ const bundledMigrations = [
   {
     version: '011_tool_invocation_output_text.sql',
     sql: toolInvocationOutputTextMigration
+  },
+  {
+    version: '012_task_sequence.sql',
+    sql: taskSequenceMigration
   }
 ];
 

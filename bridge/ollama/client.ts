@@ -591,6 +591,22 @@ export class OllamaClient {
 
     for (let attempt = 1; attempt <= OLLAMA_CHAT_FETCH_MAX_ATTEMPTS; attempt += 1) {
       try {
+        this.logger.debug(
+          {
+            baseUrl: input.baseUrl,
+            model: input.model,
+            stream: input.stream,
+            attempt,
+            request: (() => {
+              try {
+                return JSON.parse(input.requestInit.body as string);
+              } catch {
+                return input.requestInit.body;
+              }
+            })()
+          },
+          'Ollama chat request'
+        );
         return await fetch(url, input.requestInit);
       } catch (error) {
         lastError = error;

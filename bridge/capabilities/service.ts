@@ -1684,24 +1684,22 @@ export class CapabilityService {
       throw new Error('Todo Write expects at least one checklist item.');
     }
 
-    for (const item of items) {
-      this.repository.createTask({ title: item });
-    }
+    const createdTasks = items.map((item) => this.repository.createTask({ title: item }));
 
     return {
       assistantContent: [
         '### Todo Write',
         '',
-        `Created ${items.length} task(s):`,
-        ...items.map((item) => `- ${item}`)
+        `Created ${createdTasks.length} task(s):`,
+        ...createdTasks.map((task) => `- \`${task.id}\` | ${task.title}`)
       ].join('\n'),
       toolInvocations: [
         createInvocation({
           toolId: 'todo-write',
           displayName: 'Todo Write',
           status: 'completed',
-          inputSummary: `${items.length} item(s)`,
-          outputSummary: `${items.length} task(s) created`,
+          inputSummary: `${createdTasks.length} item(s)`,
+          outputSummary: `${createdTasks.length} task(s) created`,
           errorMessage: null
         })
       ],

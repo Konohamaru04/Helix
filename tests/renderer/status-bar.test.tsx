@@ -9,6 +9,7 @@ describe('StatusBar', () => {
   it('renders GPU usage as used VRAM instead of free VRAM', () => {
     render(
       <StatusBar
+        onOpenPlan={vi.fn()}
         onOpenQueue={vi.fn()}
         systemStatus={{
           appVersion: '0.1.0',

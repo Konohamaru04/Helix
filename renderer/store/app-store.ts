@@ -142,6 +142,20 @@ function isTerminalStreamEvent(event: ChatStreamEvent) {
   return event.type === 'complete' || event.type === 'error';
 }
 
+const PLAN_TASK_TOOL_IDS = new Set([
+  'enter-plan-mode',
+  'exit-plan-mode',
+  'task-create',
+  'task-update',
+  'task-stop',
+  'todo-write'
+]);
+
+function hasPlanTaskToolInvocation(event: ChatStreamEvent): boolean {
+  if (event.type !== 'update') return false;
+  return (event.toolInvocations ?? []).some((inv) => PLAN_TASK_TOOL_IDS.has(inv.toolId));
+}
+
 function applyAssistantStreamSnapshot(
   message: StoredMessage,
   snapshot: {
@@ -332,6 +346,7 @@ interface AppStoreState {
   selectedThinkMode: ChatThinkModeSelection;
   settingsDrawerOpen: boolean;
   queueDrawerOpen: boolean;
+  planDrawerOpen: boolean;
   streamingAssistantIds: string[];
   pendingStreamEventsByAssistantId: Record<string, ChatStreamEvent>;
   lastExportPath: string | null;
@@ -354,6 +369,7 @@ interface AppStoreState {
   selectConversation: (conversationId: string | null) => Promise<void>;
   toggleSettingsDrawer: (open?: boolean) => void;
   toggleQueueDrawer: (open?: boolean) => void;
+  togglePlanDrawer: (open?: boolean) => void;
   setSelectedModel: (model: string) => void;
   setSelectedThinkMode: (thinkMode: ChatThinkModeSelection) => void;
   updateSettings: (patch: UpdateUserSettings) => Promise<void>;
@@ -410,6 +426,7 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
   selectedThinkMode: '',
   settingsDrawerOpen: false,
   queueDrawerOpen: false,
+  planDrawerOpen: false,
   streamingAssistantIds: [],
   pendingStreamEventsByAssistantId: {},
   lastExportPath: null,
@@ -729,6 +746,12 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
   toggleQueueDrawer: (open) => {
     set((state) => ({
       queueDrawerOpen: open ?? !state.queueDrawerOpen
+    }));
+  },
+
+  togglePlanDrawer: (open) => {
+    set((state) => ({
+      planDrawerOpen: open ?? !state.planDrawerOpen
     }));
   },
 
@@ -1099,8 +1122,13 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
       };
     });
 
-    if (conversationId && isTerminalStreamEvent(event)) {
-      void get().rehydrateConversationMessages(conversationId);
+    if (isTerminalStreamEvent(event)) {
+      if (conversationId) {
+        void get().rehydrateConversationMessages(conversationId);
+      }
+      void get().refreshCapabilitySurface();
+    } else if (hasPlanTaskToolInvocation(event)) {
+      void get().refreshCapabilitySurface();
     }
   },
 

@@ -6,6 +6,7 @@ import {
 import { ChatComposer } from '@renderer/components/chat-composer';
 import { DesktopOnlyNotice } from '@renderer/components/desktop-only-notice';
 import { MessageList } from '@renderer/components/message-list';
+import { PlanDrawer } from '@renderer/components/plan-drawer';
 import { QueueDrawer } from '@renderer/components/queue-drawer';
 import { SettingsDrawer } from '@renderer/components/settings-drawer';
 import { Sidebar } from '@renderer/components/sidebar';
@@ -139,6 +140,8 @@ export function ChatPage() {
   const selectConversation = useAppStore((state) => state.selectConversation);
   const toggleSettingsDrawer = useAppStore((state) => state.toggleSettingsDrawer);
   const toggleQueueDrawer = useAppStore((state) => state.toggleQueueDrawer);
+  const togglePlanDrawer = useAppStore((state) => state.togglePlanDrawer);
+  const planDrawerOpen = useAppStore((state) => state.planDrawerOpen);
   const setSelectedModel = useAppStore((state) => state.setSelectedModel);
   const setSelectedThinkMode = useAppStore((state) => state.setSelectedThinkMode);
   const updateSettings = useAppStore((state) => state.updateSettings);
@@ -775,7 +778,10 @@ export function ChatPage() {
         </div>
 
         <StatusBar
+          onOpenPlan={() => togglePlanDrawer()}
           onOpenQueue={() => toggleQueueDrawer()}
+          planOpen={planDrawerOpen}
+          queueOpen={queueDrawerOpen}
           systemStatus={systemStatus}
         />
       </div>
@@ -815,11 +821,19 @@ export function ChatPage() {
         onCancelGenerationJob={(jobId) => {
           void handleCancelGenerationJob(jobId);
         }}
+        onClose={() => toggleQueueDrawer()}
         onRetryGenerationJob={(jobId) => {
           void handleRetryGenerationJob(jobId);
         }}
         open={queueDrawerOpen}
         pendingRequestCount={systemStatus?.pendingRequestCount ?? 0}
+      />
+
+      <PlanDrawer
+        onClose={() => togglePlanDrawer()}
+        open={planDrawerOpen}
+        planState={capabilityPlanState}
+        tasks={capabilityTasks}
       />
     </div>
   );

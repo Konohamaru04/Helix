@@ -44,6 +44,7 @@ interface PermissionGrantRow {
 
 interface CapabilityTaskRow {
   id: string;
+  sequence: number;
   title: string;
   status: CapabilityTask['status'];
   details: string | null;
@@ -238,8 +239,14 @@ export class CapabilityRepository {
 
   createTask(input: CreateCapabilityTaskInput): CapabilityTask {
     const timestamp = nowIso();
+    const nextSequence = (
+      (this.database.connection
+        .prepare('SELECT COALESCE(MAX(sequence), 0) + 1 AS next_seq FROM capability_tasks')
+        .get() as { next_seq: number }).next_seq
+    );
     const task = capabilityTaskSchema.parse({
       id: randomUUID(),
+      sequence: nextSequence,
       title: input.title,
       status: 'pending',
       details: input.details ?? null,
@@ -256,6 +263,7 @@ export class CapabilityRepository {
         `
           INSERT INTO capability_tasks (
             id,
+            sequence,
             title,
             status,
             details,
@@ -267,11 +275,12 @@ export class CapabilityRepository {
             started_at,
             completed_at
           )
-          VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)
         `
       )
       .run(
         task.id,
+        task.sequence,
         task.title,
         task.status,
         task.details,
@@ -292,6 +301,7 @@ export class CapabilityRepository {
         `
           SELECT
             id,
+            sequence,
             title,
             status,
             details,
@@ -302,7 +312,7 @@ export class CapabilityRepository {
             started_at,
             completed_at
           FROM capability_tasks
-          ORDER BY updated_at DESC, created_at DESC
+          ORDER BY sequence ASC, created_at ASC
         `
       )
       .all() as unknown as CapabilityTaskRow[];
@@ -316,6 +326,7 @@ export class CapabilityRepository {
         `
           SELECT
             id,
+            sequence,
             title,
             status,
             details,
@@ -985,6 +996,7 @@ export class CapabilityRepository {
   private parseTaskRow(row: CapabilityTaskRow): CapabilityTask {
     return capabilityTaskSchema.parse({
       id: row.id,
+      sequence: row.sequence,
       title: row.title,
       status: row.status,
       details: row.details,

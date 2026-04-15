@@ -140,6 +140,7 @@ export function buildConversationContext(input: {
   workspacePrompt: string | null;
   workspaceRootPath?: string | null;
   skillPrompt: string | null;
+  planContextPrompt?: string | null;
   availableTools?: ToolDefinition[];
   latestUserPromptOverride?: string | null;
   memorySummary?: string | null;
@@ -192,6 +193,14 @@ export function buildConversationContext(input: {
     systemMessages.push({
       role: 'system',
       content: `Active skill prompt:\n${input.skillPrompt.trim()}`,
+      imageAttachments: []
+    });
+  }
+
+  if (input.planContextPrompt?.trim()) {
+    systemMessages.push({
+      role: 'system',
+      content: input.planContextPrompt.trim(),
       imageAttachments: []
     });
   }

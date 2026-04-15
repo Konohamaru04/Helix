@@ -2,7 +2,10 @@ import type { SystemStatus } from '@bridge/ipc/contracts';
 
 interface StatusBarProps {
   systemStatus: SystemStatus | null;
+  queueOpen?: boolean;
+  planOpen?: boolean;
   onOpenQueue: () => void;
+  onOpenPlan: () => void;
 }
 
 function getTextBackendHealth(systemStatus: SystemStatus | null) {
@@ -93,6 +96,8 @@ function ConnectionPill(props: { label: string; healthy: boolean; detail: string
 
 export function StatusBar(props: StatusBarProps) {
   const textBackend = getTextBackendHealth(props.systemStatus);
+  const activeButtonClass = 'border-cyan-300/30 bg-cyan-500/15 text-cyan-100 hover:bg-cyan-500/20';
+  const idleButtonClass = 'border-white/10 text-slate-200 hover:border-white/20 hover:bg-white/5';
 
   return (
     <footer className="flex items-center justify-between gap-4 border-t border-white/10 bg-slate-950/90 px-5 py-3 text-sm text-slate-300 backdrop-blur">
@@ -116,7 +121,14 @@ export function StatusBar(props: StatusBarProps) {
 
       <div className="flex items-center gap-2">
         <button
-          className="rounded-full border border-white/10 px-3 py-1.5 text-xs font-medium text-slate-200 transition hover:border-white/20 hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
+          className={`rounded-full border px-3 py-1.5 text-xs font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 ${props.planOpen ? activeButtonClass : idleButtonClass}`}
+          onClick={props.onOpenPlan}
+          type="button"
+        >
+          Plan
+        </button>
+        <button
+          className={`rounded-full border px-3 py-1.5 text-xs font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 ${props.queueOpen ? activeButtonClass : idleButtonClass}`}
           onClick={props.onOpenQueue}
           type="button"
         >

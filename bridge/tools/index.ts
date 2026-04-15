@@ -3,7 +3,7 @@ import { readFile, readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import type { CapabilityService } from '@bridge/capabilities';
 import type { ChatRepository } from '@bridge/chat/repository';
-import type { ContextSource, ToolDefinition, ToolInvocation } from '@bridge/ipc/contracts';
+import type { CapabilityTask, ContextSource, PlanState, ToolDefinition, ToolInvocation } from '@bridge/ipc/contracts';
 import { extractPromptPathCandidate } from '@bridge/path-prompt';
 import {
   contextSourceSchema,
@@ -773,7 +773,7 @@ export class ToolDispatcher {
     private readonly webSearcher: WebSearcher = searchWeb,
     private readonly capabilityService?: Pick<
       CapabilityService,
-      'listDefinitions' | 'getById' | 'executeTool'
+      'listDefinitions' | 'getById' | 'executeTool' | 'getPlanState' | 'listTasks'
     >
   ) {}
 
@@ -808,6 +808,16 @@ export class ToolDispatcher {
       .filter((toolId) => this.getById(toolId) !== null)
       .map((toolId) => this.buildOllamaToolDefinition(toolId))
       .filter((definition): definition is OllamaToolDefinition => definition !== null);
+  }
+
+  getPlanContext(): { planState: PlanState | null; tasks: CapabilityTask[] } {
+    if (!this.capabilityService) {
+      return { planState: null, tasks: [] };
+    }
+    return {
+      planState: this.capabilityService.getPlanState(),
+      tasks: this.capabilityService.listTasks()
+    };
   }
 
   async executeOllamaToolCall(input: {

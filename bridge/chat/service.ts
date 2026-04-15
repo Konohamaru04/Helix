@@ -156,6 +156,41 @@ const REPOSITORY_ANALYSIS_NATIVE_TOOL_LOOP_SYSTEM_PROMPT = `For repository or co
 - Use read or file-reader to inspect actual file contents before you summarize the implementation.
 - Do not claim you lack access to internal file contents while those tools are available.
 - If the user asks for a markup summary file, write it only after the summary is grounded in inspected files.`;
+function buildPlanContextPrompt(
+  planContext: { planState: import('@bridge/ipc/contracts').PlanState | null; tasks: import('@bridge/ipc/contracts').CapabilityTask[] }
+): string | null {
+  const { planState, tasks } = planContext;
+  const planActive = planState?.status === 'active';
+
+  if (!planActive && tasks.length === 0) {
+    return null;
+  }
+
+  const lines: string[] = [
+    `Plan mode: ${planActive ? `ACTIVE (conversation ${planState?.conversationId ?? 'unknown'})` : 'INACTIVE'}`,
+    '',
+    `Tracked tasks — use these exact IDs for task-update and task-stop:`
+  ];
+
+  if (tasks.length === 0) {
+    lines.push('(no tasks yet)');
+  } else {
+    for (const t of tasks) {
+      lines.push(`${t.sequence}. [${t.status}] \`${t.id}\` | ${t.title}${t.details ? ` — ${t.details}` : ''}`);
+    }
+  }
+
+  return lines.join('\n');
+}
+
+const PLAN_MODE_NATIVE_TOOL_LOOP_SYSTEM_PROMPT = `For any multi-step task, activate plan mode and track your work with tasks before starting:
+1. Call enter-plan-mode first to activate structured planning for this conversation.
+2. Call task-create for each distinct unit of work — one task per major step or deliverable.
+3. When you begin a step, call task-update with status "in_progress".
+4. When a step is complete, call task-update with status "completed".
+5. If a planned step becomes unnecessary, call task-stop to cancel it.
+6. After all tasks are complete and the user's goal is fully met, call exit-plan-mode.
+For trivial single-step requests that require only one tool call, you may skip plan mode.`;
 const NATIVE_TOOL_USE_REQUIRED_SYSTEM_PROMPT = `This turn was opened in the local tool loop because the request depends on tools or workspace state.
 Do not answer from memory alone.
 Choose the next tool call now instead of finishing the turn.`;
@@ -2646,6 +2681,7 @@ export class ChatService {
         input.routePlan.activeSkill?.prompt && toolContextPrompt
           ? `${input.routePlan.activeSkill.prompt}\n\n${toolContextPrompt}`
           : input.routePlan.activeSkill?.prompt ?? toolContextPrompt,
+      planContextPrompt: buildPlanContextPrompt(this.toolDispatcher.getPlanContext()),
       availableTools: this.toolDispatcher
         .listDefinitions()
         .filter((tool) => tool.availability === 'available'),
@@ -3594,13 +3630,28 @@ export class ChatService {
     messages: OllamaChatMessage[],
     workflowMode: NativeToolWorkflowMode,
     includeRepositoryAnalysisGuidance: boolean,
-    toolDefinitions: OllamaToolDefinition[]
+    toolDefinitions: OllamaToolDefinition[],
+    planContext?: { planState: import('@bridge/ipc/contracts').PlanState | null; tasks: import('@bridge/ipc/contracts').CapabilityTask[] }
   ): OllamaChatMessage[] {
     const firstNonSystemIndex = messages.findIndex((message) => message.role !== 'system');
     const guidanceParts = [
       NATIVE_TOOL_LOOP_SYSTEM_PROMPT,
+      PLAN_MODE_NATIVE_TOOL_LOOP_SYSTEM_PROMPT,
       buildNativeToolReferencePrompt(toolDefinitions)
     ];
+
+    if (planContext) {
+      const { planState, tasks } = planContext;
+      const planStatusLine = planState?.status === 'active'
+        ? `Plan mode: ACTIVE (conversation ${planState.conversationId ?? 'unknown'})`
+        : 'Plan mode: INACTIVE';
+      const taskLines = tasks.length > 0
+        ? tasks.map((t) => `${t.sequence}. [${t.status}] \`${t.id}\` | ${t.title}`)
+        : ['(no tasks yet)'];
+      guidanceParts.push(
+        `Current plan state:\n${planStatusLine}\n\nTracked tasks:\n${taskLines.join('\n')}\n\nIf plan mode is already active and tasks exist, continue from where the plan left off — update in-progress tasks, complete pending ones, do not recreate already-tracked work.`
+      );
+    }
 
     if (includeRepositoryAnalysisGuidance) {
       guidanceParts.push(REPOSITORY_ANALYSIS_NATIVE_TOOL_LOOP_SYSTEM_PROMPT);
@@ -3660,7 +3711,8 @@ export class ChatService {
       input.messages,
       input.workflowMode,
       input.includeRepositoryAnalysisGuidance,
-      input.toolDefinitions
+      input.toolDefinitions,
+      this.toolDispatcher.getPlanContext()
     );
     const toolInvocations: ToolInvocation[] = [];
     const contextSources: ContextSource[] = [];
