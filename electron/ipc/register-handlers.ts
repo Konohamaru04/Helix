@@ -73,6 +73,30 @@ function toSafeFileStem(value: string): string {
 }
 
 export function registerIpcHandlers(context: DesktopAppContext): void {
+  ipcMain.handle(IpcChannels.windowMinimize, (event) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    window?.minimize();
+  });
+
+  ipcMain.handle(IpcChannels.windowMaximize, (event) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (window?.isMaximized()) {
+      window?.unmaximize();
+    } else {
+      window?.maximize();
+    }
+  });
+
+  ipcMain.handle(IpcChannels.windowClose, (event) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    window?.close();
+  });
+
+  ipcMain.handle(IpcChannels.windowIsMaximized, (event) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    return window?.isMaximized() ?? false;
+  });
+
   const lastGenerationStatuses = new Map<string, GenerationJob['status']>();
 
   function maybeShowGenerationNotification(job: GenerationJob): void {

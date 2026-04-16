@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
   app,
@@ -31,6 +31,14 @@ function configureAppPaths() {
   app.setPath('sessionData', sessionDataPath);
 }
 
+function getIconPath() {
+  const runtimeRoot = getRuntimeRootPath();
+  // ICO for Windows (best taskbar support), PNG fallback
+  const icoPath = path.join(runtimeRoot, 'Assets/icon.ico');
+  if (existsSync(icoPath)) return icoPath;
+  return path.join(runtimeRoot, 'Assets/icon.png');
+}
+
 async function createMainWindow() {
   const window = new BrowserWindow({
     width: 1560,
@@ -39,8 +47,11 @@ async function createMainWindow() {
     minHeight: 720,
     show: true,
     title: APP_DISPLAY_NAME,
+    frame: false,
+    titleBarStyle: 'hidden',
     autoHideMenuBar: true,
     backgroundColor: '#020617',
+    icon: getIconPath(),
     webPreferences: {
       preload: getPreloadPath(),
       contextIsolation: true,

@@ -11,6 +11,7 @@ import { QueueDrawer } from '@renderer/components/queue-drawer';
 import { SettingsDrawer } from '@renderer/components/settings-drawer';
 import { Sidebar } from '@renderer/components/sidebar';
 import { StatusBar } from '@renderer/components/status-bar';
+import { TitleBar } from '@renderer/components/title-bar';
 import { useAppBootstrap } from '@renderer/hooks/use-app-bootstrap';
 import { getDesktopApi, hasDesktopApi } from '@renderer/lib/api';
 import {
@@ -482,9 +483,10 @@ export function ChatPage() {
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-slate-950 text-slate-100">
+      <TitleBar />
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(45,212,191,0.18),_transparent_40%),radial-gradient(circle_at_top_right,_rgba(249,115,22,0.16),_transparent_30%)]" />
 
-      <div className="relative flex h-screen flex-col">
+      <div className="relative flex h-[calc(100vh-2.5rem)] flex-col">
         <div className="flex min-h-0 flex-1">
           <Sidebar
             activeWorkspaceId={activeWorkspaceId}

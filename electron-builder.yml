@@ -1,5 +1,6 @@
 appId: com.abstergo.helix
 productName: Helix
+icon: Assets/icon.ico
 directories:
   output: release
 files:
@@ -7,6 +8,10 @@ files:
   - package.json
 asar: true
 extraResources:
+  - from: Assets
+    to: Assets
+    filter:
+      - '**/*'
   - from: python_embeded
     to: python_embeded
     filter:

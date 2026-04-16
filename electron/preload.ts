@@ -58,6 +58,12 @@ import {
 } from '@bridge/ipc/contracts';
 
 const desktopApi: DesktopApi = {
+  window: {
+    minimize: () => ipcRenderer.invoke(IpcChannels.windowMinimize),
+    maximize: () => ipcRenderer.invoke(IpcChannels.windowMaximize),
+    close: () => ipcRenderer.invoke(IpcChannels.windowClose),
+    isMaximized: () => ipcRenderer.invoke(IpcChannels.windowIsMaximized)
+  },
   settings: {
     get: async () => userSettingsSchema.parse(await ipcRenderer.invoke(IpcChannels.settingsGet)),
     update: async (input) =>

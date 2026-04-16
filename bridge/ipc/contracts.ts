@@ -854,6 +854,10 @@ export type ImportConversationResult = z.infer<typeof importConversationResultSc
 export type Unsubscribe = () => void;
 
 export const IpcChannels = {
+  windowMinimize: 'window:minimize',
+  windowMaximize: 'window:maximize',
+  windowClose: 'window:close',
+  windowIsMaximized: 'window:is-maximized',
   settingsGet: 'settings:get',
   settingsUpdate: 'settings:update',
   settingsPickAdditionalModelsDirectory: 'settings:pick-additional-models-directory',
@@ -903,6 +907,12 @@ export const IpcChannels = {
 } as const;
 
 export interface DesktopApi {
+  window: {
+    minimize: () => Promise<void>;
+    maximize: () => Promise<void>;
+    close: () => Promise<void>;
+    isMaximized: () => Promise<boolean>;
+  };
   settings: {
     get: () => Promise<UserSettings>;
     update: (input: UpdateUserSettings) => Promise<UserSettings>;
