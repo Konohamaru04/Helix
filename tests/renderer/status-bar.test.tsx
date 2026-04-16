@@ -11,6 +11,14 @@ describe('StatusBar', () => {
       <StatusBar
         onOpenPlan={vi.fn()}
         onOpenQueue={vi.fn()}
+        onOpenSettings={vi.fn()}
+        activeTextBackend="ollama"
+        onTextBackendChange={vi.fn()}
+        selectedModel=""
+        availableModels={[]}
+        onSelectedModelChange={vi.fn()}
+        selectedThinkMode=""
+        onSelectedThinkModeChange={vi.fn()}
         systemStatus={{
           appVersion: '0.1.0',
           database: {
