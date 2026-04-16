@@ -17,9 +17,15 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:python": ".\\python_embeded\\python.exe -m pytest",
+    "dev:tui": "vite --config tui.vite.config.ts build --watch && node dist/tui/main.js",
+    "tui": "vite --config tui.vite.config.ts build && node dist/tui/main.js",
     "verify": "npm run lint && npm run typecheck && npm run test && npm run test:python && npm run build"
   },
   "dependencies": {
+    "@types/blessed": "^0.1.27",
+    "@types/markdown-it": "^14.1.2",
+    "blessed": "^0.1.81",
+    "markdown-it": "^14.1.1",
     "pino": "^10.3.1",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",

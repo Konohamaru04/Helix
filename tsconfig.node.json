@@ -10,7 +10,13 @@
     "types": [
       "node",
       "vitest/globals"
-    ]
+    ],
+    "paths": {
+      "@bridge/*": ["bridge/*"],
+      "@electron/*": ["electron/*"],
+      "@renderer/*": ["renderer/*"],
+      "@tui/*": ["tui/*"]
+    }
   },
   "include": [
     "bridge/**/*.d.ts",
@@ -18,6 +24,7 @@
     "electron/**/*.ts",
     "electron.vite.config.ts",
     "tailwind.config.ts",
-    "tests/node/**/*.ts"
+    "tests/node/**/*.ts",
+    "tui/**/*.ts"
   ]
 }
