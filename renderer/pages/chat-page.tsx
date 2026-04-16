@@ -144,6 +144,8 @@ export function ChatPage() {
   const toggleQueueDrawer = useAppStore((state) => state.toggleQueueDrawer);
   const togglePlanDrawer = useAppStore((state) => state.togglePlanDrawer);
   const planDrawerOpen = useAppStore((state) => state.planDrawerOpen);
+  const sidebarOpen = useAppStore((state) => state.sidebarOpen);
+  const toggleSidebar = useAppStore((state) => state.toggleSidebar);
   const setSelectedModel = useAppStore((state) => state.setSelectedModel);
   const setSelectedThinkMode = useAppStore((state) => state.setSelectedThinkMode);
   const updateSettings = useAppStore((state) => state.updateSettings);
@@ -239,6 +241,16 @@ export function ChatPage() {
 
     void refreshWorkspaceKnowledge(activeWorkspaceId);
   }, [activeWorkspaceId, knowledgeDocumentsByWorkspace, refreshWorkspaceKnowledge]);
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape' && sidebarOpen) {
+        toggleSidebar(false);
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [sidebarOpen, toggleSidebar]);
 
   function resetComposer() {
     setComposerDraft('');
@@ -488,45 +500,96 @@ export function ChatPage() {
 
       <div className="relative flex h-[calc(100vh-2.5rem)] flex-col">
         <div className="flex min-h-0 flex-1">
-          <Sidebar
-            activeWorkspaceId={activeWorkspaceId}
-            activeConversationId={activeConversationId}
-            conversations={conversations}
-            onSearchQueryChange={(query) => void setSearchQuery(query)}
-            onSelectConversation={(conversationId) => {
-              resetComposer();
-              void selectConversation(conversationId);
-            }}
-            onSelectWorkspace={(workspaceId) => {
-              resetComposer();
-              void selectWorkspace(workspaceId);
-            }}
-            onDeleteWorkspace={(workspaceId) => void deleteWorkspace(workspaceId)}
-            searchQuery={searchQuery}
-            searchResults={searchResults}
-            workspaces={workspaces}
-          />
+          {/* Inline sidebar — always visible at lg+ */}
+          <div className="hidden lg:block">
+            <Sidebar
+              activeWorkspaceId={activeWorkspaceId}
+              activeConversationId={activeConversationId}
+              conversations={conversations}
+              onSearchQueryChange={(query) => void setSearchQuery(query)}
+              onSelectConversation={(conversationId) => {
+                resetComposer();
+                void selectConversation(conversationId);
+              }}
+              onSelectWorkspace={(workspaceId) => {
+                resetComposer();
+                void selectWorkspace(workspaceId);
+              }}
+              onDeleteWorkspace={(workspaceId) => void deleteWorkspace(workspaceId)}
+              searchQuery={searchQuery}
+              searchResults={searchResults}
+              workspaces={workspaces}
+            />
+          </div>
+
+          {/* Overlay sidebar — visible when sidebarOpen on smaller screens */}
+          {sidebarOpen && (
+            <>
+              <div
+                className="fixed inset-0 z-20 bg-slate-950/50 backdrop-blur-sm animate-fade-in lg:hidden"
+                onClick={() => toggleSidebar(false)}
+                role="presentation"
+              />
+              <aside className="fixed inset-y-0 left-0 z-30 w-80 animate-slide-in-left lg:hidden">
+                <Sidebar
+                  overlayMode
+                  onClose={() => toggleSidebar(false)}
+                  activeWorkspaceId={activeWorkspaceId}
+                  activeConversationId={activeConversationId}
+                  conversations={conversations}
+                  onSearchQueryChange={(query) => void setSearchQuery(query)}
+                  onSelectConversation={(conversationId) => {
+                    resetComposer();
+                    void selectConversation(conversationId);
+                    toggleSidebar(false);
+                  }}
+                  onSelectWorkspace={(workspaceId) => {
+                    resetComposer();
+                    void selectWorkspace(workspaceId);
+                    toggleSidebar(false);
+                  }}
+                  onDeleteWorkspace={(workspaceId) => void deleteWorkspace(workspaceId)}
+                  searchQuery={searchQuery}
+                  searchResults={searchResults}
+                  workspaces={workspaces}
+                />
+              </aside>
+            </>
+          )}
 
           <div className="flex min-w-0 flex-1 flex-col">
             <header className="border-b border-white/10 px-6 py-4">
               <div className="mx-auto flex w-full min-w-0 max-w-[88rem] flex-col gap-3">
-                <div className="min-w-0">
-                  <p className="text-xs uppercase tracking-[0.3em] text-cyan-200/70">
-                    {headerEyebrow}
-                  </p>
-                  <h2 className="mt-2 text-[1.95rem] font-semibold leading-none text-white">
-                    {headerTitle}
-                  </h2>
-                  <p
-                    className="mt-1 truncate text-sm text-slate-400"
-                    title={headerSubtitle}
+                <div className="flex items-center gap-3">
+                  <button
+                    aria-expanded={sidebarOpen}
+                    aria-label={sidebarOpen ? 'Close sidebar' : 'Open sidebar'}
+                    className="lg:hidden flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-white/10 text-slate-200 transition hover:border-white/20 hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
+                    onClick={() => toggleSidebar()}
+                    type="button"
                   >
-                    {headerSubtitle}
-                  </p>
+                    <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+                      <path d="M2 4.5h14M2 9h14M2 13.5h14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                    </svg>
+                  </button>
+                  <div className="min-w-0">
+                    <p className="text-xs uppercase tracking-[0.3em] text-cyan-200/70">
+                      {headerEyebrow}
+                    </p>
+                    <h2 className="mt-2 text-[1.95rem] font-semibold leading-none text-white">
+                      {headerTitle}
+                    </h2>
+                    <p
+                      className="mt-1 truncate text-sm text-slate-400"
+                      title={headerSubtitle}
+                    >
+                      {headerSubtitle}
+                    </p>
+                  </div>
                 </div>
 
                 <div className="-mx-1 overflow-x-auto pb-1">
-                  <div className="flex min-w-max items-center gap-3 px-1">
+                  <div className="flex flex-wrap items-center gap-3 px-1">
                 <button
                   className="rounded-2xl bg-cyan-400 px-4 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-cyan-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-300"
                   onClick={() => {

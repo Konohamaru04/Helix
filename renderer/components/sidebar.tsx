@@ -16,6 +16,8 @@ interface SidebarProps {
   onSelectConversation: (conversationId: string) => void;
   onSearchQueryChange: (query: string) => void;
   onDeleteWorkspace: (workspaceId: string) => void;
+  overlayMode?: boolean;
+  onClose?: () => void;
 }
 
 function formatTimestamp(value: string) {
@@ -35,6 +37,18 @@ export function Sidebar(props: SidebarProps) {
 
   return (
     <aside className="flex w-80 shrink-0 flex-col border-r border-white/10 bg-slate-950/80 backdrop-blur">
+      {props.overlayMode ? (
+        <div className="flex items-center justify-end px-5 pt-3">
+          <button
+            aria-label="Close sidebar"
+            className="rounded-full border border-white/10 px-3 py-1.5 text-xs font-medium text-slate-200 transition hover:border-white/20 hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
+            onClick={props.onClose}
+            type="button"
+          >
+            Close
+          </button>
+        </div>
+      ) : null}
       <div className="border-b border-white/10 px-5 py-4">
         <p className="text-xs uppercase tracking-[0.3em] text-cyan-200/70">
           {APP_COMPANY_NAME}
