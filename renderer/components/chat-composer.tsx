@@ -106,7 +106,7 @@ export function ChatComposer(props: ChatComposerProps) {
     <form
       aria-busy={props.submitting ? true : undefined}
       ref={formRef}
-      className="border-t border-white/10 bg-slate-950/70 px-6 py-4 backdrop-blur"
+      className="border-t border-white/10 bg-slate-950/70 px-4 py-4 backdrop-blur sm:px-6"
       onSubmit={(event) => {
         void handleSubmit(event);
       }}

@@ -259,7 +259,7 @@ export function MessageBubble(props: MessageBubbleProps) {
 
   return (
     <article
-      className={`min-w-0 overflow-hidden rounded-[1.75rem] border px-5 py-4 shadow-panel ${
+      className={`animate-fade-in-up min-w-0 overflow-hidden rounded-[1.75rem] border px-5 py-4 shadow-panel ${
         assistant
           ? 'border-cyan-300/20 bg-slate-900/80 text-slate-100'
           : message.role === 'user'

@@ -140,7 +140,7 @@ export function MessageList(props: MessageListProps) {
     <section
       ref={transcriptRef}
       aria-label="Conversation transcript"
-      className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-6 py-6"
+      className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-4 py-6 sm:px-6"
       onScroll={(event) => {
         followOutputRef.current =
           scrollDistanceFromBottom(event.currentTarget) <= AUTO_SCROLL_THRESHOLD_PX
