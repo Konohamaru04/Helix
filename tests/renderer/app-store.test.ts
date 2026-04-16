@@ -50,6 +50,12 @@ describe('app-store stream buffering', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.ollamaDesktop = {
+      window: {
+        minimize: vi.fn(),
+        maximize: vi.fn(),
+        close: vi.fn(),
+        isMaximized: vi.fn().mockResolvedValue(false)
+      },
       settings: {
         get: vi.fn(),
         update: vi.fn(),

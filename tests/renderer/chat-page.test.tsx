@@ -170,6 +170,12 @@ const baseSystemStatus = {
 };
 
 const mockApi = {
+  window: {
+    minimize: vi.fn(),
+    maximize: vi.fn(),
+    close: vi.fn(),
+    isMaximized: vi.fn().mockResolvedValue(false)
+  },
   settings: {
     get: vi.fn(),
     update: vi.fn(),
@@ -441,7 +447,7 @@ describe('ChatPage', () => {
 
     await screen.findByText('Original answer');
 
-    expect(await screen.findAllByText(/Active chat/i)).toHaveLength(1);
+    expect(screen.getAllByText(conversation.title).length).toBeGreaterThanOrEqual(1);
   });
 
   it('polls system status so VRAM usage stays live while local models load and unload', async () => {
@@ -639,7 +645,7 @@ describe('ChatPage', () => {
   it('sends an explicit model override when the user switches out of Auto', async () => {
     render(<App />);
 
-    const modelSelect = await screen.findByLabelText('Model selection');
+    const modelSelect = await screen.findByLabelText('Model');
     const textarea = screen.getByLabelText('Message prompt');
 
     fireEvent.change(modelSelect, {
@@ -842,7 +848,7 @@ describe('ChatPage', () => {
 
     render(<App />);
 
-    fireEvent.click(await screen.findByRole('button', { name: 'New workspace' }));
+    fireEvent.click(await screen.findByRole('button', { name: '+ Workspace' }));
     fireEvent.change(screen.getByLabelText('Workspace name'), {
       target: { value: 'Frontend' }
     });

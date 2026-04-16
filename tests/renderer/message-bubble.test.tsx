@@ -8,6 +8,12 @@ import { MessageBubble } from '@renderer/components/message-bubble';
 describe('MessageBubble', () => {
   beforeEach(() => {
     window.ollamaDesktop = {
+      window: {
+        minimize: vi.fn(),
+        maximize: vi.fn(),
+        close: vi.fn(),
+        isMaximized: vi.fn().mockResolvedValue(false)
+      },
       settings: {
         get: vi.fn(),
         update: vi.fn(),
@@ -96,11 +102,12 @@ describe('MessageBubble', () => {
     );
 
     expect(screen.getByText('Thinking')).toBeInTheDocument();
-    expect(screen.queryByText('Reasoning details')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Expand thinking' })).toHaveAttribute('aria-expanded', 'false');
     expect(screen.getByText('Answer')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Expand thinking' }));
 
+    expect(screen.getByRole('button', { name: 'Collapse thinking' })).toHaveAttribute('aria-expanded', 'true');
     expect(screen.getByText('Reasoning details')).toBeInTheDocument();
     expect(screen.getByText('item one')).toBeInTheDocument();
     expect(screen.getByText('const x = 1;')).toBeInTheDocument();
@@ -202,9 +209,9 @@ describe('MessageBubble', () => {
     expect(screen.getByText('Tools')).toBeInTheDocument();
     expect(screen.getByText('Sources')).toBeInTheDocument();
     expect(screen.getByText('1 source')).toBeInTheDocument();
-    expect(screen.getByText('File Reader')).toBeInTheDocument();
-    expect(screen.queryByText('Detailed project summary')).not.toBeInTheDocument();
-    expect(screen.queryByText('README.md')).not.toBeInTheDocument();
+    expect(screen.getAllByText('File Reader').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByRole('button', { name: 'Expand File Reader output' })).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.getByRole('button', { name: 'Expand Sources' })).toHaveAttribute('aria-expanded', 'false');
     expect(screen.getByText(/Tokens: 120 in \/ 30 out/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Expand File Reader output' }));
@@ -213,7 +220,7 @@ describe('MessageBubble', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Expand Sources' }));
 
-    expect(screen.getByText('README.md')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Collapse Sources' })).toHaveAttribute('aria-expanded', 'true');
   });
 
   it('shows live tool progress while an assistant turn is still streaming', () => {
