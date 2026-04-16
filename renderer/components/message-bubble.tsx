@@ -136,7 +136,7 @@ function ThinkingBlock(props: { content: string; defaultOpen?: boolean }) {
   const [open, setOpen] = useState(Boolean(props.defaultOpen));
 
   return (
-    <section className="rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3">
+    <section className="rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 transition-colors duration-150">
       <div className="flex items-center justify-between gap-3">
         <p className="text-xs font-medium uppercase tracking-[0.2em] text-cyan-200/80">
           Thinking
@@ -152,11 +152,14 @@ function ThinkingBlock(props: { content: string; defaultOpen?: boolean }) {
         </button>
       </div>
 
-      {open ? (
-        <div className="mt-3 whitespace-pre-wrap text-sm leading-7 text-slate-300">
+      <div
+        className="overflow-hidden transition-all duration-300 ease-spring-gentle"
+        style={{ maxHeight: open ? '9999px' : '0', opacity: open ? 1 : 0 }}
+      >
+        <div className="mt-3 whitespace-pre-wrap pb-2 text-sm leading-7 text-slate-300">
           {props.content}
         </div>
-      ) : null}
+      </div>
     </section>
   );
 }
@@ -194,7 +197,12 @@ function MetadataSection(props: {
           </button>
         ) : null}
       </div>
-      {open ? <div className="mt-3">{props.children}</div> : null}
+      <div
+        className="overflow-hidden transition-all duration-300 ease-spring-gentle"
+        style={{ maxHeight: open ? '9999px' : '0', opacity: open ? 1 : 0 }}
+      >
+        <div className="mt-3">{props.children}</div>
+      </div>
     </section>
   );
 }
@@ -240,9 +248,14 @@ function ToolInvocationCard(props: {
       {invocation.errorMessage ? (
         <p className="mt-1 text-xs text-rose-200">Error: {invocation.errorMessage}</p>
       ) : null}
-      {open && invocation.outputText ? (
-        <div className="mt-3 rounded-2xl border border-white/10 bg-slate-950/70 px-3 py-3">
-          <MarkdownContent content={invocation.outputText} />
+      {invocation.outputText ? (
+        <div
+          className="overflow-hidden transition-all duration-300 ease-spring-gentle"
+          style={{ maxHeight: open ? '9999px' : '0', opacity: open ? 1 : 0 }}
+        >
+          <div className="mt-3 rounded-2xl border border-white/10 bg-slate-950/70 px-3 py-3">
+            <MarkdownContent content={invocation.outputText} />
+          </div>
         </div>
       ) : null}
     </div>
