@@ -207,14 +207,15 @@ describe('GenerationService', () => {
       prompt: 'Generate a neon skyline'
     });
 
-    expect(startedJob.status).toBe('running');
-    expect(startedJob.workspaceId).toBe(harness.defaultWorkspace.id);
-    expect(startedJob.conversationId).toBe(harness.conversation.id);
-    expect(startedJob.model).toBe('builtin:placeholder');
+    expect(startedJob.job.status).toBe('running');
+    expect(startedJob.job.workspaceId).toBe(harness.defaultWorkspace.id);
+    expect(startedJob.job.conversationId).toBe(harness.conversation.id);
+    expect(startedJob.job.model).toBe('builtin:placeholder');
+    expect(startedJob.conversation).toBeUndefined();
 
     await vi.advanceTimersByTimeAsync(700);
 
-    const completedJob = harness.generationRepository.getJob(startedJob.id);
+    const completedJob = harness.generationRepository.getJob(startedJob.job.id);
 
     expect(completedJob?.status).toBe('completed');
     expect(completedJob?.workspaceId).toBe(harness.defaultWorkspace.id);
@@ -454,9 +455,9 @@ describe('GenerationService', () => {
       referenceImages: [referenceImage]
     });
 
-    expect(job.mode).toBe('image-to-image');
-    expect(job.workflowProfile).toBe('qwen-image-edit-2511');
-    expect(job.referenceImages).toEqual([referenceImage]);
+    expect(job.job.mode).toBe('image-to-image');
+    expect(job.job.workflowProfile).toBe('qwen-image-edit-2511');
+    expect(job.job.referenceImages).toEqual([referenceImage]);
     expect(harness.pythonManager.startImageJob).toHaveBeenCalledWith(
       expect.objectContaining({
         mode: 'image-to-image',
@@ -567,13 +568,13 @@ describe('GenerationService', () => {
         })
     );
 
-    const retriedJob = await harness.service.retryJob({ jobId: failedJob.id });
+    const retriedResult = await harness.service.retryJob({ jobId: failedJob.id });
     const retryRequest = harness.pythonManager.startImageJob.mock.calls[0]?.[0] as
       | RetryImageJobRequest
       | undefined;
 
-    expect(retriedJob.id).not.toBe(failedJob.id);
-    expect(retriedJob.status).toBe('queued');
+    expect(retriedResult.job.id).not.toBe(failedJob.id);
+    expect(retriedResult.job.status).toBe('queued');
     expect(retryRequest).toEqual(
       expect.objectContaining({
         prompt: failedJob.prompt,
@@ -600,6 +601,234 @@ describe('GenerationService', () => {
       })
     );
     expect(retryRequest?.referenceImages[0]?.id).not.toBe(referenceImage.id);
+
+    harness.database.close();
+  });
+
+  it('creates a new conversation when conversationId is not provided', async () => {
+    const harness = createGenerationHarness();
+    harness.pythonManager.startImageJob.mockImplementation(
+      (input: { id: string }) =>
+        Promise.resolve({
+          id: input.id,
+          kind: 'image',
+          mode: 'text-to-image',
+          workflow_profile: 'default',
+          status: 'running',
+          prompt: 'Generate a sunset',
+          negative_prompt: null,
+          model: 'builtin:placeholder',
+          backend: 'placeholder',
+          width: 768,
+          height: 768,
+          steps: 6,
+          guidance_scale: 4,
+          seed: null,
+          progress: 0,
+          stage: 'Running',
+          error_message: null,
+          created_at: '2026-04-08T00:00:00.000Z',
+          updated_at: '2026-04-08T00:00:00.000Z',
+          started_at: '2026-04-08T00:00:00.000Z',
+          completed_at: null,
+          reference_images: [],
+          artifacts: []
+        })
+    );
+    harness.pythonManager.listGenerationJobs.mockResolvedValue([]);
+
+    const result = await harness.service.startImageJob({
+      prompt: 'Generate a sunset'
+    });
+
+    expect(result.conversation).toBeDefined();
+    expect(result.conversation!.title).toBe('Generate a sunset');
+    expect(result.job.conversationId).toBe(result.conversation!.id);
+    expect(result.job.workspaceId).toBe(harness.defaultWorkspace.id);
+
+    harness.database.close();
+  });
+
+  it('does not create a conversation when conversationId is provided', async () => {
+    const harness = createGenerationHarness();
+    harness.pythonManager.startImageJob.mockImplementation(
+      (input: { id: string }) =>
+        Promise.resolve({
+          id: input.id,
+          kind: 'image',
+          mode: 'text-to-image',
+          workflow_profile: 'default',
+          status: 'running',
+          prompt: 'Generate a neon skyline',
+          negative_prompt: null,
+          model: 'builtin:placeholder',
+          backend: 'placeholder',
+          width: 768,
+          height: 768,
+          steps: 6,
+          guidance_scale: 4,
+          seed: null,
+          progress: 0,
+          stage: 'Running',
+          error_message: null,
+          created_at: '2026-04-08T00:00:00.000Z',
+          updated_at: '2026-04-08T00:00:00.000Z',
+          started_at: '2026-04-08T00:00:00.000Z',
+          completed_at: null,
+          reference_images: [],
+          artifacts: []
+        })
+    );
+    harness.pythonManager.listGenerationJobs.mockResolvedValue([]);
+
+    const result = await harness.service.startImageJob({
+      conversationId: harness.conversation.id,
+      prompt: 'Generate a neon skyline'
+    });
+
+    expect(result.conversation).toBeUndefined();
+    expect(result.job.conversationId).toBe(harness.conversation.id);
+
+    harness.database.close();
+  });
+});
+
+describe('GenerationRepository', () => {
+  it('deletes all jobs for a given conversation ID', () => {
+    const harness = createGenerationHarness();
+    const otherConversation = harness.repository.createConversation({
+      prompt: 'Other chat',
+      workspaceId: harness.defaultWorkspace.id
+    });
+
+    harness.generationRepository.upsertJob({
+      id: '71000000-0000-4000-8000-000000000001',
+      workspaceId: harness.defaultWorkspace.id,
+      conversationId: harness.conversation.id,
+      kind: 'image',
+      mode: 'text-to-image',
+      workflowProfile: 'default',
+      status: 'completed',
+      prompt: 'Sunset',
+      negativePrompt: null,
+      model: 'builtin:placeholder',
+      backend: 'placeholder',
+      width: 768,
+      height: 768,
+      steps: 6,
+      guidanceScale: 4,
+      seed: null,
+      progress: 1,
+      stage: 'Completed',
+      errorMessage: null,
+      createdAt: '2026-04-08T00:00:00.000Z',
+      updatedAt: '2026-04-08T00:00:00.000Z',
+      startedAt: null,
+      completedAt: '2026-04-08T00:00:00.000Z',
+      referenceImages: []
+    });
+    harness.generationRepository.upsertJob({
+      id: '71000000-0000-4000-8000-000000000002',
+      workspaceId: harness.defaultWorkspace.id,
+      conversationId: otherConversation.id,
+      kind: 'image',
+      mode: 'text-to-image',
+      workflowProfile: 'default',
+      status: 'completed',
+      prompt: 'Mountain',
+      negativePrompt: null,
+      model: 'builtin:placeholder',
+      backend: 'placeholder',
+      width: 768,
+      height: 768,
+      steps: 6,
+      guidanceScale: 4,
+      seed: null,
+      progress: 1,
+      stage: 'Completed',
+      errorMessage: null,
+      createdAt: '2026-04-08T00:00:00.000Z',
+      updatedAt: '2026-04-08T00:00:00.000Z',
+      startedAt: null,
+      completedAt: '2026-04-08T00:00:00.000Z',
+      referenceImages: []
+    });
+
+    const deleted = harness.generationRepository.deleteJobsByConversationId(harness.conversation.id);
+
+    expect(deleted).toBe(1);
+    expect(harness.generationRepository.getJob('71000000-0000-4000-8000-000000000001')).toBeNull();
+    expect(harness.generationRepository.getJob('71000000-0000-4000-8000-000000000002')).not.toBeNull();
+
+    harness.database.close();
+  });
+
+  it('deletes all jobs for a given workspace ID', () => {
+    const harness = createGenerationHarness();
+    const otherWorkspace = harness.repository.createWorkspace({ name: 'Other workspace' });
+    const otherConversation = harness.repository.createConversation({
+      prompt: 'Other workspace chat',
+      workspaceId: otherWorkspace.id
+    });
+
+    harness.generationRepository.upsertJob({
+      id: '71000000-0000-4000-8000-000000000010',
+      workspaceId: harness.defaultWorkspace.id,
+      conversationId: harness.conversation.id,
+      kind: 'image',
+      mode: 'text-to-image',
+      workflowProfile: 'default',
+      status: 'completed',
+      prompt: 'Workspace job',
+      negativePrompt: null,
+      model: 'builtin:placeholder',
+      backend: 'placeholder',
+      width: 768,
+      height: 768,
+      steps: 6,
+      guidanceScale: 4,
+      seed: null,
+      progress: 1,
+      stage: 'Completed',
+      errorMessage: null,
+      createdAt: '2026-04-08T00:00:00.000Z',
+      updatedAt: '2026-04-08T00:00:00.000Z',
+      startedAt: null,
+      completedAt: '2026-04-08T00:00:00.000Z',
+      referenceImages: []
+    });
+    harness.generationRepository.upsertJob({
+      id: '71000000-0000-4000-8000-000000000011',
+      workspaceId: otherWorkspace.id,
+      conversationId: otherConversation.id,
+      kind: 'image',
+      mode: 'text-to-image',
+      workflowProfile: 'default',
+      status: 'completed',
+      prompt: 'Other workspace job',
+      negativePrompt: null,
+      model: 'builtin:placeholder',
+      backend: 'placeholder',
+      width: 768,
+      height: 768,
+      steps: 6,
+      guidanceScale: 4,
+      seed: null,
+      progress: 1,
+      stage: 'Completed',
+      errorMessage: null,
+      createdAt: '2026-04-08T00:00:00.000Z',
+      updatedAt: '2026-04-08T00:00:00.000Z',
+      startedAt: null,
+      completedAt: '2026-04-08T00:00:00.000Z',
+      referenceImages: []
+    });
+
+    const deleted = harness.generationRepository.deleteJobsByWorkspaceId(harness.defaultWorkspace.id);
+
+    expect(deleted).toBe(1);
+    expect(harness.generationRepository.getJob('71000000-0000-4000-8000-000000000010')).toBeNull();
+    expect(harness.generationRepository.getJob('71000000-0000-4000-8000-000000000011')).not.toBeNull();
 
     harness.database.close();
   });

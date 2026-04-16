@@ -7,6 +7,7 @@ import type {
   ImageGenerationModelCatalog,
   GenerationStreamEvent,
   ImageGenerationRequest,
+  ImageGenerationStartResult,
   ListGenerationJobsInput,
   RetryGenerationJobInput
 } from '@bridge/ipc/contracts';
@@ -16,6 +17,7 @@ import {
 } from '@bridge/ipc/contracts';
 import type { Logger } from 'pino';
 import type { ChatRepository } from '@bridge/chat/repository';
+import type { ConversationSummary } from '@bridge/ipc/contracts';
 import type { SettingsService } from '@bridge/settings/service';
 import type {
   PythonGenerationJobSnapshot,
@@ -108,7 +110,7 @@ export class GenerationService {
     return catalog;
   }
 
-  async startImageJob(input: ImageGenerationRequest): Promise<GenerationJob> {
+  async startImageJob(input: ImageGenerationRequest): Promise<ImageGenerationStartResult> {
     const workspaceId = this.resolveWorkspaceId(input);
     const settings = this.settingsService.get();
     const model =
@@ -140,10 +142,20 @@ export class GenerationService {
       steps
     });
 
+    let conversation: ConversationSummary | undefined;
+    let conversationId: string | null = input.conversationId ?? null;
+    if (!conversationId) {
+      conversation = this.chatRepository.createConversation({
+        prompt: input.prompt,
+        ...(workspaceId ? { workspaceId } : {})
+      });
+      conversationId = conversation.id;
+    }
+
     const preparedJob = this.repository.upsertJob({
       id: jobId,
       workspaceId,
-      conversationId: input.conversationId ?? null,
+      conversationId,
       kind: 'image',
       mode,
       workflowProfile,
@@ -190,7 +202,7 @@ export class GenerationService {
       });
       const job = this.applySnapshot(snapshot, preparedJob);
       this.ensurePolling(job.id);
-      return job;
+      return { job, ...(conversation ? { conversation } : {}) };
     } catch (error) {
       const failedJob = this.repository.upsertJob({
         ...preparedJob,
@@ -207,7 +219,7 @@ export class GenerationService {
     }
   }
 
-  async retryJob(input: RetryGenerationJobInput): Promise<GenerationJob> {
+  async retryJob(input: RetryGenerationJobInput): Promise<ImageGenerationStartResult> {
     const existingJob = this.repository.getJob(input.jobId);
 
     if (!existingJob) {

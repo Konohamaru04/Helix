@@ -709,6 +709,9 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
       conversations: currentState.conversations.filter(
         (c) => !deletedConversationIds.has(c.id)
       ),
+      generationJobs: currentState.generationJobs.filter(
+        (job) => job.workspaceId !== workspaceId && !deletedConversationIds.has(job.conversationId ?? '')
+      ),
       messagesByConversation: Object.fromEntries(
         Object.entries(currentState.messagesByConversation).filter(
           ([id]) => !deletedConversationIds.has(id)
@@ -861,10 +864,25 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
 
   startImageGeneration: async (input) => {
     const api = getDesktopApi();
-    const job = await api.generation.startImage(input);
+    const result = await api.generation.startImage(input);
 
     set((state) => ({
-      generationJobs: upsertGenerationJobList(state.generationJobs, job)
+      ...(result.conversation
+        ? {
+            activeConversationId: result.conversation.id,
+            activeWorkspaceId:
+              result.conversation.workspaceId ?? state.activeWorkspaceId,
+            conversations: upsertConversation(state.conversations, result.conversation),
+            messagesByConversation:
+              result.conversation.id in state.messagesByConversation
+                ? state.messagesByConversation
+                : {
+                    ...state.messagesByConversation,
+                    [result.conversation.id]: []
+                  }
+          }
+        : {}),
+      generationJobs: upsertGenerationJobList(state.generationJobs, result.job)
     }));
   },
 
@@ -1037,13 +1055,8 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
 
     set((currentState) => ({
       conversations: remainingConversations,
-      generationJobs: currentState.generationJobs.map((job) =>
-        job.conversationId === conversationId
-          ? {
-              ...job,
-              conversationId: null
-            }
-          : job
+      generationJobs: currentState.generationJobs.filter(
+        (job) => job.conversationId !== conversationId
       ),
       searchResults: currentState.searchResults.filter(
         (result) => result.conversation.id !== conversationId
@@ -1124,10 +1137,25 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
   },
 
   retryGenerationJob: async (jobId) => {
-    const job = await getDesktopApi().generation.retryJob({ jobId });
+    const result = await getDesktopApi().generation.retryJob({ jobId });
 
     set((state) => ({
-      generationJobs: upsertGenerationJobList(state.generationJobs, job)
+      ...(result.conversation
+        ? {
+            activeConversationId: result.conversation.id,
+            activeWorkspaceId:
+              result.conversation.workspaceId ?? state.activeWorkspaceId,
+            conversations: upsertConversation(state.conversations, result.conversation),
+            messagesByConversation:
+              result.conversation.id in state.messagesByConversation
+                ? state.messagesByConversation
+                : {
+                    ...state.messagesByConversation,
+                    [result.conversation.id]: []
+                  }
+          }
+        : {}),
+      generationJobs: upsertGenerationJobList(state.generationJobs, result.job)
     }));
   },
 

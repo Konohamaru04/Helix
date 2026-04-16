@@ -697,6 +697,13 @@ export const chatStartAcceptedSchema = z.discriminatedUnion('kind', [
   })
 ]);
 
+export const imageGenerationStartResultSchema = z.object({
+  job: generationJobSchema,
+  conversation: conversationSummarySchema.optional()
+});
+
+export type ImageGenerationStartResult = z.infer<typeof imageGenerationStartResultSchema>;
+
 export const generationStreamEventSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('job-updated'),
@@ -905,13 +912,13 @@ export interface DesktopApi {
     getStatus: () => Promise<SystemStatus>;
   };
   generation: {
-    startImage: (input: ImageGenerationRequest) => Promise<GenerationJob>;
+    startImage: (input: ImageGenerationRequest) => Promise<ImageGenerationStartResult>;
     listImageModels: (
       input?: ListImageGenerationModelsInput
     ) => Promise<ImageGenerationModelCatalog>;
     listJobs: (input?: ListGenerationJobsInput) => Promise<GenerationJob[]>;
     cancelJob: (input: CancelGenerationJobInput) => Promise<GenerationJob>;
-    retryJob: (input: RetryGenerationJobInput) => Promise<GenerationJob>;
+    retryJob: (input: RetryGenerationJobInput) => Promise<ImageGenerationStartResult>;
     onJobEvent: (listener: (event: GenerationStreamEvent) => void) => Unsubscribe;
   };
   chat: {

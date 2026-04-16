@@ -179,7 +179,7 @@ const mockApi = {
     getStatus: vi.fn()
   },
   generation: {
-    startImage: vi.fn(),
+    startImage: vi.fn().mockResolvedValue({ job: undefined, conversation: undefined }),
     listImageModels: vi.fn(),
     listJobs: vi.fn(),
     cancelJob: vi.fn(),
@@ -308,7 +308,7 @@ describe('ChatPage', () => {
       warnings: []
     });
     mockApi.generation.listJobs.mockResolvedValue([]);
-    mockApi.generation.startImage.mockResolvedValue(generationJob);
+    mockApi.generation.startImage.mockResolvedValue({ job: generationJob, conversation: undefined });
     mockApi.chat.listTools.mockResolvedValue([
       {
         id: 'calculator',

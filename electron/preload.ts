@@ -22,6 +22,7 @@ import {
   generationJobSchema,
   generationStreamEventSchema,
   imageGenerationRequestSchema,
+  imageGenerationStartResultSchema,
   importConversationResultSchema,
   conversationSearchResultSchema,
   conversationSummarySchema,
@@ -77,7 +78,7 @@ const desktopApi: DesktopApi = {
   },
   generation: {
     startImage: async (input) =>
-      generationJobSchema.parse(
+      imageGenerationStartResultSchema.parse(
         await ipcRenderer.invoke(
           IpcChannels.generationStartImage,
           imageGenerationRequestSchema.parse(input)
@@ -106,7 +107,7 @@ const desktopApi: DesktopApi = {
         )
       ),
     retryJob: async (input) =>
-      generationJobSchema.parse(
+      imageGenerationStartResultSchema.parse(
         await ipcRenderer.invoke(
           IpcChannels.generationRetryJob,
           retryGenerationJobInputSchema.parse(input)

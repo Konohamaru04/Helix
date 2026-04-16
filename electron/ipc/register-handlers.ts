@@ -30,6 +30,7 @@ import {
   generationStreamEventSchema,
   imageGenerationModelCatalogSchema,
   imageGenerationRequestSchema,
+  imageGenerationStartResultSchema,
   importConversationResultSchema,
   importWorkspaceKnowledgeResultSchema,
   knowledgeDocumentSchema,
@@ -164,7 +165,7 @@ export function registerIpcHandlers(context: DesktopAppContext): void {
   );
 
   ipcMain.handle(IpcChannels.generationStartImage, async (_event, payload) =>
-    generationJobSchema.parse(
+    imageGenerationStartResultSchema.parse(
       await context.generationService.startImageJob(
         imageGenerationRequestSchema.parse(payload)
       )
@@ -196,7 +197,7 @@ export function registerIpcHandlers(context: DesktopAppContext): void {
   );
 
   ipcMain.handle(IpcChannels.generationRetryJob, async (_event, payload) =>
-    generationJobSchema.parse(
+    imageGenerationStartResultSchema.parse(
       await context.generationService.retryJob(
         retryGenerationJobInputSchema.parse(payload)
       )

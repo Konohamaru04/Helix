@@ -1235,6 +1235,7 @@ export class ChatService {
       throw new Error(`Conversation ${conversationId} was not found.`);
     }
 
+    this.generationRepository?.deleteJobsByConversationId(conversationId);
     this.repository.deleteConversation(conversationId);
     this.logger.info({ conversationId }, 'Deleted conversation');
   }
@@ -1331,6 +1332,7 @@ export class ChatService {
       throw new Error('Cannot delete the last workspace.');
     }
 
+    this.generationRepository?.deleteJobsByWorkspaceId(workspaceId);
     this.repository.deleteWorkspace(workspaceId);
     this.logger.info({ workspaceId, name: workspace.name }, 'Deleted workspace');
   }

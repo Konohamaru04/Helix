@@ -59,7 +59,7 @@ describe('app-store stream buffering', () => {
         getStatus: vi.fn()
       },
       generation: {
-        startImage: vi.fn(),
+        startImage: vi.fn().mockResolvedValue({ job: undefined, conversation: undefined }),
         listImageModels: vi.fn().mockResolvedValue({
           additionalModelsDirectory: null,
           options: [
@@ -437,7 +437,7 @@ describe('app-store stream buffering', () => {
       completedAt: null
     };
 
-    window.ollamaDesktop.generation.retryJob = vi.fn().mockResolvedValue(retriedJob);
+    window.ollamaDesktop.generation.retryJob = vi.fn().mockResolvedValue({ job: retriedJob, conversation: undefined });
     useAppStore.setState({
       generationJobs: [failedJob]
     });
