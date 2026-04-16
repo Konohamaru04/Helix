@@ -501,7 +501,7 @@ export function ChatPage() {
       <div className="relative flex h-[calc(100vh-2.5rem)] flex-col">
         <div className="flex min-h-0 flex-1">
           {/* Inline sidebar — always visible at lg+ */}
-          <div className="hidden lg:block">
+          <div className="hidden h-full lg:block">
             <Sidebar
               activeWorkspaceId={activeWorkspaceId}
               activeConversationId={activeConversationId}
@@ -530,7 +530,7 @@ export function ChatPage() {
                 onClick={() => toggleSidebar(false)}
                 role="presentation"
               />
-              <aside className="fixed inset-y-0 left-0 z-30 w-80 animate-slide-in-left lg:hidden">
+              <aside className="fixed top-10 bottom-0 left-0 z-30 w-80 animate-slide-in-left lg:hidden">
                 <Sidebar
                   overlayMode
                   onClose={() => toggleSidebar(false)}
