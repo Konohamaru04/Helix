@@ -76,7 +76,7 @@ function formatPythonDetail(systemStatus: SystemStatus | null) {
 function ConnectionPill(props: { label: string; healthy: boolean; detail: string }) {
   return (
     <div
-      className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs ${
+      className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs transition-colors duration-150 ${
         props.healthy
           ? 'border-emerald-400/30 bg-emerald-400/10 text-emerald-100'
           : 'border-rose-400/30 bg-rose-400/10 text-rose-100'
@@ -89,7 +89,7 @@ function ConnectionPill(props: { label: string; healthy: boolean; detail: string
         }`}
       />
       <span className="font-medium">{props.label}</span>
-      <span className="text-[11px] opacity-80">{props.detail}</span>
+      <span className="text-[11px] opacity-80 hidden sm:inline">{props.detail}</span>
     </div>
   );
 }
