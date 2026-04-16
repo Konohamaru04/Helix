@@ -6,7 +6,26 @@ interface StatusBarProps {
   planOpen?: boolean;
   onOpenQueue: () => void;
   onOpenPlan: () => void;
+  onOpenSettings: () => void;
+  activeTextBackend: 'ollama' | 'nvidia';
+  onTextBackendChange: (backend: 'ollama' | 'nvidia') => void;
+  selectedModel: string;
+  availableModels: string[];
+  onSelectedModelChange: (model: string) => void;
+  selectedThinkMode: string;
+  onSelectedThinkModeChange: (thinkMode: string) => void;
+  thinkModeDisabled?: boolean;
+  settingsOpen?: boolean;
 }
+
+const THINK_MODE_OPTIONS = [
+  { value: '', label: 'Think auto' },
+  { value: 'off', label: 'Think off' },
+  { value: 'on', label: 'Think on' },
+  { value: 'low', label: 'Think low' },
+  { value: 'medium', label: 'Think medium' },
+  { value: 'high', label: 'Think high' }
+] as const;
 
 function getTextBackendHealth(systemStatus: SystemStatus | null) {
   if (!systemStatus) {
@@ -117,9 +136,54 @@ export function StatusBar(props: StatusBarProps) {
           healthy={props.systemStatus?.python.reachable ?? false}
           label="VRAM"
         />
+
+        <div className="hidden items-center gap-2 sm:flex">
+          <select
+            aria-label="Text backend"
+            className="appearance-none rounded-full border border-white/10 bg-slate-900/90 px-3 py-1 text-xs text-slate-100 transition hover:border-white/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
+            onChange={(event) => props.onTextBackendChange(event.target.value as 'ollama' | 'nvidia')}
+            value={props.activeTextBackend}
+          >
+            <option value="ollama">Ollama</option>
+            <option value="nvidia">NVIDIA</option>
+          </select>
+
+          <select
+            aria-label="Model"
+            className="appearance-none rounded-full border border-white/10 bg-slate-900/90 px-3 py-1 text-xs text-slate-100 transition hover:border-white/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
+            onChange={(event) => props.onSelectedModelChange(event.target.value)}
+            value={props.selectedModel}
+          >
+            <option value="">Auto</option>
+            {props.availableModels.map((model) => (
+              <option key={model} value={model}>{model}</option>
+            ))}
+          </select>
+
+          <select
+            aria-label="Think mode"
+            className="appearance-none rounded-full border border-white/10 bg-slate-900/90 px-3 py-1 text-xs text-slate-100 transition hover:border-white/20 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
+            disabled={props.thinkModeDisabled}
+            onChange={(event) => props.onSelectedThinkModeChange(event.target.value)}
+            value={props.selectedThinkMode}
+          >
+            {THINK_MODE_OPTIONS.map((option) => (
+              <option key={option.value || 'auto'} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
 
       <div className="flex items-center gap-2">
+        <button
+          className={`rounded-full border px-3 py-1.5 text-xs font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 ${props.settingsOpen ? activeButtonClass : idleButtonClass}`}
+          onClick={props.onOpenSettings}
+          type="button"
+        >
+          Settings
+        </button>
         <button
           className={`rounded-full border px-3 py-1.5 text-xs font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 ${props.planOpen ? activeButtonClass : idleButtonClass}`}
           onClick={props.onOpenPlan}

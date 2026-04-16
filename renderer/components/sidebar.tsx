@@ -16,6 +16,9 @@ interface SidebarProps {
   onSelectConversation: (conversationId: string) => void;
   onSearchQueryChange: (query: string) => void;
   onDeleteWorkspace: (workspaceId: string) => void;
+  onNewChat: () => void;
+  onNewWorkspace: () => void;
+  onDeleteConversation?: (conversationId: string) => void;
   overlayMode?: boolean;
   onClose?: () => void;
 }
@@ -111,6 +114,13 @@ export function Sidebar(props: SidebarProps) {
             </div>
           ))}
         </div>
+        <button
+          className="mt-2 rounded-full border border-white/10 px-3 py-1.5 text-xs font-medium text-slate-300 transition hover:border-white/20 hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
+          onClick={props.onNewWorkspace}
+          type="button"
+        >
+          + Workspace
+        </button>
       </div>
 
       <div className="px-5 py-4">
@@ -129,6 +139,13 @@ export function Sidebar(props: SidebarProps) {
           type="search"
           value={props.searchQuery}
         />
+        <button
+          className="mt-2 w-full rounded-xl bg-cyan-400 px-3 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-300"
+          onClick={props.onNewChat}
+          type="button"
+        >
+          New chat
+        </button>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-4">
@@ -148,28 +165,42 @@ export function Sidebar(props: SidebarProps) {
                 const active = result.conversation.id === props.activeConversationId;
 
                 return (
-                  <button
-                    key={result.conversation.id}
-                    className={`w-full rounded-2xl border px-4 py-3 text-left transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 ${
-                      active
-                        ? 'border-cyan-300/40 bg-cyan-400/10 text-white'
-                        : 'border-white/10 bg-slate-900/60 text-slate-300 hover:border-white/20 hover:bg-slate-900'
-                    }`}
-                    onClick={() => props.onSelectConversation(result.conversation.id)}
-                    type="button"
-                  >
-                    <p className="truncate text-sm font-medium">
-                      {result.conversation.title}
-                    </p>
-                    <p className="mt-1 text-xs text-cyan-200/70">
-                      {result.workspaceName ?? 'Unassigned'}
-                    </p>
-                    {result.snippet ? (
-                      <p className="mt-2 line-clamp-2 text-xs text-slate-400">
-                        {result.snippet}
+                  <div key={result.conversation.id} className="group relative">
+                    <button
+                      className={`w-full rounded-2xl border px-4 py-3 text-left transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 ${
+                        active
+                          ? 'border-cyan-300/40 bg-cyan-400/10 text-white pr-8'
+                          : 'border-white/10 bg-slate-900/60 text-slate-300 hover:border-white/20 hover:bg-slate-900'
+                      }`}
+                      onClick={() => props.onSelectConversation(result.conversation.id)}
+                      type="button"
+                    >
+                      <p className="truncate text-sm font-medium">
+                        {result.conversation.title}
                       </p>
+                      <p className="mt-1 text-xs text-cyan-200/70">
+                        {result.workspaceName ?? 'Unassigned'}
+                      </p>
+                      {result.snippet ? (
+                        <p className="mt-2 line-clamp-2 text-xs text-slate-400">
+                          {result.snippet}
+                        </p>
+                      ) : null}
+                    </button>
+                    {active && props.onDeleteConversation ? (
+                      <button
+                        aria-label="Delete chat"
+                        className="absolute right-2 top-3 flex h-5 w-5 items-center justify-center rounded-full text-xs text-rose-300 opacity-0 transition hover:bg-rose-500/20 hover:text-rose-100 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-400"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          props.onDeleteConversation?.(result.conversation.id);
+                        }}
+                        type="button"
+                      >
+                        ✕
+                      </button>
                     ) : null}
-                  </button>
+                  </div>
                 );
               })}
             </div>
@@ -186,21 +217,35 @@ export function Sidebar(props: SidebarProps) {
                     const active = conversation.id === props.activeConversationId;
 
                     return (
-                      <button
-                        key={conversation.id}
-                        className={`w-full rounded-2xl border px-4 py-3 text-left transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 ${
-                          active
-                            ? 'border-cyan-300/40 bg-cyan-400/10 text-white'
-                            : 'border-white/10 bg-slate-900/60 text-slate-300 hover:border-white/20 hover:bg-slate-900'
-                        }`}
-                        onClick={() => props.onSelectConversation(conversation.id)}
-                        type="button"
-                      >
-                        <p className="truncate text-sm font-medium">{conversation.title}</p>
-                        <p className="mt-1 text-xs text-slate-400">
-                          Updated {formatTimestamp(conversation.updatedAt)}
-                        </p>
-                      </button>
+                      <div key={conversation.id} className="group relative">
+                        <button
+                          className={`w-full rounded-2xl border px-4 py-3 text-left transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 ${
+                            active
+                              ? 'border-cyan-300/40 bg-cyan-400/10 text-white pr-8'
+                              : 'border-white/10 bg-slate-900/60 text-slate-300 hover:border-white/20 hover:bg-slate-900'
+                          }`}
+                          onClick={() => props.onSelectConversation(conversation.id)}
+                          type="button"
+                        >
+                          <p className="truncate text-sm font-medium">{conversation.title}</p>
+                          <p className="mt-1 text-xs text-slate-400">
+                            Updated {formatTimestamp(conversation.updatedAt)}
+                          </p>
+                        </button>
+                        {active && props.onDeleteConversation ? (
+                          <button
+                            aria-label="Delete chat"
+                            className="absolute right-2 top-3 flex h-5 w-5 items-center justify-center rounded-full text-xs text-rose-300 opacity-0 transition hover:bg-rose-500/20 hover:text-rose-100 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-400"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              props.onDeleteConversation?.(conversation.id);
+                            }}
+                            type="button"
+                          >
+                            ✕
+                          </button>
+                        ) : null}
+                      </div>
                     );
                   })}
                 </div>
@@ -228,21 +273,35 @@ export function Sidebar(props: SidebarProps) {
                     const active = conversation.id === props.activeConversationId;
 
                     return (
-                      <button
-                        key={conversation.id}
-                        className={`w-full rounded-2xl border px-4 py-3 text-left transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 ${
-                          active
-                            ? 'border-cyan-300/40 bg-cyan-400/10 text-white'
-                            : 'border-white/10 bg-slate-900/60 text-slate-300 hover:border-white/20 hover:bg-slate-900'
-                        }`}
-                        onClick={() => props.onSelectConversation(conversation.id)}
-                        type="button"
-                      >
-                        <p className="truncate text-sm font-medium">{conversation.title}</p>
-                        <p className="mt-1 text-xs text-slate-400">
-                          Updated {formatTimestamp(conversation.updatedAt)}
-                        </p>
-                      </button>
+                      <div key={conversation.id} className="group relative">
+                        <button
+                          className={`w-full rounded-2xl border px-4 py-3 text-left transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 ${
+                            active
+                              ? 'border-cyan-300/40 bg-cyan-400/10 text-white pr-8'
+                              : 'border-white/10 bg-slate-900/60 text-slate-300 hover:border-white/20 hover:bg-slate-900'
+                          }`}
+                          onClick={() => props.onSelectConversation(conversation.id)}
+                          type="button"
+                        >
+                          <p className="truncate text-sm font-medium">{conversation.title}</p>
+                          <p className="mt-1 text-xs text-slate-400">
+                            Updated {formatTimestamp(conversation.updatedAt)}
+                          </p>
+                        </button>
+                        {active && props.onDeleteConversation ? (
+                          <button
+                            aria-label="Delete chat"
+                            className="absolute right-2 top-3 flex h-5 w-5 items-center justify-center rounded-full text-xs text-rose-300 opacity-0 transition hover:bg-rose-500/20 hover:text-rose-100 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-400"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              props.onDeleteConversation?.(conversation.id);
+                            }}
+                            type="button"
+                          >
+                            ✕
+                          </button>
+                        ) : null}
+                      </div>
                     );
                   })}
                 </div>

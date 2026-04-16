@@ -44,15 +44,6 @@ function mergeAttachments(
 
 type SubmitPhase = 'chat' | 'image' | 'edit';
 
-const THINK_MODE_OPTIONS = [
-  { value: '', label: 'Think auto' },
-  { value: 'off', label: 'Think off' },
-  { value: 'on', label: 'Think on' },
-  { value: 'low', label: 'Think low' },
-  { value: 'medium', label: 'Think medium' },
-  { value: 'high', label: 'Think high' }
-] as const;
-
 function getSubmitFeedback(phase: SubmitPhase | null) {
   if (phase === 'chat') {
     return {
@@ -516,6 +507,14 @@ export function ChatPage() {
                 void selectWorkspace(workspaceId);
               }}
               onDeleteWorkspace={(workspaceId) => void deleteWorkspace(workspaceId)}
+              onNewChat={() => {
+                resetComposer();
+                void selectConversation(null);
+              }}
+              onNewWorkspace={() => setCreatingWorkspace((current) => !current)}
+              onDeleteConversation={(conversationId) => {
+                void deleteConversation(conversationId);
+              }}
               searchQuery={searchQuery}
               searchResults={searchResults}
               workspaces={workspaces}
@@ -549,6 +548,14 @@ export function ChatPage() {
                     toggleSidebar(false);
                   }}
                   onDeleteWorkspace={(workspaceId) => void deleteWorkspace(workspaceId)}
+                  onNewChat={() => {
+                    resetComposer();
+                    void selectConversation(null);
+                  }}
+                  onNewWorkspace={() => setCreatingWorkspace((current) => !current)}
+                  onDeleteConversation={(conversationId) => {
+                    void deleteConversation(conversationId);
+                  }}
                   searchQuery={searchQuery}
                   searchResults={searchResults}
                   workspaces={workspaces}
@@ -585,130 +592,6 @@ export function ChatPage() {
                     >
                       {headerSubtitle}
                     </p>
-                  </div>
-                </div>
-
-                <div className="-mx-1 overflow-x-auto pb-1">
-                  <div className="flex flex-wrap items-center gap-3 px-1">
-                <button
-                  className="rounded-2xl bg-cyan-400 px-4 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-cyan-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-300"
-                  onClick={() => {
-                    resetComposer();
-                    void selectConversation(null);
-                  }}
-                  type="button"
-                >
-                  New chat
-                </button>
-                <button
-                  className="rounded-2xl border border-white/10 px-4 py-2.5 text-sm font-medium text-slate-100 transition hover:border-white/20 hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
-                  onClick={() => setCreatingWorkspace((current) => !current)}
-                  type="button"
-                >
-                  New workspace
-                </button>
-                <label
-                  className="sr-only"
-                  htmlFor="backend-select"
-                >
-                  Text backend
-                </label>
-                <div className="relative min-w-[150px]">
-                  <select
-                    id="backend-select"
-                    className="w-full appearance-none rounded-2xl border border-white/10 bg-slate-900/90 px-4 py-2.5 pr-11 text-sm text-slate-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] transition hover:border-white/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
-                    onChange={(event) => {
-                      void handleTextBackendChange(event.target.value as 'ollama' | 'nvidia');
-                    }}
-                    value={activeTextBackend}
-                  >
-                    <option value="ollama">Ollama</option>
-                    <option value="nvidia">NVIDIA</option>
-                  </select>
-                  <span className="pointer-events-none absolute inset-y-0 right-4 flex items-center text-slate-400">
-                    v
-                  </span>
-                </div>
-                <label
-                  className="sr-only"
-                  htmlFor="model-select"
-                >
-                  Model selection
-                </label>
-                <div className="relative min-w-[190px]">
-                  <select
-                    id="model-select"
-                    className="w-full appearance-none rounded-2xl border border-white/10 bg-slate-900/90 px-4 py-2.5 pr-11 text-sm text-slate-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] transition hover:border-white/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
-                    onChange={(event) => setSelectedModel(event.target.value)}
-                    value={selectedModel}
-                  >
-                    <option value="">Auto (use General, Coding, or Vision)</option>
-                    {availableModels.length === 0 ? (
-                      <option value="" disabled>
-                        {activeTextBackend === 'nvidia'
-                          ? 'No NVIDIA models available'
-                          : 'No local models detected'}
-                      </option>
-                    ) : null}
-                    {availableModels.map((model) => (
-                      <option
-                        key={model}
-                        value={model}
-                      >
-                        {model}
-                      </option>
-                    ))}
-                  </select>
-                  <span className="pointer-events-none absolute inset-y-0 right-4 flex items-center text-slate-400">
-                    v
-                  </span>
-                </div>
-                <label
-                  className="sr-only"
-                  htmlFor="think-mode-select"
-                >
-                  Think mode
-                </label>
-                <div className="relative min-w-[170px]">
-                  <select
-                    id="think-mode-select"
-                    className="w-full appearance-none rounded-2xl border border-white/10 bg-slate-900/90 px-4 py-2.5 pr-11 text-sm text-slate-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] transition hover:border-white/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
-                    disabled={activeTextBackend !== 'ollama'}
-                    onChange={(event) => setSelectedThinkMode(event.target.value as '' | 'off' | 'on' | 'low' | 'medium' | 'high')}
-                    value={selectedThinkMode}
-                  >
-                    {THINK_MODE_OPTIONS.map((option) => (
-                      <option
-                        key={option.value || 'auto'}
-                        value={option.value}
-                      >
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                  <span className="pointer-events-none absolute inset-y-0 right-4 flex items-center text-slate-400">
-                    v
-                  </span>
-                </div>
-                {activeConversation ? (
-                  <button
-                    className="rounded-2xl border border-rose-300/20 px-4 py-2.5 text-sm font-medium text-rose-100 transition hover:border-rose-300/30 hover:bg-rose-500/10 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-300"
-                    disabled={streaming}
-                    onClick={() => {
-                      void handleDeleteConversation();
-                    }}
-                    type="button"
-                  >
-                    Delete chat
-                  </button>
-                ) : null}
-                <button
-                  className="rounded-2xl border border-white/10 px-4 py-2.5 text-sm font-medium text-slate-100 transition hover:border-white/20 hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
-                  onClick={() => toggleSettingsDrawer(true)}
-                  type="button"
-                >
-                  Settings
-                </button>
                   </div>
                 </div>
               </div>
@@ -845,11 +728,21 @@ export function ChatPage() {
         </div>
 
         <StatusBar
+          activeTextBackend={activeTextBackend}
+          availableModels={availableModels}
           onOpenPlan={() => togglePlanDrawer()}
           onOpenQueue={() => toggleQueueDrawer()}
+          onOpenSettings={() => toggleSettingsDrawer(true)}
+          onSelectedModelChange={setSelectedModel}
+          onSelectedThinkModeChange={(value) => setSelectedThinkMode(value as '' | 'off' | 'on' | 'low' | 'medium' | 'high')}
+          onTextBackendChange={(backend) => void handleTextBackendChange(backend)}
           planOpen={planDrawerOpen}
           queueOpen={queueDrawerOpen}
+          selectedModel={selectedModel}
+          selectedThinkMode={selectedThinkMode}
+          settingsOpen={settingsDrawerOpen}
           systemStatus={systemStatus}
+          thinkModeDisabled={activeTextBackend !== 'ollama'}
         />
       </div>
 
