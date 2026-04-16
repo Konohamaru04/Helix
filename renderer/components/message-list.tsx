@@ -198,7 +198,7 @@ export function MessageList(props: MessageListProps) {
             return (
               <div
                 key={message.id}
-                className={`flex max-w-[80%] ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                className={`max-w-[80%] ${message.role === 'user' ? 'self-end' : 'self-start'}`}
               >
                 <MessageBubble
                   canEdit={canEdit}

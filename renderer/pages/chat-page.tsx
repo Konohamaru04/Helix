@@ -565,7 +565,7 @@ export function ChatPage() {
           )}
 
           <div className="flex min-w-0 flex-1 flex-col">
-            <header className="border-b border-white/10 px-6 py-4">
+            {/* <header className="border-b border-white/10 px-6 py-4">
               <div className="mx-auto flex w-full min-w-0 max-w-[88rem] flex-col gap-3">
                 <div className="flex items-center gap-3">
                   <button
@@ -595,7 +595,7 @@ export function ChatPage() {
                   </div>
                 </div>
               </div>
-            </header>
+            </header> */}
 
             {!initialized ? (
               <div className="flex flex-1 items-center justify-center text-sm text-slate-400">

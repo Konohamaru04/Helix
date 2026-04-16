@@ -49,6 +49,7 @@ desktop.ini
 # ── Claude Code / agent local config ─────────────────────────────────────────
 .claude/
 .agents/
+.superpowers/
 CLAUDE.md
 AGENTS.md
 
