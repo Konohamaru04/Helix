@@ -347,6 +347,7 @@ interface AppStoreState {
   settingsDrawerOpen: boolean;
   queueDrawerOpen: boolean;
   planDrawerOpen: boolean;
+  sidebarOpen: boolean;
   streamingAssistantIds: string[];
   pendingStreamEventsByAssistantId: Record<string, ChatStreamEvent>;
   lastExportPath: string | null;
@@ -371,6 +372,7 @@ interface AppStoreState {
   toggleSettingsDrawer: (open?: boolean) => void;
   toggleQueueDrawer: (open?: boolean) => void;
   togglePlanDrawer: (open?: boolean) => void;
+  toggleSidebar: (open?: boolean) => void;
   setSelectedModel: (model: string) => void;
   setSelectedThinkMode: (thinkMode: ChatThinkModeSelection) => void;
   updateSettings: (patch: UpdateUserSettings) => Promise<void>;
@@ -429,6 +431,7 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
   settingsDrawerOpen: false,
   queueDrawerOpen: false,
   planDrawerOpen: false,
+  sidebarOpen: typeof window !== 'undefined' ? window.matchMedia('(min-width: 1280px)').matches : false,
   streamingAssistantIds: [],
   pendingStreamEventsByAssistantId: {},
   lastExportPath: null,
@@ -528,6 +531,12 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
           error instanceof Error ? error.message : 'Unable to load app state.'
       });
     }
+
+    const sidebarMql = window.matchMedia('(min-width: 1280px)');
+    const handleSidebarResize = () => {
+      set({ sidebarOpen: sidebarMql.matches });
+    };
+    sidebarMql.addEventListener('change', handleSidebarResize);
   },
 
   refreshGenerationJobs: async () => {
@@ -802,6 +811,12 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
   togglePlanDrawer: (open) => {
     set((state) => ({
       planDrawerOpen: open ?? !state.planDrawerOpen
+    }));
+  },
+
+  toggleSidebar: (open) => {
+    set((state) => ({
+      sidebarOpen: open ?? !state.sidebarOpen
     }));
   },
 
