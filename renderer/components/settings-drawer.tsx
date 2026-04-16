@@ -184,7 +184,7 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
   }
 
   return (
-    <div className="fixed inset-0 z-20 bg-slate-950/50 backdrop-blur-sm">
+    <div className="fixed inset-0 z-20 bg-slate-950/50 backdrop-blur-sm animate-fade-in">
       <button
         aria-label="Close settings"
         className="absolute inset-0 cursor-default"
@@ -192,7 +192,7 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
         type="button"
       />
       <div className="absolute inset-y-0 right-0 flex w-full max-w-xl justify-end">
-        <aside className="relative flex h-full w-full max-w-xl flex-col border-l border-white/10 bg-slate-950 px-6 py-5 shadow-2xl">
+        <aside className="relative flex h-full w-full max-w-xl flex-col border-l border-white/10 bg-slate-950 px-6 py-5 shadow-2xl animate-slide-in-right">
           <div className="flex items-start justify-between gap-4">
             <div>
               <p className="text-xs uppercase tracking-[0.3em] text-cyan-200/70">

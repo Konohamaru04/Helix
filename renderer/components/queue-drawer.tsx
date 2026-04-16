@@ -24,8 +24,8 @@ export function QueueDrawer(props: QueueDrawerProps) {
   );
 
   return (
-    <div className="pointer-events-none fixed inset-x-0 bottom-16 z-20 flex justify-center px-6">
-      <section className="pointer-events-auto flex max-h-[calc(70vh-2rem)] w-full max-w-6xl flex-col overflow-hidden rounded-[2rem] border border-white/10 bg-slate-950/95 shadow-2xl backdrop-blur">
+    <div className="pointer-events-none fixed inset-x-0 bottom-16 z-20 flex justify-center px-6 animate-fade-in">
+      <section className="pointer-events-auto flex max-h-[calc(70vh-2rem)] w-full max-w-6xl flex-col overflow-hidden rounded-[2rem] border border-white/10 bg-slate-950/95 shadow-2xl backdrop-blur animate-slide-in-up">
         <div className="flex shrink-0 items-start justify-between gap-4 px-6 pt-5">
           <div>
             <p className="text-xs uppercase tracking-[0.3em] text-cyan-200/70">Queue</p>
