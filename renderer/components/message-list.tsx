@@ -196,18 +196,22 @@ export function MessageList(props: MessageListProps) {
               Boolean(props.onRegenerateMessage);
 
             return (
-              <MessageBubble
+              <div
                 key={message.id}
-                canEdit={canEdit}
-                canPin={!props.streaming && message.status === 'completed'}
-                canRegenerate={canRegenerate}
-                message={message}
-                {...(props.onEditMessage ? { onEdit: props.onEditMessage } : {})}
-                {...(props.onTogglePin ? { onTogglePin: props.onTogglePin } : {})}
-                {...(props.onRegenerateMessage
-                  ? { onRegenerate: props.onRegenerateMessage }
-                  : {})}
-              />
+                className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
+              >
+                <MessageBubble
+                  canEdit={canEdit}
+                  canPin={!props.streaming && message.status === 'completed'}
+                  canRegenerate={canRegenerate}
+                  message={message}
+                  {...(props.onEditMessage ? { onEdit: props.onEditMessage } : {})}
+                  {...(props.onTogglePin ? { onTogglePin: props.onTogglePin } : {})}
+                  {...(props.onRegenerateMessage
+                    ? { onRegenerate: props.onRegenerateMessage }
+                    : {})}
+                />
+              </div>
             );
           })}
 

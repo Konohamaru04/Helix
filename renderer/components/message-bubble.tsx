@@ -276,7 +276,7 @@ export function MessageBubble(props: MessageBubbleProps) {
         assistant
           ? 'border-cyan-300/20 bg-slate-900/80 text-slate-100'
           : message.role === 'user'
-            ? 'ml-3 border-orange-300/20 bg-orange-500/10 text-orange-50'
+            ? 'border-orange-300/20 bg-orange-500/10 text-orange-50'
             : 'border-white/10 bg-slate-950/90 text-slate-200'
       }`}
     >
