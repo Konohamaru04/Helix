@@ -36,7 +36,7 @@ export function Sidebar(props: SidebarProps) {
   );
 
   return (
-    <aside className={`flex w-80 shrink-0 flex-col border-r border-white/10 bg-slate-950/80 backdrop-blur${props.overlayMode ? ' h-full' : ''}`}>
+    <aside className="flex h-full w-80 shrink-0 flex-col border-r border-white/10 bg-slate-950/80 backdrop-blur">
       {props.overlayMode ? (
         <div className="flex items-center justify-end px-5 pt-3">
           <button
