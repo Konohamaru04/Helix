@@ -21,6 +21,7 @@ models/*
 
 config/*
 !config/README.md
+!config/python-deferred-requirements.txt
 
 # ── Bundled Python runtime (large binary — not source) ────────────────────────
 python_embeded/*
