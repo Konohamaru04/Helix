@@ -23,6 +23,7 @@ Helix runs entirely on your machine. Chat with local Ollama models or NVIDIA-hos
 - Attachment previews in the composer and transcript (images, files)
 - Import and export conversations through the bridge
 - Native splash screen while Electron boots the bridge and loads the first renderer window
+- Packaged builds defer part of the Python runtime into a first-run installer under Electron `userData/python-runtime/site-packages` before the local inference server starts
 
 ### Routing
 
@@ -100,6 +101,8 @@ GGUF architecture is sniffed from file headers (`qwen_image`, `wan`, `flux`). Wa
 `Auto` chat submit routes image creation and follow-up edit prompts directly to inline generation jobs. The `Auto` flow reuses the latest generated image as the reference input for edit follow-ups.
 
 GPU headroom is enforced before loading models. The Python worker persists queued and running jobs to a restart-safe state file and replays them on boot. Desktop notifications fire on job completion and failure. Failed jobs can be retried from the chat timeline or the queue drawer.
+
+Packaged Windows builds intentionally exclude a deferred dependency set (`numpy`, `einops`, `transformers`, `tokenizers`, `sentencepiece`, `safetensors`, `aiohttp`, `yarl`, `PyYAML`, `Pillow`, `scipy`, `tqdm`, `psutil`, `alembic`, `SQLAlchemy`, `filelock`, `av`, `requests`, `simpleeval`, `blake3`) from the bundled `python_embeded` tree. On first launch the splash screen checks `config/python-deferred-requirements.txt`, installs any missing packages into Electron `userData`, then starts the Python server.
 
 ### Workspaces
 
@@ -331,8 +334,10 @@ Set **General**, **Coding**, and **Vision** model slots to the models you have p
 npm run package:win
 
 # Quick smoke check — no installer, faster
-npm run package:dir
+npm run package:dir_win
 ```
+
+Both Windows packaging commands first strip the deferred Python package set from `python_embeded/`, then run the Electron packaging step. That is the intended release pipeline for Helix.
 
 Artifacts land in `release/`. The executable is `release/win-unpacked/Helix.exe` and must stay alongside the rest of the `win-unpacked/` contents.
 

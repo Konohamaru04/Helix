@@ -10,6 +10,7 @@ import { MemoryService } from '@bridge/memory';
 import { getMcpCapabilitySurface } from '@bridge/mcp';
 import { NvidiaClient } from '@bridge/nvidia/client';
 import { OllamaClient } from '@bridge/ollama/client';
+import { getDeferredPythonSitePackagesPath } from '@bridge/python/deferred-runtime';
 import { PythonServerManager } from '@bridge/python/lifecycle';
 import { BridgeQueue } from '@bridge/queue';
 import { RagService } from '@bridge/rag';
@@ -76,7 +77,8 @@ export class DesktopAppContext {
       options.appPath,
       this.logger.child({ scope: 'python' }),
       defaultUserSettings.pythonPort,
-      path.join(options.userDataPath, 'python-worker')
+      path.join(options.userDataPath, 'python-worker'),
+      [getDeferredPythonSitePackagesPath(options.userDataPath)]
     );
     this.skillRegistry = new SkillRegistry(skillsDirectory);
     this.ragService = new RagService(this.database, this.logger.child({ scope: 'rag' }));

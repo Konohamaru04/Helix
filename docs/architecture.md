@@ -12,7 +12,9 @@ The current implementation follows the required layer boundaries:
 - `comfyui_backend/` contains the bundled ComfyUI sidecar tree
 - the production Electron main build preserves modules instead of forcing a single chunk, which keeps the packaged main-process bundle stable with the current bridge/tool graph
 - packaged Windows builds copy `python_embeded/`, `inference_server/`, `comfyui_backend/`, `skills/`, and other runtime assets into Electron `resources/`, while mutable state stays under Electron `userData/`
-- startup now shows a lightweight static splash window from `Assets/splash/` before `createDesktopAppContext` runs, and the main chat window stays hidden until its renderer finishes loading
+- startup now shows a lightweight static splash window from `Assets/splash/` before `createDesktopAppContext` runs, the splash receives live main-process status updates, and the main chat window stays hidden until its renderer finishes loading
+- packaged Windows builds now exclude a deferred Python dependency set from `python_embeded/`; Electron main provisions those packages into `userData/python-runtime/site-packages` on first launch before the FastAPI worker is started
+- the Windows packaging scripts now enforce that release flow explicitly by stripping the deferred package set from the source `python_embeded/` tree before `electron-builder` copies runtime assets into `release/win-unpacked`
 
 Milestone coverage today:
 

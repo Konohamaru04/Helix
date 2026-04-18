@@ -119,6 +119,9 @@ h1 {
   margin: 8px 0 0;
   color: #cbd5e1;
   font-size: 0.94rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .progress-track {
@@ -133,11 +136,16 @@ h1 {
 
 .progress-fill {
   height: 100%;
-  width: 28%;
+  width: 0;
   border-radius: inherit;
   background:
     linear-gradient(90deg, rgba(34, 211, 238, 0.5), rgba(34, 211, 238, 1), rgba(125, 211, 252, 0.62));
   box-shadow: 0 0 20px var(--accent-soft);
+  transition: width 180ms ease;
+}
+
+.progress-fill.is-indeterminate {
+  width: 28%;
   animation: loading-slide 1.8s ease-in-out infinite;
 }
 
@@ -146,6 +154,9 @@ h1 {
   color: var(--muted);
   font-size: 0.88rem;
   line-height: 1.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 @keyframes loading-slide {
@@ -163,7 +174,8 @@ h1 {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .progress-fill {
+  .progress-fill,
+  .progress-fill.is-indeterminate {
     animation: none;
     width: 100%;
   }

@@ -9,8 +9,9 @@
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
-    "package:dir_win": "npm run build && electron-builder --config electron-builder.yml --win dir",
-    "package:win": "npm run build && electron-builder --config electron-builder.yml",
+    "strip:python-deferred": "node ./scripts/strip-deferred-python-runtime.mjs",
+    "package:dir_win": "npm run strip:python-deferred && npm run build && electron-builder --config electron-builder.yml --win dir",
+    "package:win": "npm run strip:python-deferred && npm run build && electron-builder --config electron-builder.yml",
     "preview": "electron-vite preview",
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.node.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",

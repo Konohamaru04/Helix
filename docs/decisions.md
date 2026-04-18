@@ -16,6 +16,10 @@ The foundation uses `node:sqlite` to avoid pulling native third-party SQLite bin
 
 `python_embeded` is treated as the self-contained application runtime. Electron main requires `python_embeded\python.exe` and validates its dependencies instead of falling back to system Python, which keeps behavior closer to the intended packaged product.
 
+## Heavy-but-reinstallable Python packages are deferred to first launch
+
+The packaged app still treats the embedded interpreter as authoritative, but a selected dependency slice now ships out-of-band from the Windows bundle and is restored on first launch into Electron `userData/python-runtime/site-packages`. This keeps the packaged runtime smaller while avoiding writes back into packaged app resources and preserving a deterministic pinned requirements file in `config/python-deferred-requirements.txt`.
+
 ## Python runtime stays bundled, but server code lives at the repo root
 
 The embedded interpreter still lives under `python_embeded`, but the managed FastAPI package and bundled ComfyUI tree now live at the project root as `inference_server/` and `comfyui_backend/`. That keeps the repository layout aligned with the intended architecture while preserving the packaged-runtime boundary.

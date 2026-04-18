@@ -244,9 +244,14 @@ class ComfyUIRunner:
     def _start_process(self, context: ComfyUIContext) -> Popen[str]:
         bootstrap = "\n".join(
             [
+                "import os",
                 "from pathlib import Path",
                 "import runpy",
                 "import sys",
+                "extra_paths = [entry for entry in os.environ.get('OLLAMA_DESKTOP_EXTRA_PYTHONPATH', '').split(os.pathsep) if entry]",
+                "for entry in reversed(extra_paths):",
+                "    if entry not in sys.path:",
+                "        sys.path.insert(0, entry)",
                 "root = Path(sys.argv[1]).resolve()",
                 "root_str = str(root)",
                 "sys.path = [root_str] + [path for path in sys.path if path != root_str]",

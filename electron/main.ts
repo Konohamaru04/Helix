@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { mkdirSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import type { Logger } from 'pino';
 import {
   app,
   BrowserWindow,
@@ -9,16 +10,23 @@ import {
 } from 'electron';
 import { createDesktopAppContext, type DesktopAppContext } from '@bridge/app-context';
 import { APP_DISPLAY_NAME } from '@bridge/branding';
+import { createLogger } from '@bridge/logging/logger';
+import {
+  DeferredPythonRuntimeProvisioner,
+  type DeferredPythonSplashState
+} from '@bridge/python/deferred-runtime';
 import { registerIpcHandlers } from '@electron/ipc/register-handlers';
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
 const SPLASH_MIN_VISIBLE_MS = 5_000;
+const SPLASH_STATUS_CHANNEL = 'helix:splash-status';
 let appContext: DesktopAppContext | null = null;
 let shutdownInProgress = false;
 let shutdownPromise: Promise<void> | null = null;
 let mainWindow: BrowserWindow | null = null;
 let splashWindow: BrowserWindow | null = null;
 let splashShownAt = 0;
+let startupLogger: Logger | null = null;
 
 function getPreloadPath() {
   return path.join(currentDir, '../preload/preload.mjs');
@@ -48,10 +56,30 @@ function getSplashScreenPath() {
   return path.join(getRuntimeRootPath(), 'Assets/splash/index.html');
 }
 
+function getStartupLogger() {
+  if (!startupLogger) {
+    startupLogger = createLogger('startup', {
+      logDirectory: path.join(app.getPath('userData'), 'logs')
+    });
+  }
+
+  return startupLogger;
+}
+
 function delay(ms: number) {
   return new Promise<void>((resolve) => {
     setTimeout(resolve, ms);
   });
+}
+
+function pushSplashStatus(state: DeferredPythonSplashState) {
+  const window = splashWindow;
+
+  if (!window || window.isDestroyed()) {
+    return;
+  }
+
+  window.webContents.send(SPLASH_STATUS_CHANNEL, state);
 }
 
 function closeSplashWindow() {
@@ -203,12 +231,36 @@ async function createMainWindow() {
 }
 
 async function bootstrap() {
+  const logger = getStartupLogger();
+  const reportSplash = (state: DeferredPythonSplashState) => {
+    pushSplashStatus(state);
+    logger.info({ ...state }, 'Splash startup status updated');
+  };
+
+  const pythonProvisioner = new DeferredPythonRuntimeProvisioner(
+    getRuntimeRootPath(),
+    app.getPath('userData'),
+    logger.child({ scope: 'python-runtime' })
+  );
+
+  await pythonProvisioner.ensureReady(reportSplash);
+  reportSplash({
+    status: 'Starting local services',
+    detail: 'Launching the bridge, database, Python server, and capability surface.',
+    progress: null
+  });
+
   appContext = await createDesktopAppContext({
     appPath: getRuntimeRootPath(),
     appVersion: app.getVersion(),
     userDataPath: app.getPath('userData')
   });
   registerIpcHandlers(appContext);
+  reportSplash({
+    status: 'Opening the app',
+    detail: 'Preparing the main window after local services finished booting.',
+    progress: 0.95
+  });
   await createMainWindow();
   appContext.logger.info({ userDataPath: app.getPath('userData') }, 'Electron app ready');
 }
@@ -283,6 +335,8 @@ void app
     closeSplashWindow();
     if (appContext) {
       appContext.logger.error({ error }, 'Electron bootstrap failed');
+    } else if (startupLogger) {
+      startupLogger.error({ error }, 'Electron bootstrap failed before app context startup');
     } else {
       console.error('Electron bootstrap failed (no app context):', error);
     }

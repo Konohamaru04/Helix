@@ -978,5 +978,10 @@ export interface DesktopApi {
 declare global {
   interface Window {
     ollamaDesktop: DesktopApi;
+    helixSplash?: {
+      onStatusUpdate: (
+        listener: (state: { status: string; detail: string; progress: number | null }) => void
+      ) => () => void;
+    };
   }
 }

@@ -14,6 +14,7 @@ The implemented slice enforces these constraints already:
 - file previews are served through typed IPC and only for known attachment paths
 - Python image-generation routes stay localhost-only and are reachable only through Electron main
 - generated image output paths are chosen by the bridge under the app-owned data directory rather than by the renderer
+- deferred packaged Python dependencies are installed into Electron `userData/python-runtime` instead of modifying packaged `resources/python_embeded`
 
 ## Implemented tool safety
 

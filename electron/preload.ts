@@ -385,3 +385,24 @@ const desktopApi: DesktopApi = {
 };
 
 contextBridge.exposeInMainWorld('ollamaDesktop', desktopApi);
+contextBridge.exposeInMainWorld('helixSplash', {
+  onStatusUpdate: (listener: (state: { status: string; detail: string; progress: number | null }) => void) => {
+    const channel = 'helix:splash-status';
+    const handler = (_event: Electron.IpcRendererEvent, payload: unknown) => {
+      if (
+        typeof payload === 'object' &&
+        payload !== null &&
+        'status' in payload &&
+        'detail' in payload
+      ) {
+        listener(payload as { status: string; detail: string; progress: number | null });
+      }
+    };
+
+    ipcRenderer.on(channel, handler);
+
+    return () => {
+      ipcRenderer.removeListener(channel, handler);
+    };
+  }
+});

@@ -90,7 +90,8 @@ export class PythonServerManager {
     private readonly projectRoot: string,
     private readonly logger: Logger,
     private port: number,
-    private readonly stateDirectory?: string
+    private readonly stateDirectory?: string,
+    private readonly extraPythonPaths: string[] = []
   ) {}
 
   async start(): Promise<void> {
@@ -110,30 +111,21 @@ export class PythonServerManager {
       return;
     }
 
-    const pythonPath = [this.projectRoot, process.env.PYTHONPATH]
-      .filter(Boolean)
-      .join(path.delimiter);
-
     this.#runtime = runtime;
     this.#lastError = null;
+    const bootstrap = this.createServerBootstrap();
     this.#child = spawn(
       runtime,
       [
-        '-m',
-        'uvicorn',
-        'inference_server.main:app',
-        '--host',
-        '127.0.0.1',
-        '--port',
+        '-c',
+        bootstrap,
+        this.projectRoot,
         String(this.port),
-        '--log-level',
-        'warning'
       ],
       {
         cwd: this.projectRoot,
         env: {
-          ...process.env,
-          PYTHONPATH: pythonPath,
+          ...this.getPythonEnvironment(),
           OLLAMA_DESKTOP_PARENT_PID: String(process.pid),
           ...(this.stateDirectory
             ? { OLLAMA_DESKTOP_PYTHON_STATE_DIR: this.stateDirectory }
@@ -491,13 +483,58 @@ export class PythonServerManager {
   }
 
   private supportsApiDependencies(command: string): boolean {
-    const probe = spawnSync(command, ['-c', 'import fastapi, uvicorn'], {
+    const probe = spawnSync(command, ['-c', this.createDependencyProbeBootstrap()], {
       cwd: this.projectRoot,
       timeout: 4000,
       stdio: 'ignore',
-      windowsHide: true
+      windowsHide: true,
+      env: this.getPythonEnvironment()
     });
 
     return probe.status === 0;
+  }
+
+  private getPythonEnvironment() {
+    const extraPythonPath = this.extraPythonPaths
+      .filter((entry): entry is string => Boolean(entry))
+      .join(path.delimiter);
+    const pythonPath = [this.projectRoot, extraPythonPath, process.env.PYTHONPATH]
+      .filter((entry): entry is string => Boolean(entry))
+      .join(path.delimiter);
+
+    return {
+      ...process.env,
+      PYTHONPATH: pythonPath,
+      OLLAMA_DESKTOP_EXTRA_PYTHONPATH: extraPythonPath
+    };
+  }
+
+  private createDependencyProbeBootstrap() {
+    return [
+      ...this.getBootstrapPrelude(),
+      'import fastapi, uvicorn'
+    ].join('\n');
+  }
+
+  private createServerBootstrap() {
+    return [
+      ...this.getBootstrapPrelude(),
+      'project_root = sys.argv[1]',
+      'if project_root and project_root not in sys.path:',
+      '    sys.path.insert(0, project_root)',
+      'import uvicorn',
+      "uvicorn.run('inference_server.main:app', host='127.0.0.1', port=int(sys.argv[2]), log_level='warning')"
+    ].join('\n');
+  }
+
+  private getBootstrapPrelude() {
+    return [
+      'import os',
+      'import sys',
+      "extra_paths = [entry for entry in os.environ.get('OLLAMA_DESKTOP_EXTRA_PYTHONPATH', '').split(os.pathsep) if entry]",
+      'for entry in reversed(extra_paths):',
+      '    if entry not in sys.path:',
+      '        sys.path.insert(0, entry)'
+    ];
   }
 }

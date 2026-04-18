@@ -73,12 +73,21 @@ The current suite covers:
 - FastAPI health route smoke test with VRAM visibility
 - FastAPI image-generation job start, completion, artifact persistence, and cancellation smoke tests
 - Python-worker shutdown coverage for queue cancellation, model unload, embedded ComfyUI teardown, and parent-process watchdog behavior
+- deferred Python runtime manifest validation and requirements parsing for the first-run package provisioner
 
 ## Current test shape
 
 - `tests/node/`: bridge, router, repository, tool, and RAG coverage
 - `tests/renderer/`: store and component interaction coverage
 - `tests/python/`: managed FastAPI smoke coverage for health and generation jobs
+
+Manual packaged-runtime validation:
+
+- run `npm run package:dir_win` or `npm run package:win` so the deferred packages are stripped from `python_embeded/` before packaging
+- delete Electron `userData/python-runtime/`
+- launch the packaged app
+- confirm the splash reports the package check/install flow before the Python server starts
+- confirm the main window only opens after provisioning completes
 
 ## Remaining gaps
 
