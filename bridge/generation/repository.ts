@@ -310,14 +310,14 @@ export class GenerationRepository {
     const result = this.database.connection
       .prepare('DELETE FROM generation_jobs WHERE conversation_id = ?')
       .run(conversationId);
-    return result.changes;
+    return Number(result.changes);
   }
 
   deleteJobsByWorkspaceId(workspaceId: string): number {
     const result = this.database.connection
       .prepare('DELETE FROM generation_jobs WHERE workspace_id = ?')
       .run(workspaceId);
-    return result.changes;
+    return Number(result.changes);
   }
 
   replaceArtifacts(jobId: string, artifacts: GenerationArtifact[]): GenerationJob {

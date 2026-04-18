@@ -1,18 +1,21 @@
 const PATH_TOKEN_SOURCE =
-  '[A-Za-z]:\\\\[^\\s"\'`]+|\\.{1,2}(?:[\\\\/][^\\s"\'`]+)+|~?(?:[\\\\/][^\\s"\'`]+)+|[A-Za-z0-9_.-]+(?:[\\\\/][A-Za-z0-9_.-]+)+|\\.?[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)+';
+  "[A-Za-z]:\\\\[^\\s\"`]+|\\.{1,2}(?:[\\\\/][^\\s\"`]+)+|~?(?:[\\\\/][^\\s\"`]+)+|[A-Za-z0-9_'.-]+(?:[\\\\/][A-Za-z0-9_'. -]+)+|\\.?[A-Za-z0-9_'-]+(?:\\.[A-Za-z0-9_'-]+)+";
+const LOOSE_FILENAME_SOURCE =
+  "\\.?[A-Za-z0-9_'-]+(?:[ .-][A-Za-z0-9_'-]+)*\\.[A-Za-z0-9_'-]+(?:\\.[A-Za-z0-9_'-]+)*";
 
 const PATH_TOKEN_PATTERN = new RegExp(PATH_TOKEN_SOURCE, 'gi');
 const KEYED_PATH_PATTERN = new RegExp(
-  `(?:\\b(?:file\\s*name|filename|file|path|target|document)\\b\\s*(?:is|=|:)?\\s*|\\b(?:in|inside|under|from|at|read|open)\\b\\s+)(?:"([^"]+)"|'([^']+)'|(${PATH_TOKEN_SOURCE}))`,
+  `(?:\\b(?:file\\s*name|filename|file|path|target|document)\\b\\s*(?:is|=|:)?\\s*|\\b(?:in|inside|under|from|at|read|open)\\b\\s+)(?:"([^"]+)"|'([^']+)'|(${PATH_TOKEN_SOURCE})|(${LOOSE_FILENAME_SOURCE}))`,
   'gi'
 );
 const INLINE_QUOTED_PATTERN = /["']([^"']+)["']/g;
+const LOOSE_FILENAME_PATTERN = new RegExp(`^${LOOSE_FILENAME_SOURCE}$`, 'i');
 
 function normalizePathCandidate(value: string): string {
-  return value.trim().replace(/^[("'`]+|[)"'`]+$/g, '').replace(/[),.;:!?]+$/g, '').trim();
+  return value.trim().replace(/^[("'`]+|[)"'`]+$/g, '').replace(/[),;:!?]+$/g, '').trim();
 }
 
-function looksLikeStructuredPath(value: string): boolean {
+export function looksLikeStructuredPath(value: string): boolean {
   const candidate = normalizePathCandidate(value);
 
   if (!candidate) {
@@ -26,8 +29,13 @@ function looksLikeStructuredPath(value: string): boolean {
     /^~[\\/]/.test(candidate) ||
     /[\\/]/.test(candidate) ||
     /^\.[A-Za-z0-9_.-]+$/.test(candidate) ||
-    /^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)+$/.test(candidate)
+    /^[A-Za-z0-9_'-]+(?:\.[A-Za-z0-9_'-]+)+$/.test(candidate)
   );
+}
+
+function looksLikeLooseFilename(value: string): boolean {
+  const candidate = normalizePathCandidate(value);
+  return Boolean(candidate) && LOOSE_FILENAME_PATTERN.test(candidate);
 }
 
 export function extractPromptPathCandidate(prompt: string): string | null {
@@ -47,16 +55,16 @@ export function extractPromptPathCandidate(prompt: string): string | null {
 
   const standaloneCandidate = normalizePathCandidate(trimmedPrompt);
 
-  if (!/\s/.test(trimmedPrompt) || looksLikeStructuredPath(standaloneCandidate)) {
+  if (!/\s/.test(trimmedPrompt) && looksLikeStructuredPath(standaloneCandidate)) {
     return standaloneCandidate || null;
   }
 
   for (const match of trimmedPrompt.matchAll(KEYED_PATH_PATTERN)) {
     const candidate = normalizePathCandidate(
-      match[1] ?? match[2] ?? match[3] ?? ''
+      match[1] ?? match[2] ?? match[3] ?? match[4] ?? ''
     );
 
-    if (looksLikeStructuredPath(candidate)) {
+    if (looksLikeStructuredPath(candidate) || looksLikeLooseFilename(candidate)) {
       return candidate;
     }
   }
@@ -64,7 +72,7 @@ export function extractPromptPathCandidate(prompt: string): string | null {
   for (const match of trimmedPrompt.matchAll(INLINE_QUOTED_PATTERN)) {
     const candidate = normalizePathCandidate(match[1] ?? '');
 
-    if (looksLikeStructuredPath(candidate)) {
+    if (looksLikeStructuredPath(candidate) || looksLikeLooseFilename(candidate)) {
       return candidate;
     }
   }

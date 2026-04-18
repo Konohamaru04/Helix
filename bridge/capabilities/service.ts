@@ -26,8 +26,9 @@ import {
 import { parseJsonishRecord } from '@bridge/jsonish';
 import type { NvidiaClient } from '@bridge/nvidia/client';
 import type { OllamaClient } from '@bridge/ollama/client';
-import { extractPromptPathCandidate } from '@bridge/path-prompt';
+import { extractPromptPathCandidate, looksLikeStructuredPath } from '@bridge/path-prompt';
 import { SkillRegistry } from '@bridge/skills';
+import { resolveBareFilename, IGNORED_DIRECTORY_NAMES, workspaceFileIndex } from '@bridge/workspace-resolve';
 import type { Logger } from 'pino';
 import { CapabilityRepository } from './repository';
 
@@ -66,22 +67,6 @@ const TEXT_FILE_EXTENSIONS = new Set([
   '.yaml',
   '.yml',
   '.ipynb'
-]);
-const IGNORED_DIRECTORY_NAMES = new Set([
-  '.git',
-  '.hg',
-  '.svn',
-  '.next',
-  '.turbo',
-  '.vite',
-  '.venv',
-  '__pycache__',
-  'build',
-  'coverage',
-  'dist',
-  'node_modules',
-  'tmp',
-  'temp'
 ]);
 const MAX_FILE_BYTES = 512_000;
 const MAX_FILE_CHARACTERS = 24_000;
@@ -522,9 +507,11 @@ function parsePathAndContent(prompt: string): { filePath: string; content: strin
 
 type EditInput =
   | { kind: 'range'; filePath: string; startLine: number; endLine: number; newText: string }
-  | { kind: 'insert'; filePath: string; line: number; newText: string };
+  | { kind: 'insert'; filePath: string; line: number; newText: string }
+  | { kind: 'legacy-search'; filePath: string; search: string; replacement: string; replaceAll?: boolean };
+type LineEditInput = Extract<EditInput, { kind: 'range' | 'insert' }>;
 
-function parseEditInput(prompt: string): EditInput | null {
+function parseEditInput(prompt: string, workspaceRootPath?: string | null): EditInput | null {
   const j = parseLooseJson<{
     filePath?: string;
     file_path?: string;
@@ -542,6 +529,9 @@ function parseEditInput(prompt: string): EditInput | null {
     search?: unknown;
     oldText?: unknown;
     old_text?: unknown;
+    replacement?: unknown;
+    replace_all?: unknown;
+    replaceAll?: unknown;
   }>(prompt);
 
   if (!j) return null;
@@ -550,12 +540,14 @@ function parseEditInput(prompt: string): EditInput | null {
   if (!filePath) return null;
 
   if (j.search !== undefined || j.oldText !== undefined || j.old_text !== undefined) {
-    throw new Error(
-      'edit no longer uses search/replace. Use line-based format: ' +
-        '{ filePath, startLine, endLine, newText } to replace a range, or ' +
-        '{ filePath, line, operation: "insert_after", newText } to insert. ' +
-        'Read the file first to get exact line numbers.'
-    );
+    const resolvedPath =
+      workspaceRootPath && !path.isAbsolute(filePath)
+        ? path.join(workspaceRootPath, filePath)
+        : filePath;
+    const searchText = String(j.search ?? j.oldText ?? j.old_text ?? '');
+    const replacementText = String(j.replacement ?? j.newText ?? j.new_text ?? j.content ?? '');
+    const replaceAll = j.replaceAll === true || j.replace_all === true;
+    return { kind: 'legacy-search', filePath: resolvedPath, search: searchText, replacement: replacementText, replaceAll };
   }
 
   const newText = String(j.newText ?? j.new_text ?? j.content ?? '');
@@ -572,7 +564,7 @@ function parseEditInput(prompt: string): EditInput | null {
   return { kind: 'range', filePath, startLine, endLine, newText };
 }
 
-function applyLineEdit(originalContents: string, edit: EditInput): string {
+function applyLineEdit(originalContents: string, edit: LineEditInput): string {
   const hasCrlf = originalContents.includes('\r\n');
   const normalized = hasCrlf ? originalContents.replace(/\r\n/g, '\n') : originalContents;
   const trailingNewline = normalized.endsWith('\n');
@@ -646,10 +638,12 @@ function globToRegExp(pattern: string): RegExp {
   const normalized = pattern.replace(/\\/g, '/');
   const escaped = normalized.replace(/([.+^=!:${}()|[\]/\\])/g, '\\$1');
   const regexSource = escaped
+    .replace(/\*\*\//g, '::DOUBLE_STAR_SLASH::')
     .replace(/\*\*/g, '::DOUBLE_STAR::')
     .replace(/\*/g, '[^/]*')
     .replace(/\?/g, '.')
-    .replace(/::DOUBLE_STAR::/g, '.*');
+    .replace(/::DOUBLE_STAR_SLASH::/g, '(?:.*/)?')  // **/ matches zero or more directory levels
+    .replace(/::DOUBLE_STAR::/g, '.*');              // standalone ** matches everything
 
   return new RegExp(`^${regexSource}$`, 'i');
 }
@@ -730,7 +724,9 @@ async function readSafeTextFile(filePath: string): Promise<string> {
   const fileStat = await stat(filePath);
 
   if (!fileStat.isFile()) {
-    throw new Error('The requested path is not a file.');
+    throw new Error(
+      `The path \`${filePath}\` is a directory, not a file. Use the workspace-lister tool to list directory contents.`
+    );
   }
 
   if (fileStat.size > MAX_FILE_BYTES) {
@@ -944,7 +940,7 @@ export class CapabilityService {
       case 'monitor':
         return this.executeMonitor(input.prompt, input.workspaceRootPath ?? null);
       case 'task-create':
-        return this.executeTaskCreate(input.prompt);
+        return this.executeTaskCreate(input.prompt, input.workspaceId ?? null);
       case 'task-get':
         return this.executeTaskGet(input.prompt);
       case 'task-list':
@@ -1053,6 +1049,38 @@ export class CapabilityService {
     return resolvedPath;
   }
 
+  private async resolveFilePath(
+    candidatePath: string,
+    workspaceRootPath: string | null
+  ): Promise<string> {
+    const resolvedPath = this.resolveAllowedPath(candidatePath, workspaceRootPath);
+
+    try {
+      const fileStat = await stat(resolvedPath);
+      if (fileStat.isFile()) return resolvedPath;
+    } catch {
+      // File doesn't exist at resolved path — try fuzzy resolution below
+    }
+
+    if (!workspaceRootPath || looksLikeStructuredPath(candidatePath) || /[\\/]/.test(candidatePath)) {
+      return resolvedPath;
+    }
+
+    const alternative = await resolveBareFilename(candidatePath, workspaceRootPath);
+
+    if (!alternative) return resolvedPath;
+
+    const allowedRoots = [this.appPath, workspaceRootPath].filter(
+      (value): value is string => Boolean(value)
+    );
+
+    if (allowedRoots.some((rootPath) => isWithinDirectory(alternative, rootPath))) {
+      return alternative;
+    }
+
+    return resolvedPath;
+  }
+
   private executeAskUserQuestion(prompt: string): CapabilityToolExecutionResult {
     const parsed = parseQuestionInput(prompt);
 
@@ -1088,13 +1116,15 @@ export class CapabilityService {
     prompt: string,
     workspaceRootPath: string | null
   ): Promise<CapabilityToolExecutionResult> {
-    const candidatePath = extractPromptPathCandidate(prompt);
+    const jsonPayload = parseLooseJson<{ filePath?: string; path?: string }>(prompt);
+    const jsonPath = jsonPayload?.filePath?.trim() || jsonPayload?.path?.trim();
+    const candidatePath = jsonPath || extractPromptPathCandidate(prompt);
 
     if (!candidatePath) {
       throw new Error('Read expects a file path.');
     }
 
-    const resolvedPath = this.resolveAllowedPath(candidatePath, workspaceRootPath);
+    const resolvedPath = await this.resolveFilePath(candidatePath, workspaceRootPath);
     const contents = await readSafeTextFile(resolvedPath);
 
     const numbered = contents
@@ -1282,7 +1312,7 @@ export class CapabilityService {
     prompt: string,
     workspaceRootPath: string | null
   ): Promise<CapabilityToolExecutionResult> {
-    const parsed = parseEditInput(prompt);
+    const parsed = parseEditInput(prompt, workspaceRootPath);
 
     if (!parsed) {
       throw new Error(
@@ -1294,14 +1324,39 @@ export class CapabilityService {
 
     const resolvedPath = this.resolveAllowedPath(parsed.filePath, workspaceRootPath);
     const originalContents = await readSafeTextFile(resolvedPath);
-    const nextContents = applyLineEdit(originalContents, { ...parsed, filePath: resolvedPath });
+
+    let nextContents: string;
+    let opSummary: string;
+
+    if (parsed.kind === 'legacy-search') {
+      // Backward-compatible search/replace
+      const { search, replacement, replaceAll } = parsed;
+      // Normalize to LF for matching, preserve original line endings in output
+      const hasCrlf = originalContents.includes('\r\n');
+      const normalizedOriginal = hasCrlf ? originalContents.replace(/\r\n/g, '\n') : originalContents;
+      const normalizedSearch = search.replace(/\r\n/g, '\n');
+      const normalizedReplacement = replacement.replace(/\r\n/g, '\n');
+      if (replaceAll) {
+        const escaped = normalizedSearch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const regex = new RegExp(escaped, 'g');
+        nextContents = normalizedOriginal.replace(regex, normalizedReplacement);
+      } else {
+        nextContents = normalizedOriginal.replace(normalizedSearch, normalizedReplacement);
+      }
+      // Restore original line endings
+      nextContents = hasCrlf ? nextContents.replace(/\n/g, '\r\n') : nextContents;
+      opSummary = replaceAll
+        ? `Replaced ${(normalizedOriginal.match(new RegExp(normalizedSearch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length} occurrence(s)`
+        : 'Replaced 1 occurrence';
+    } else {
+      nextContents = applyLineEdit(originalContents, { ...parsed, filePath: resolvedPath });
+      opSummary =
+        parsed.kind === 'range'
+          ? `Replaced lines ${parsed.startLine}–${parsed.endLine}`
+          : `Inserted after line ${parsed.line}`;
+    }
 
     await writeFile(resolvedPath, nextContents, 'utf8');
-
-    const opSummary =
-      parsed.kind === 'range'
-        ? `Replaced lines ${parsed.startLine}–${parsed.endLine}`
-        : `Inserted after line ${parsed.line}`;
 
     return {
       assistantContent: `### Edit\n\n${opSummary} in \`${resolvedPath}\`.`,
@@ -1436,7 +1491,7 @@ export class CapabilityService {
     };
   }
 
-  private executeTaskCreate(prompt: string): CapabilityToolExecutionResult {
+  private executeTaskCreate(prompt: string, workspaceId: string | null): CapabilityToolExecutionResult {
     const payload = parseLooseJson<{
       title?: string;
       details?: string;
@@ -1445,7 +1500,8 @@ export class CapabilityService {
     const task = this.repository.createTask({
       title: payload?.title?.trim() || prompt.trim() || 'Untitled task',
       details: payload?.details?.trim() || undefined,
-      parentTaskId: payload?.parentTaskId
+      parentTaskId: payload?.parentTaskId,
+      workspaceId: workspaceId ?? undefined
     });
 
     return {
@@ -1543,11 +1599,32 @@ export class CapabilityService {
 
     const task = this.repository.getTask(taskId);
 
-    if (!task?.outputPath) {
-      throw new Error(`Task ${taskId} does not have an output file.`);
+    if (!task) {
+      throw new Error(`Task ${taskId} was not found.`);
     }
 
-    const resolvedPath = this.resolveAllowedPath(task.outputPath, workspaceRootPath);
+    // If outputPath is not set on the task, try the standard monitor output path
+    const outputPath = task.outputPath ?? path.join(this.runtimeDataPath, 'monitor-output', `${task.id}.log`);
+
+    // Monitor output files live in runtimeDataPath which may be outside the workspace sandbox.
+    // If the path is under runtimeDataPath, resolve it directly without sandbox check.
+    const resolvedPath = path.isAbsolute(outputPath)
+      ? path.resolve(outputPath)
+      : path.resolve(workspaceRootPath ?? this.appPath, outputPath);
+
+    // Verify the path is in an allowed location (app, workspace, or runtime data)
+    const allowedRoots = [this.appPath, workspaceRootPath, this.runtimeDataPath].filter(
+      (value): value is string => Boolean(value)
+    );
+    const withinAllowedRoot = allowedRoots.some((rootPath) =>
+      isWithinDirectory(resolvedPath, rootPath)
+    );
+
+    if (!withinAllowedRoot) {
+      throw new Error(
+        'This capability can only access the app workspace, the connected workspace folder, or the app data directory.'
+      );
+    }
     const contents = await readSafeTextFile(resolvedPath);
 
     return {
@@ -1932,6 +2009,9 @@ export class CapabilityService {
     const jsonMessage = payload?.message?.trim();
 
     if (jsonSessionId && jsonMessage) {
+      if (!this.repository.getAgentSession(jsonSessionId)) {
+        throw new Error(`Agent session ${jsonSessionId} was not found.`);
+      }
       this.repository.appendAgentMessage({
         sessionId: jsonSessionId,
         role: 'user',
@@ -1976,6 +2056,10 @@ export class CapabilityService {
 
     if (!normalizedSessionId || !message) {
       throw new Error('Send Message expects `sessionId :: message`.');
+    }
+
+    if (!this.repository.getAgentSession(normalizedSessionId)) {
+      throw new Error(`Agent session ${normalizedSessionId} was not found.`);
     }
 
     this.repository.appendAgentMessage({
@@ -2211,11 +2295,22 @@ export class CapabilityService {
       APP_WORKTREE_DIRECTORY_NAME,
       branch
     );
-    const result = await this.runProcess(
+
+    // Try creating worktree with existing branch first; if that fails, create a new branch
+    let result = await this.runProcess(
       'powershell',
       `git -C "${resolvedRepoRoot}" worktree add "${worktreePath}" "${branch}"`,
       resolvedRepoRoot
     );
+
+    if (result.exitCode !== 0) {
+      // Branch may not exist — retry with -b to create it from HEAD
+      result = await this.runProcess(
+        'powershell',
+        `git -C "${resolvedRepoRoot}" worktree add -b "${branch}" "${worktreePath}"`,
+        resolvedRepoRoot
+      );
+    }
 
     if (result.exitCode !== 0) {
       throw new Error(result.stderr || 'Unable to create git worktree.');
@@ -2228,14 +2323,14 @@ export class CapabilityService {
     });
 
     return {
-      assistantContent: `### Enter Worktree\n\nCreated worktree \`${session.worktreePath}\`.`,
+      assistantContent: `### Enter Worktree\n\nCreated worktree \`${session.worktreePath}\`.\n\nSession ID: \`${session.id}\``,
       toolInvocations: [
         createInvocation({
           toolId: 'enter-worktree',
           displayName: 'Enter Worktree',
           status: 'completed',
           inputSummary: `${resolvedRepoRoot} :: ${branch}`,
-          outputSummary: session.worktreePath,
+          outputSummary: `${session.id} — ${session.worktreePath}`,
           errorMessage: null
         })
       ],
@@ -2257,10 +2352,16 @@ export class CapabilityService {
       throw new Error('Exit Worktree expects a worktree session id.');
     }
 
-    const session = this.repository.listWorktreeSessions().find((item) => item.id === sessionId);
+    const sessions = this.repository.listWorktreeSessions();
+    const session =
+      sessions.find((item) => item.id === sessionId) ||
+      sessions.find((item) => item.branch === sessionId && item.status === 'active') ||
+      sessions.find((item) => item.worktreePath === sessionId && item.status === 'active');
 
     if (!session) {
-      throw new Error(`Worktree session ${sessionId} was not found.`);
+      throw new Error(
+        `Worktree session ${sessionId} was not found. Provide the session ID returned by enter-worktree, the branch name, or the worktree path.`
+      );
     }
 
     const result = await this.runProcess(
@@ -2510,11 +2611,18 @@ export class CapabilityService {
         item.label.toLowerCase() === resourcePath.toLowerCase()
     );
 
-    if (!resource?.sourcePath) {
-      throw new Error(`MCP resource ${resourcePath} was not found or has no readable local path.`);
+    if (!resource) {
+      throw new Error(`MCP resource ${resourcePath} was not found.`);
     }
 
-    const contents = await readSafeTextFile(resource.sourcePath);
+    let contents: string;
+    if (resource.sourcePath) {
+      contents = await readSafeTextFile(resource.sourcePath);
+    } else {
+      // Skill resources have no file path — return the excerpt (description) as content
+      const skill = this.skillRegistry.list().find((s) => s.title.toLowerCase() === resource.label.toLowerCase());
+      contents = skill ? `${skill.description}\n\n---\n\n${skill.prompt}` : resource.excerpt;
+    }
 
     return {
       assistantContent: `### Read MCP Resource\n\n\`${resource.label}\`\n\n\`\`\`text\n${contents}\n\`\`\``,

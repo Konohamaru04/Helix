@@ -22,6 +22,7 @@ Helix runs entirely on your machine. Chat with local Ollama models or NVIDIA-hos
 - Stop in-flight replies without breaking the stream lifecycle
 - Attachment previews in the composer and transcript (images, files)
 - Import and export conversations through the bridge
+- Native splash screen while Electron boots the bridge and loads the first renderer window
 
 ### Routing
 
@@ -283,6 +284,7 @@ GPU headroom is enforced before loading models. The Python worker persists queue
 | `skills/builtin/` | Built-in skills: grounded, builder, debugger, reviewer, stepwise |
 | `skills/user/` | User-defined skill Markdown files |
 | `knowledge/` | Knowledge base files for RAG ingestion |
+| `Assets/` | App icons, logo art, and the startup splash media |
 | `tests/node/` | Node-side Vitest tests |
 | `tests/renderer/` | Renderer-side Vitest + @testing-library tests |
 | `tests/python/` | pytest tests |

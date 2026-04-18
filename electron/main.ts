@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import {
   app,
   BrowserWindow,
+  dialog,
   shell
 } from 'electron';
 import { createDesktopAppContext, type DesktopAppContext } from '@bridge/app-context';
@@ -11,9 +12,13 @@ import { APP_DISPLAY_NAME } from '@bridge/branding';
 import { registerIpcHandlers } from '@electron/ipc/register-handlers';
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
+const SPLASH_MIN_VISIBLE_MS = 5_000;
 let appContext: DesktopAppContext | null = null;
 let shutdownInProgress = false;
 let shutdownPromise: Promise<void> | null = null;
+let mainWindow: BrowserWindow | null = null;
+let splashWindow: BrowserWindow | null = null;
+let splashShownAt = 0;
 
 function getPreloadPath() {
   return path.join(currentDir, '../preload/preload.mjs');
@@ -39,13 +44,105 @@ function getIconPath() {
   return path.join(runtimeRoot, 'Assets/icon.png');
 }
 
+function getSplashScreenPath() {
+  return path.join(getRuntimeRootPath(), 'Assets/splash/index.html');
+}
+
+function delay(ms: number) {
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+function closeSplashWindow() {
+  const window = splashWindow;
+  splashWindow = null;
+
+  if (window && !window.isDestroyed()) {
+    window.close();
+  }
+}
+
+async function createSplashWindow() {
+  if (splashWindow && !splashWindow.isDestroyed()) {
+    return splashWindow;
+  }
+
+  const window = new BrowserWindow({
+    width: 760,
+    height: 860,
+    show: false,
+    frame: false,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    autoHideMenuBar: true,
+    backgroundColor: '#020617',
+    icon: getIconPath(),
+    skipTaskbar: true,
+    webPreferences: {
+      preload: getPreloadPath(),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false
+    }
+  });
+
+  splashWindow = window;
+
+  window.on('closed', () => {
+    if (splashWindow === window) {
+      splashWindow = null;
+    }
+  });
+
+  window.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedUrl) => {
+    appContext?.logger.error(
+      { errorCode, errorDescription, validatedUrl },
+      'Splash renderer failed to load'
+    );
+  });
+
+  await window.loadFile(getSplashScreenPath());
+
+  if (!window.isDestroyed()) {
+    splashShownAt = Date.now();
+    window.show();
+  }
+
+  return window;
+}
+
+async function revealMainWindow(window: BrowserWindow) {
+  const remaining =
+    splashShownAt > 0
+      ? Math.max(0, SPLASH_MIN_VISIBLE_MS - (Date.now() - splashShownAt))
+      : 0;
+
+  if (remaining > 0) {
+    await delay(remaining);
+  }
+
+  if (window.isDestroyed()) {
+    return;
+  }
+
+  closeSplashWindow();
+  appContext?.logger.info(
+    { url: window.webContents.getURL(), splashVisibleMs: Math.max(Date.now() - splashShownAt, 0) },
+    'Renderer finished loading'
+  );
+  window.show();
+}
+
 async function createMainWindow() {
   const window = new BrowserWindow({
     width: 1560,
     height: 960,
     minWidth: 1180,
     minHeight: 720,
-    show: true,
+    show: false,
     title: APP_DISPLAY_NAME,
     frame: false,
     titleBarStyle: 'hidden',
@@ -57,6 +154,14 @@ async function createMainWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false
+    }
+  });
+
+  mainWindow = window;
+
+  window.on('closed', () => {
+    if (mainWindow === window) {
+      mainWindow = null;
     }
   });
 
@@ -73,6 +178,7 @@ async function createMainWindow() {
   });
 
   window.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedUrl) => {
+    closeSplashWindow();
     appContext?.logger.error(
       { errorCode, errorDescription, validatedUrl },
       'Renderer failed to load'
@@ -80,11 +186,7 @@ async function createMainWindow() {
   });
 
   window.webContents.on('did-finish-load', () => {
-    appContext?.logger.info(
-      { url: window.webContents.getURL() },
-      'Renderer finished loading'
-    );
-    window.show();
+    void revealMainWindow(window);
   });
 
   window.webContents.on('render-process-gone', (_event, details) => {
@@ -166,6 +268,9 @@ void app
   .whenReady()
   .then(async () => {
     configureAppPaths();
+    await createSplashWindow().catch((error: unknown) => {
+      console.warn('Unable to create splash window:', error);
+    });
     await bootstrap();
 
     app.on('activate', () => {
@@ -175,11 +280,18 @@ void app
     });
   })
   .catch((error: unknown) => {
+    closeSplashWindow();
     if (appContext) {
       appContext.logger.error({ error }, 'Electron bootstrap failed');
     } else {
       console.error('Electron bootstrap failed (no app context):', error);
     }
+
+    dialog.showErrorBox(
+      'Startup Error',
+      error instanceof Error ? error.message : 'Electron bootstrap failed.'
+    );
+    app.quit();
   });
 
 app.on('before-quit', (event) => {

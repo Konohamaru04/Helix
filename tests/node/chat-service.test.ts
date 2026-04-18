@@ -1483,6 +1483,140 @@ describe('ChatService', () => {
     }
   });
 
+  it('does not execute plain-text slash commands without an explicit recovery marker', async () => {
+    const directory = mkdtempSync(path.join(tmpdir(), 'ollama-desktop-inline-text-command-guard-'));
+    tempDirectories.push(directory);
+    const harness = createChatServiceHarness({
+      directory,
+      loggerName: 'chat-inline-text-command-guard-test',
+      models: ['glm-5:cloud']
+    });
+
+    try {
+      harness.capabilityService.grantPermission({
+        capabilityId: 'task-create',
+        scopeKind: 'global',
+        scopeId: null
+      });
+
+      const result = await (
+        harness.service as unknown as {
+          recoverInlineToolCalls: (input: {
+            backend: 'ollama' | 'nvidia';
+            baseUrl: string;
+            apiKey: string | null;
+            model: string;
+            messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>;
+            content: string;
+            doneReason: string | null;
+            workspaceRootPath: string | null;
+            workspaceId: string | null;
+            conversationId: string;
+          }) => Promise<{
+            content: string;
+            doneReason: string | null;
+            toolInvocations: Array<{ toolId: string }>;
+            contextSources: unknown[];
+          }>;
+        }
+      ).recoverInlineToolCalls({
+        backend: 'ollama',
+        baseUrl: 'http://127.0.0.1:11434',
+        apiKey: null,
+        model: 'glm-5:cloud',
+        messages: [
+          {
+            role: 'system',
+            content: 'Normal tool guidance without a recovery marker.'
+          }
+        ],
+        content: 'Use `/task-create {"title":"Ship Milestone 4.1"}` to create the task.',
+        doneReason: 'stop',
+        workspaceRootPath: null,
+        workspaceId: null,
+        conversationId: 'conversation-1'
+      });
+
+      expect(result.content).toContain('/task-create {"title":"Ship Milestone 4.1"}');
+      expect(result.toolInvocations).toHaveLength(0);
+      expect(harness.capabilityService.listTasks(null)).toHaveLength(0);
+    } finally {
+      harness.database.close();
+    }
+  });
+
+  it('recovers plain-text slash commands only in explicit recovery rounds', async () => {
+    const directory = mkdtempSync(path.join(tmpdir(), 'ollama-desktop-inline-text-command-recovery-'));
+    tempDirectories.push(directory);
+    const completeChat = vi.fn().mockResolvedValue({
+      content: 'Created the tracked task after recovery.',
+      doneReason: 'stop',
+      thinking: '',
+      toolCalls: []
+    });
+    const harness = createChatServiceHarness({
+      directory,
+      loggerName: 'chat-inline-text-command-recovery-test',
+      models: ['glm-5:cloud'],
+      completeChat
+    });
+
+    try {
+      harness.capabilityService.grantPermission({
+        capabilityId: 'task-create',
+        scopeKind: 'global',
+        scopeId: null
+      });
+
+      const result = await (
+        harness.service as unknown as {
+          recoverInlineToolCalls: (input: {
+            backend: 'ollama' | 'nvidia';
+            baseUrl: string;
+            apiKey: string | null;
+            model: string;
+            messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>;
+            content: string;
+            doneReason: string | null;
+            workspaceRootPath: string | null;
+            workspaceId: string | null;
+            conversationId: string;
+          }) => Promise<{
+            content: string;
+            doneReason: string | null;
+            toolInvocations: Array<{ toolId: string; status: string }>;
+            contextSources: unknown[];
+          }>;
+        }
+      ).recoverInlineToolCalls({
+        backend: 'ollama',
+        baseUrl: 'http://127.0.0.1:11434',
+        apiKey: null,
+        model: 'glm-5:cloud',
+        messages: [
+          {
+            role: 'system',
+            content: '[bridge-text-command-recovery]\nRetry with the next tool call now.'
+          }
+        ],
+        content: '/task-create {"title":"Ship Milestone 4.1"}',
+        doneReason: 'stop',
+        workspaceRootPath: null,
+        workspaceId: null,
+        conversationId: 'conversation-2'
+      });
+
+      expect(result.content).toBe('Created the tracked task after recovery.');
+      expect(result.toolInvocations.map((invocation) => `${invocation.toolId}:${invocation.status}`)).toEqual([
+        'task-create:completed'
+      ]);
+      expect(harness.capabilityService.listTasks(null)).toHaveLength(1);
+      expect(completeChat).toHaveBeenCalledTimes(1);
+    } finally {
+      harness.database.close();
+    }
+  });
+
   it('passes the selected think mode through standard Ollama chat requests', async () => {
     const directory = mkdtempSync(path.join(tmpdir(), 'ollama-desktop-think-mode-chat-'));
     tempDirectories.push(directory);
