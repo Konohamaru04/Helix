@@ -29,7 +29,8 @@ export function isBinaryExtension(filePath: string): boolean {
 import type { CapabilityService } from '@bridge/capabilities';
 import type { ChatRepository } from '@bridge/chat/repository';
 import type { CapabilityTask, ContextSource, PlanState, ToolDefinition, ToolInvocation } from '@bridge/ipc/contracts';
-import { extractPromptPathCandidate } from '@bridge/path-prompt';
+import { extractPromptPathCandidate, looksLikeStructuredPath } from '@bridge/path-prompt';
+import { resolveBareFilename, IGNORED_DIRECTORY_NAMES } from '@bridge/workspace-resolve';
 import {
   contextSourceSchema,
   toolDefinitionSchema,
@@ -68,22 +69,6 @@ const DANGEROUS_OPEN_EXTENSIONS = new Set([
   '.sh',
   '.url',
   '.vbs'
-]);
-const IGNORED_DIRECTORY_NAMES = new Set([
-  '.git',
-  '.hg',
-  '.svn',
-  '.next',
-  '.turbo',
-  '.vite',
-  '.venv',
-  '__pycache__',
-  'build',
-  'coverage',
-  'dist',
-  'node_modules',
-  'tmp',
-  'temp'
 ]);
 const TEXT_FILE_EXTENSIONS = new Set([
   '.c',
@@ -358,7 +343,7 @@ function looksLikePathToken(value: string): boolean {
 
 function extractInlinePathCandidate(prompt: string): string | null {
   const pathMatch = prompt.match(
-    /(?:"([^"]+)"|'([^']+)'|([A-Za-z]:[^"'`\s,;?!]+|\.{1,2}(?:[\\/][^"'`\s,;?!]+)+|~?(?:[\\/][^"'`\s,;?!]+)+|[A-Za-z0-9_.-]+(?:[\\/][A-Za-z0-9_.-]+)+))/i
+    /(?:"([^"]+)"|'([^']+)'|([A-Za-z]:[^"`\s,;?!]+|\.{1,2}(?:[\\/][^"`\s,;?!]+)+|~?(?:[\\/][^"`\s,;?!]+)+|[A-Za-z0-9_.' -]+(?:[\\/][A-Za-z0-9_.' -]+)+|\.?[A-Za-z0-9_' -]+(?:\.[A-Za-z0-9_' -]+)+))/i
   );
 
   return (pathMatch?.[1] ?? pathMatch?.[2] ?? pathMatch?.[3] ?? null)?.trim() || null;
@@ -552,30 +537,6 @@ function buildWorkspaceDirectorySnapshot(
   };
 }
 
-const RECURSIVE_LIST_IGNORED_DIRS = new Set([
-  // JS/TS
-  'node_modules', 'dist', 'build', 'out', '.next', '.nuxt', '.svelte-kit',
-  '.turbo', '.vite', '.parcel-cache', 'bower_components', '.yarn',
-  // Python
-  '__pycache__', 'venv', '.venv', 'env', '.env', '.tox', '.eggs',
-  '.mypy_cache', '.pytest_cache', '.ruff_cache', '.pytype',
-  // Version control
-  '.git', '.svn', '.hg',
-  // Build artifacts
-  'target', 'bin', 'obj', 'pkg',
-  // Java/Android/Gradle
-  '.gradle', '.m2',
-  // iOS/macOS
-  'Pods', 'DerivedData', 'xcuserdata',
-  // Dart/Flutter
-  '.dart_tool', '.pub-cache',
-  // General
-  '.cache', 'coverage', 'tmp', 'temp', 'logs',
-  // IDE
-  '.idea', '.vs',
-  // OS
-  '__MACOSX', '$RECYCLE.BIN',
-]);
 const MAX_RECURSIVE_LIST_ENTRIES = 2000;
 
 async function buildRecursiveDirectorySnapshot(
@@ -618,7 +579,7 @@ async function buildRecursiveDirectorySnapshot(
         totalDirs++;
         lines.push(`${treePrefix}${connector}${entry.name}/`);
         flatPaths.push(`${relPath}/`);
-        if (RECURSIVE_LIST_IGNORED_DIRS.has(entry.name)) continue;
+        if (IGNORED_DIRECTORY_NAMES.has(entry.name.toLowerCase())) continue;
         await walk(path.join(currentPath, entry.name), childPrefix, relPath);
       } else {
         totalFiles++;
@@ -723,7 +684,6 @@ const builtinTools = [
 const NATIVE_OLLAMA_TOOL_IDS = [
   'code-runner',
   'calculator',
-  'file-reader',
   'workspace-lister',
   'workspace-opener',
   'workspace-search',
@@ -1099,7 +1059,7 @@ export class ToolDispatcher {
           type: 'function',
           function: {
             name: 'agent',
-            description: 'Start a sub-agent style background reasoning session.',
+            description: 'Launch a background agent for complex reasoning or multi-step subtasks. Returns results asynchronously.',
             parameters: {
               type: 'object',
               required: ['prompt'],
@@ -1117,7 +1077,7 @@ export class ToolDispatcher {
           type: 'function',
           function: {
             name: 'read',
-            description: 'Read a text file from the app workspace or connected workspace.',
+            description: 'Read a text file from the app workspace or connected workspace. For directories, use workspace-lister instead.',
             parameters: {
               type: 'object',
               required: ['filePath'],
@@ -1192,7 +1152,7 @@ export class ToolDispatcher {
           type: 'function',
           function: {
             name: 'monitor',
-            description: 'Run a background command and track its output in a task.',
+            description: 'Run a long-lived command (build, test, server) in the background. Output captured in a tracked task.',
             parameters: {
               type: 'object',
               required: ['command'],
@@ -1284,7 +1244,7 @@ export class ToolDispatcher {
           type: 'function',
           function: {
             name: 'task-create',
-            description: 'Create a tracked task item.',
+            description: 'Create a tracked task for a distinct unit of work. Each task has status: pending, in_progress, completed, cancelled, or failed.',
             parameters: {
               type: 'object',
               required: ['title'],
@@ -1354,7 +1314,7 @@ export class ToolDispatcher {
           type: 'function',
           function: {
             name: 'task-stop',
-            description: 'Stop a running tracked task.',
+            description: 'Cancel a task that is no longer needed.',
             parameters: {
               type: 'object',
               required: ['taskId'],
@@ -1372,7 +1332,7 @@ export class ToolDispatcher {
           type: 'function',
           function: {
             name: 'task-update',
-            description: 'Update a tracked task title, details, status, or output path.',
+            description: 'Update task status: set "in_progress" when starting work, "completed" when done, "cancelled" if unnecessary, or "failed" if blocked.',
             parameters: {
               type: 'object',
               required: ['taskId'],
@@ -1428,7 +1388,7 @@ export class ToolDispatcher {
           type: 'function',
           function: {
             name: 'cron-create',
-            description: 'Create a one-shot or interval scheduled prompt.',
+            description: "Schedule a prompt to run once at a specific time or on a recurring interval. Kind must be 'once' or 'interval'.",
             parameters: {
               type: 'object',
               required: ['title', 'prompt', 'kind'],
@@ -1493,7 +1453,7 @@ export class ToolDispatcher {
           type: 'function',
           function: {
             name: 'enter-plan-mode',
-            description: 'Enable plan mode for the current conversation.',
+            description: 'Activate structured plan mode for multi-step tasks. Call before starting complex work that benefits from tracking subtasks.',
             parameters: {
               type: 'object',
               properties: {}
@@ -1505,7 +1465,7 @@ export class ToolDispatcher {
           type: 'function',
           function: {
             name: 'exit-plan-mode',
-            description: 'Disable plan mode and optionally persist a plan summary.',
+            description: 'Deactivate plan mode after all tasks are complete. Pass a summary of accomplishments.',
             parameters: {
               type: 'object',
               properties: {
@@ -1522,7 +1482,7 @@ export class ToolDispatcher {
           type: 'function',
           function: {
             name: 'enter-worktree',
-            description: 'Create and enter a git worktree for a branch.',
+            description: 'Create an isolated git worktree for parallel development on a separate branch.',
             parameters: {
               type: 'object',
               required: ['repoRoot', 'branch'],
@@ -1544,7 +1504,7 @@ export class ToolDispatcher {
           type: 'function',
           function: {
             name: 'exit-worktree',
-            description: 'Close an existing tracked git worktree session.',
+            description: 'Leave and clean up a worktree session when work there is done.',
             parameters: {
               type: 'object',
               required: ['sessionId'],
@@ -1588,7 +1548,7 @@ export class ToolDispatcher {
           type: 'function',
           function: {
             name: 'lsp',
-            description: 'Run lightweight code-intelligence lookups inside the workspace.',
+            description: "Code intelligence: use action='definition' to find definitions, 'references' for usages, 'diagnostics' for errors.",
             parameters: {
               type: 'object',
               required: ['action'],
@@ -1641,7 +1601,7 @@ export class ToolDispatcher {
           type: 'function',
           function: {
             name: 'send-message',
-            description: 'Send a follow-up message to an existing agent session.',
+            description: 'Continue an agent session with additional instructions.',
             parameters: {
               type: 'object',
               required: ['sessionId', 'message'],
@@ -1663,7 +1623,7 @@ export class ToolDispatcher {
           type: 'function',
           function: {
             name: 'team-create',
-            description: 'Create an agent team with one or more agent prompts.',
+            description: 'Create a team of agents working in parallel, each with its own prompt.',
             parameters: {
               type: 'object',
               required: ['title', 'agentPrompts'],
@@ -1688,7 +1648,7 @@ export class ToolDispatcher {
           type: 'function',
           function: {
             name: 'team-delete',
-            description: 'Archive an agent team by id.',
+            description: 'Archive and clean up a completed team.',
             parameters: {
               type: 'object',
               required: ['teamId'],
@@ -1706,7 +1666,7 @@ export class ToolDispatcher {
           type: 'function',
           function: {
             name: 'tool-search',
-            description: 'Search the local tool, skill, and MCP surface.',
+            description: 'Discover available tools and skills by keyword. Use when unsure which tool applies.',
             parameters: {
               type: 'object',
               required: ['query'],
@@ -1742,7 +1702,7 @@ export class ToolDispatcher {
           type: 'function',
           function: {
             name: 'skill',
-            description: 'Inspect or invoke a skill prompt explicitly by id.',
+            description: 'Invoke a registered skill by ID. Pass an optional prompt to customize behavior.',
             parameters: {
               type: 'object',
               required: ['skillId'],
@@ -1955,14 +1915,55 @@ export class ToolDispatcher {
     };
   }
 
+  private async resolveFilePath(
+    candidatePath: string,
+    workspaceRootPath: string
+  ): Promise<string> {
+    const resolvedPath = path.isAbsolute(candidatePath)
+      ? path.resolve(candidatePath)
+      : path.resolve(workspaceRootPath, candidatePath);
+
+    try {
+      const fileStat = await stat(resolvedPath);
+      if (fileStat.isFile()) return resolvedPath;
+    } catch {
+      // File doesn't exist at resolved path — try fuzzy resolution below
+    }
+
+    if (looksLikeStructuredPath(candidatePath) || /[\\/]/.test(candidatePath)) {
+      return resolvedPath;
+    }
+
+    const alternative = await resolveBareFilename(candidatePath, workspaceRootPath);
+
+    if (!alternative) return resolvedPath;
+
+    const readablePath =
+      isWithinDirectory(alternative, this.appPath) ||
+      isWithinDirectory(alternative, workspaceRootPath) ||
+      this.repository.hasAttachmentPath(alternative) ||
+      this.ragService.hasDocumentPath(alternative);
+
+    if (readablePath) return alternative;
+
+    return resolvedPath;
+  }
+
   private async executeFileReader(
     prompt: string,
     workspaceRootPath: string | null
   ): Promise<ToolExecutionResult> {
-    const candidatePath = extractPromptPathCandidate(prompt);
+    let jsonPath: string | undefined;
+    try {
+      const parsed = JSON.parse(prompt);
+      if (typeof parsed === 'object' && parsed !== null) {
+        jsonPath = (parsed.filePath ?? parsed.path)?.trim();
+      }
+    } catch { /* not JSON, fall through */ }
+    const candidatePath = jsonPath || extractPromptPathCandidate(prompt);
 
     if (!candidatePath) {
-      throw new Error('Provide a file path after /read.');
+      throw new Error('Provide a file path to read.');
     }
 
     if (!path.isAbsolute(candidatePath) && !workspaceRootPath) {
@@ -1971,9 +1972,9 @@ export class ToolDispatcher {
       );
     }
 
-    const resolvedPath = path.isAbsolute(candidatePath)
-      ? path.resolve(candidatePath)
-      : path.resolve(workspaceRootPath as string, candidatePath);
+    const resolvedPath = workspaceRootPath
+      ? await this.resolveFilePath(candidatePath, workspaceRootPath)
+      : path.resolve(candidatePath);
     const readablePath =
       isWithinDirectory(resolvedPath, this.appPath) ||
       Boolean(workspaceRootPath && isWithinDirectory(resolvedPath, workspaceRootPath)) ||
@@ -1989,7 +1990,9 @@ export class ToolDispatcher {
     const fileStat = await stat(resolvedPath);
 
     if (!fileStat.isFile()) {
-      throw new Error('The requested path is not a file.');
+      throw new Error(
+        `The path \`${candidatePath}\` is a directory, not a file. Use the workspace-lister tool to list directory contents.`
+      );
     }
 
     if (fileStat.size > MAX_FILE_READER_BYTES) {

@@ -317,7 +317,7 @@ export class CapabilityRepository {
             started_at,
             completed_at
           FROM capability_tasks
-          WHERE workspace_id = ?
+          WHERE workspace_id = ? OR workspace_id IS NULL
           ORDER BY sequence ASC, created_at ASC
         `
       : `
@@ -335,7 +335,6 @@ export class CapabilityRepository {
             started_at,
             completed_at
           FROM capability_tasks
-          WHERE workspace_id IS NULL
           ORDER BY sequence ASC, created_at ASC
         `;
     const params = workspaceId ? [workspaceId] : [];

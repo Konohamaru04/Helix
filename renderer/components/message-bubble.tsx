@@ -136,31 +136,24 @@ function ThinkingBlock(props: { content: string; defaultOpen?: boolean }) {
   const [open, setOpen] = useState(Boolean(props.defaultOpen));
 
   return (
-    <section className="rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 transition-colors duration-150">
-      <div className="flex items-center justify-between gap-3">
+    <details open={open} onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}>
+      <summary className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border border-white/10 bg-slate-950/70 px-4 py-2 transition-colors duration-150 hover:bg-slate-950/90">
         <p className="text-xs font-medium uppercase tracking-[0.2em] text-cyan-200/80">
           Thinking
         </p>
-        <button
-          aria-expanded={open}
-          aria-label={open ? 'Collapse thinking' : 'Expand thinking'}
-          className="rounded-full border border-white/10 px-2.5 py-1 text-[11px] font-medium uppercase tracking-[0.16em] text-slate-200 transition hover:border-white/20 hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
-          onClick={() => setOpen((current) => !current)}
-          type="button"
-        >
+        <span className="flex items-center gap-1 text-[11px] font-medium uppercase tracking-[0.16em] text-slate-200">
+          {open ? (
+            <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" /></svg>
+          ) : (
+            <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg>
+          )}
           {open ? 'Collapse' : 'Expand'}
-        </button>
+        </span>
+      </summary>
+      <div className="whitespace-pre-wrap pb-2 pt-3 text-sm leading-7 text-slate-300">
+        {props.content}
       </div>
-
-      <div
-        className="overflow-hidden transition-all duration-300 ease-spring-gentle"
-        style={{ maxHeight: open ? '9999px' : '0', opacity: open ? 1 : 0 }}
-      >
-        <div className="mt-3 whitespace-pre-wrap pb-2 text-sm leading-7 text-slate-300">
-          {props.content}
-        </div>
-      </div>
-    </section>
+    </details>
   );
 }
 
@@ -174,35 +167,43 @@ function MetadataSection(props: {
   const collapsible = Boolean(props.collapsible);
   const [open, setOpen] = useState(collapsible ? Boolean(props.defaultOpen) : true);
 
-  return (
-    <section className="rounded-2xl border border-white/10 bg-slate-950/55 px-4 py-3">
-      <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-xs font-medium uppercase tracking-[0.2em] text-cyan-200/75">
-            {props.title}
-          </p>
-          {props.summary ? (
-            <p className="mt-1 text-xs text-slate-400">{props.summary}</p>
-          ) : null}
-        </div>
-        {collapsible ? (
-          <button
-            aria-expanded={open}
-            aria-label={open ? `Collapse ${props.title}` : `Expand ${props.title}`}
-            className="shrink-0 rounded-full border border-white/10 px-2.5 py-1 text-[11px] font-medium uppercase tracking-[0.16em] text-slate-200 transition hover:border-white/20 hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
-            onClick={() => setOpen((current) => !current)}
-            type="button"
-          >
+  if (collapsible) {
+    return (
+      <details open={open} onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}>
+        <summary className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border border-white/10 bg-slate-950/55 px-4 py-2 hover:bg-slate-950/80">
+          <div className="min-w-0">
+            <p className="text-xs font-medium uppercase tracking-[0.2em] text-cyan-200/75">
+              {props.title}
+            </p>
+            {props.summary ? (
+              <p className="mt-1 text-xs text-slate-400">{props.summary}</p>
+            ) : null}
+          </div>
+          <span className="flex items-center gap-1 text-[11px] font-medium uppercase tracking-[0.16em] text-slate-200">
+            {open ? (
+              <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" /></svg>
+            ) : (
+              <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg>
+            )}
             {open ? 'Collapse' : 'Expand'}
-          </button>
+          </span>
+        </summary>
+        <div className="mt-3">{props.children}</div>
+      </details>
+    );
+  }
+
+  return (
+    <section>
+      <div className="flex items-center gap-3">
+        <p className="text-xs font-medium uppercase tracking-[0.2em] text-cyan-200/75">
+          {props.title}
+        </p>
+        {props.summary ? (
+          <p className="text-xs text-slate-400">{props.summary}</p>
         ) : null}
       </div>
-      <div
-        className="overflow-hidden transition-all duration-300 ease-spring-gentle"
-        style={{ maxHeight: open ? '9999px' : '0', opacity: open ? 1 : 0 }}
-      >
-        <div className="mt-3">{props.children}</div>
-      </div>
+      <div className="mt-3">{props.children}</div>
     </section>
   );
 }
@@ -215,8 +216,8 @@ function ToolInvocationCard(props: {
   const [open, setOpen] = useState(false);
 
   return (
-    <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-3 py-3">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+    <details open={open} onToggle={(e) => { e.stopPropagation(); setOpen((e.target as HTMLDetailsElement).open); }}>
+      <summary onClick={(e) => e.stopPropagation()} className="flex cursor-pointer flex-wrap items-center justify-between gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 hover:bg-white/[0.06]">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <p className="text-sm font-medium text-slate-100">{invocation.displayName}</p>
           <span
@@ -229,36 +230,30 @@ function ToolInvocationCard(props: {
             {invocation.status}
           </span>
         </div>
-        {hasDetailedOutput ? (
-          <button
-            aria-expanded={open}
-            aria-label={open ? `Collapse ${invocation.displayName} output` : `Expand ${invocation.displayName} output`}
-            className="shrink-0 rounded-full border border-white/10 px-2.5 py-1 text-[11px] font-medium uppercase tracking-[0.16em] text-slate-200 transition hover:border-white/20 hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
-            onClick={() => setOpen((current) => !current)}
-            type="button"
-          >
-            {open ? 'Collapse output' : 'Expand output'}
-          </button>
+        <span className="flex items-center gap-1 text-[11px] font-medium uppercase tracking-[0.16em] text-slate-400">
+          {open ? (
+            <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" /></svg>
+          ) : (
+            <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg>
+          )}
+          {open ? 'Collapse' : 'Expand'}
+        </span>
+      </summary>
+      <div className="px-3 pb-2 pt-1">
+        <p className="text-xs text-slate-400">Input: {invocation.inputSummary}</p>
+        {invocation.outputSummary ? (
+          <p className="mt-1 text-xs text-slate-300">Output: {invocation.outputSummary}</p>
+        ) : null}
+        {invocation.errorMessage ? (
+          <p className="mt-1 text-xs text-rose-200">Error: {invocation.errorMessage}</p>
         ) : null}
       </div>
-      <p className="mt-2 text-xs text-slate-400">Input: {invocation.inputSummary}</p>
-      {invocation.outputSummary ? (
-        <p className="mt-1 text-xs text-slate-300">Output: {invocation.outputSummary}</p>
-      ) : null}
-      {invocation.errorMessage ? (
-        <p className="mt-1 text-xs text-rose-200">Error: {invocation.errorMessage}</p>
-      ) : null}
       {invocation.outputText ? (
-        <div
-          className="overflow-hidden transition-all duration-300 ease-spring-gentle"
-          style={{ maxHeight: open ? '9999px' : '0', opacity: open ? 1 : 0 }}
-        >
-          <div className="mt-3 rounded-2xl border border-white/10 bg-slate-950/70 px-3 py-3">
-            <MarkdownContent content={invocation.outputText} />
-          </div>
+        <div className="border-t border-white/5 px-3 py-3">
+          <MarkdownContent content={invocation.outputText} />
         </div>
       ) : null}
-    </div>
+    </details>
   );
 }
 
@@ -272,15 +267,15 @@ export function MessageBubble(props: MessageBubbleProps) {
 
   return (
     <article
-      className={`animate-fade-in-up min-w-0 overflow-hidden rounded-[1.75rem] border px-5 py-4 shadow-panel ${
+      className={`animate-fade-in-up min-w-0 overflow-hidden ${
         assistant
-          ? 'border-cyan-300/20 bg-slate-900/80 text-slate-100'
+          ? 'text-slate-100'
           : message.role === 'user'
-            ? 'border-orange-300/20 bg-orange-500/10 text-orange-50'
-            : 'border-white/10 bg-slate-950/90 text-slate-200'
+            ? 'rounded-[1.75rem] border border-orange-300/20 bg-orange-500/10 px-5 py-4 shadow-panel text-orange-50'
+            : 'rounded-[1.75rem] border border-white/10 bg-slate-950/90 px-5 py-4 shadow-panel text-slate-200'
       }`}
     >
-      <div className="flex items-start justify-between gap-4">
+      <div className={`flex items-start justify-between gap-4 ${assistant ? 'py-2' : ''}`}>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
@@ -349,19 +344,24 @@ export function MessageBubble(props: MessageBubbleProps) {
               {assistantAnswer ? (
                 <MarkdownContent content={assistantAnswer} />
               ) : message.status === 'streaming' ? (
-                <div className="rounded-2xl border border-dashed border-white/10 px-4 py-3 text-sm text-slate-400">
+                <div className="rounded-lg border border-dashed border-white/10 px-4 py-3 text-sm text-slate-400">
                   {activeToolCount > 0
                     ? `Working through ${activeToolCount} tool step${activeToolCount === 1 ? '' : 's'}...`
                     : 'Thinking...'}
                 </div>
               ) : message.status === 'completed' ? (
-                <div className="rounded-2xl border border-dashed border-white/10 px-4 py-3 text-sm text-slate-400">
+                <div className="rounded-lg border border-dashed border-white/10 px-4 py-3 text-sm text-slate-400">
                   No visible answer was returned for this turn.
                 </div>
               ) : null}
 
               {message.toolInvocations?.length ? (
-                <MetadataSection title="Tools">
+                <MetadataSection
+                  title="Tools"
+                  collapsible
+                  defaultOpen={false}
+                  summary={`${activeToolCount} tool${activeToolCount === 1 ? '' : 's'}`}
+                >
                   <div className="space-y-3">
                     {message.toolInvocations.map((invocation) => (
                       <ToolInvocationCard
@@ -386,7 +386,7 @@ export function MessageBubble(props: MessageBubbleProps) {
                     {message.contextSources.map((source) => (
                       <div
                         key={source.id}
-                        className="rounded-2xl border border-white/10 bg-white/[0.03] px-3 py-3"
+                        className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2"
                       >
                         <div className="flex flex-wrap items-center gap-2">
                           <p className="text-sm font-medium text-slate-100">{source.label}</p>
