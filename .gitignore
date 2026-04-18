@@ -47,6 +47,7 @@ Thumbs.db
 desktop.ini
 
 # ── Claude Code / agent local config ─────────────────────────────────────────
+.codex/
 .claude/
 .agents/
 .superpowers/
