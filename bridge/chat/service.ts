@@ -120,7 +120,7 @@ const CODING_NATIVE_TOOL_ROUND_EXTENSION = Number.MAX_SAFE_INTEGER;
 const LOCAL_CODING_NATIVE_TOOL_ROUND_EXTENSION = Number.MAX_SAFE_INTEGER;
 const MAX_MISSING_TOOL_CALL_REMINDERS = 2;
 const MAX_FAILED_TOOL_RECOVERY_REMINDERS = 2;
-const MIN_DYNAMIC_NUM_CTX = 4_096;
+const MIN_DYNAMIC_NUM_CTX = 32_768;
 const CLOUD_NUM_CTX_LIMIT = 200_000;
 const CLOUD_SESSION_TOKEN_LIMIT = 1_000_000;
 const CLOUD_NUM_CTX_MIN_HEADROOM = 4_096;
@@ -134,14 +134,16 @@ const INLINE_TOOL_CALL_ROUND_LIMIT = Number.MAX_SAFE_INTEGER;
 const INLINE_TOOL_CALL_SEGMENT_PATTERN =
   /<\|?tool_call_begin\|?>\s*functions?\.(?<tool>[A-Za-z0-9_-]+)(?:\.\d+)?\s*<\|?tool_call_argument_begin\|?>\s*(?<args>[\s\S]*?)\s*<\|?tool_call_end\|?>/gi;
 const INLINE_TOOL_CALL_WRAPPER_PATTERN = /<\|?tool_calls_section_(?:begin|end)\|?>/gi;
-const NATIVE_TOOL_LOOP_SYSTEM_PROMPT = `You can use local tools to inspect and modify the connected workspace.
+const TEXT_COMMAND_RECOVERY_MARKER = '[bridge-text-command-recovery]';
+const NATIVE_TOOL_LOOP_SYSTEM_PROMPT = `You MUST invoke tools using the native function-calling API (tool_calls). Never output slash commands like /plan-on or /task-create as plain text — always use proper tool_calls objects.
+
 Work efficiently:
 - Read a file before modifying it — never assume its current contents.
 - For small, targeted changes use edit({filePath, startLine, endLine, newText}) — read the file first to get exact line numbers.
 - For changes that touch most of a file, use write({filePath, content}) with the complete new file contents.
 - Batch independent tool calls in one response instead of one call per turn.
 - When the task is done, stop calling tools and answer the user directly with a concise summary of what changed and why.`;
-const CODING_NATIVE_TOOL_LOOP_SYSTEM_PROMPT = `For coding tasks in the connected workspace, follow an implement-verify loop:
+const CODING_NATIVE_TOOL_LOOP_SYSTEM_PROMPT = `For coding tasks in the connected workspace, follow an implement-verify loop. Always use tool_calls objects — never plain-text commands:
 - Before modifying, read the target file and any direct callers or imports that the change will affect.
 - For small, targeted changes use edit({filePath, startLine, endLine, newText}) — read the file first to get exact line numbers.
 - For changes that restructure or touch most of a file, use write({filePath, content}) with the complete new file contents.
@@ -150,7 +152,7 @@ const CODING_NATIVE_TOOL_LOOP_SYSTEM_PROMPT = `For coding tasks in the connected
 - Run the most relevant bounded validation command (typecheck, lint, or targeted test) before stopping.
 - If validation fails due to your changes, diagnose the error message, fix the root cause, and re-run — do not stop on a failing result.
 - If automated validation is unavailable, re-read all changed files and explicitly confirm the stated requirement is met.`;
-const REPOSITORY_ANALYSIS_NATIVE_TOOL_LOOP_SYSTEM_PROMPT = `For repository or codebase analysis tasks in the connected workspace:
+const REPOSITORY_ANALYSIS_NATIVE_TOOL_LOOP_SYSTEM_PROMPT = `For repository or codebase analysis tasks, always use tool_calls — never plain-text commands:
 - Do not stop after listing directories.
 - Use workspace-search or glob to find important manifests, configs, docs, entrypoints, and representative source files.
 - Use read or file-reader to inspect actual file contents before you summarize the implementation.
@@ -180,10 +182,12 @@ function buildPlanContextPrompt(
     }
   }
 
+  lines.push('', 'To continue: call task-update with the task ID and status. To add tasks: call task-create. To finish: call exit-plan-mode when all tasks are complete.');
+
   return lines.join('\n');
 }
 
-const PLAN_MODE_NATIVE_TOOL_LOOP_SYSTEM_PROMPT = `For any multi-step task, activate plan mode and track your work with tasks before starting:
+const PLAN_MODE_NATIVE_TOOL_LOOP_SYSTEM_PROMPT = `For any multi-step task, activate plan mode and track your work with tasks before starting. Always use tool_calls — never plain-text commands like /plan-on:
 1. Call enter-plan-mode first to activate structured planning for this conversation.
 2. Call task-create for each distinct unit of work — one task per major step or deliverable.
 3. When you begin a step, call task-update with status "in_progress".
@@ -191,16 +195,15 @@ const PLAN_MODE_NATIVE_TOOL_LOOP_SYSTEM_PROMPT = `For any multi-step task, activ
 5. If a planned step becomes unnecessary, call task-stop to cancel it.
 6. After all tasks are complete and the user's goal is fully met, call exit-plan-mode.
 For trivial single-step requests that require only one tool call, you may skip plan mode.`;
-const NATIVE_TOOL_USE_REQUIRED_SYSTEM_PROMPT = `This turn was opened in the local tool loop because the request depends on tools or workspace state.
-Do not answer from memory alone.
-Choose the next tool call now instead of finishing the turn.`;
-const INTERCEPTED_TOOL_CALL_CONTINUATION_SYSTEM_PROMPT = `A tool-call block in your previous response was intercepted and executed by the bridge.
-- Do not repeat tool-call markup that already ran.
-- If you still need another tool, respond only with the same tool-call markup block and no surrounding prose.
-- When the task is complete, answer normally in plain text with no tool-call markup.`;
-const TOOL_FAILURE_RECOVERY_SYSTEM_PROMPT = `The latest tool call failed and the task is not complete yet.
-Do not stop after a recoverable tool failure.
-Retry with corrected arguments or choose a better tool for the next step.`;
+const NATIVE_TOOL_USE_REQUIRED_SYSTEM_PROMPT = `This turn requires tool use. Do not answer from memory alone.
+Respond with a tool_calls object for the appropriate tool — never output plain-text commands or slash commands.
+If unsure where to start, use workspace-lister or glob to discover the workspace.`;
+const INTERCEPTED_TOOL_CALL_CONTINUATION_SYSTEM_PROMPT = `A tool call in your previous response was intercepted and executed by the bridge.
+- Do not repeat the same tool call.
+- If you still need another tool, respond with a tool_calls object — not plain-text commands or slash commands.
+- When the task is complete, answer in plain text with no further tool calls.`;
+const TOOL_FAILURE_RECOVERY_SYSTEM_PROMPT = `The latest tool call failed and the task is not complete. Do not stop.
+Retry with corrected arguments using a tool_calls object, or choose a better tool for the next step.`;
 const CODING_VERIFICATION_REMINDER_SYSTEM_PROMPT = `You already modified files in this coding turn, but the latest changes have not been verified yet.
 Before you finish:
 - inspect the updated files,
@@ -225,7 +228,13 @@ const NATIVE_TOOL_LOOP_ESCALATION_TOOL_IDS = new Set([
   'workspace-search',
   'glob',
   'grep',
-  'lsp'
+  'lsp',
+  'enter-plan-mode',
+  'exit-plan-mode',
+  'task-create',
+  'task-update',
+  'task-stop',
+  'todo-write'
 ]);
 const NATIVE_TOOL_CALLING_PATTERN =
   /\b(read|open|list|show|search|find|grep|glob|fetch|download|task|tasks|schedule|cron|worktree|definition|references|diagnostics|calculate|compute|powershell|command|tool|tools|agent|subagent|team|todo|checklist|milestone|notebook|resource|mcp|clarify|skill)\b|plan mode|https?:\/\/|[A-Za-z]:\\|\.{1,2}[\\/]/i;
@@ -496,129 +505,184 @@ function buildCodingVerificationReminder(toolInvocations: ToolInvocation[]): str
 
 function buildNativeToolReferencePrompt(toolDefinitions: OllamaToolDefinition[]): string {
   const availableTools = new Set(toolDefinitions.map((definition) => definition.function.name));
-  const lines = ['Tool quick reference (use exact parameter names):'];
+  const sections: string[] = [];
+  const heading = 'Available tools — use tool_calls objects, never plain-text commands:';
 
-  // --- Discovery ---
+  // --- Discovery (use to find and search) ---
+  const discovery: string[] = [];
   if (availableTools.has('workspace-lister')) {
-    lines.push(
-      '- `workspace-lister({path?})`: list all files and folders recursively. Omit path to start from workspace root.'
-    );
+    discovery.push('- `workspace-lister({path?})`: list directory tree. Omit path for workspace root.');
   }
   if (availableTools.has('workspace-search')) {
-    lines.push('- `workspace-search({query})`: search file names and file text content by keyword.');
+    discovery.push('- `workspace-search({query})`: search file contents by keyword.');
   }
   if (availableTools.has('glob')) {
-    lines.push(
-      '- `glob({pattern?})`: find files by glob pattern, e.g. `src/**/*.ts` or `*.md`. Omit pattern to match all files.'
-    );
+    discovery.push('- `glob({pattern?})`: find files by glob pattern, e.g. `src/**/*.ts`.');
   }
   if (availableTools.has('grep')) {
-    lines.push('- `grep({query})`: search exact plain text across all workspace files.');
+    discovery.push('- `grep({query})`: search plain text across all workspace files.');
   }
   if (availableTools.has('knowledge-search')) {
-    lines.push('- `knowledge-search({query})`: search the imported workspace knowledge base.');
+    discovery.push('- `knowledge-search({query})`: search imported workspace knowledge.');
   }
   if (availableTools.has('web-search')) {
-    lines.push('- `web-search({query})`: search the public web and return linked snippets.');
+    discovery.push('- `web-search({query})`: search the public web.');
   }
   if (availableTools.has('web-fetch')) {
-    lines.push('- `web-fetch({url})`: fetch a remote URL and return a bounded text excerpt.');
+    discovery.push('- `web-fetch({url})`: fetch a remote URL.');
   }
+  if (discovery.length) sections.push('Discovery:\n' + discovery.join('\n'));
 
-  // --- Reading ---
+  // --- Reading (always call before modifying) ---
+  const reading: string[] = [];
   if (availableTools.has('read')) {
-    lines.push('- `read({filePath})`: read exact file contents. Always call before write.');
+    reading.push('- `read({filePath})`: read exact file contents.');
   }
   if (availableTools.has('file-reader')) {
-    lines.push('- `file-reader({path})`: read a file from the app or workspace. Always call before write.');
+    reading.push('- `file-reader({path})`: read a file from the app or workspace.');
   }
+  if (reading.length) sections.push('Reading (always call before modifying):\n' + reading.join('\n'));
 
-  // --- Writing ---
+  // --- Writing (use after reading) ---
+  const writing: string[] = [];
   if (availableTools.has('write')) {
-    lines.push(
-      '- `write({filePath, content})` or `write({path, content})`: create or fully overwrite a file. Always read the file first. The content field must contain the complete new file contents.'
+    writing.push(
+      '- `write({filePath, content})` or `write({path, content})`: create or fully overwrite a file. Content must be the complete new file.'
     );
   }
-
   if (availableTools.has('edit')) {
-    lines.push(
-      '- `edit({filePath, startLine, endLine, newText})`: replace lines startLine..endLine (1-based, inclusive) with newText. ' +
-        '`edit({filePath, line, operation: "insert_after", newText})`: insert newText after line (0 = prepend). ' +
-        'Always read the file first to get exact line numbers. Use write instead if most of the file changes.'
+    writing.push(
+      '- `edit({filePath, startLine, endLine, newText})`: replace lines startLine..endLine (1-based inclusive). ' +
+        '`edit({filePath, line, operation: "insert_after", newText})`: insert after line (0 = prepend). ' +
+        'Always read first to get line numbers. Use write if most of the file changes.'
     );
   }
+  if (writing.length) sections.push('Writing (use after reading):\n' + writing.join('\n'));
 
   // --- Execution ---
+  const execution: string[] = [];
   if (availableTools.has('bash')) {
-    lines.push(
-      '- `bash({command})`: run a bash command with captured output. Prefer for validation and bounded inspection, not broad exploration.'
-    );
+    execution.push('- `bash({command})`: run a bash command. Prefer for validation, not broad exploration.');
   }
   if (availableTools.has('powershell')) {
-    lines.push(
-      '- `powershell({command})`: run a PowerShell command with captured output. Prefer for validation and bounded inspection, not broad exploration.'
-    );
+    execution.push('- `powershell({command})`: run a PowerShell command. Prefer for validation, not broad exploration.');
   }
   if (availableTools.has('monitor')) {
-    lines.push('- `monitor({command})`: run a long-running command in the background and stream output to a tracked task.');
+    execution.push('- `monitor({command})`: run a long-lived command in the background. Output captured in a task.');
   }
+  if (availableTools.has('code-runner')) {
+    execution.push('- `code-runner({code})`: run a JavaScript snippet in a sandbox.');
+  }
+  if (execution.length) sections.push('Execution:\n' + execution.join('\n'));
 
   // --- Code intelligence ---
+  const codeIntel: string[] = [];
   if (availableTools.has('lsp')) {
-    lines.push(
-      '- `lsp({action, symbol?})`: code intelligence. action must be one of `definition` | `references` | `diagnostics`. symbol is required for definition and references.'
+    codeIntel.push(
+      "- `lsp({action, symbol?})`: action='definition' for defs, 'references' for usages, 'diagnostics' for errors."
     );
   }
-
-  // --- Notebooks ---
   if (availableTools.has('notebook-edit')) {
-    lines.push(
-      '- `notebook-edit({filePath, cellIndex, source})`: replace a Jupyter notebook cell source by zero-based index.'
-    );
+    codeIntel.push('- `notebook-edit({filePath, cellIndex, source})`: replace a notebook cell by zero-based index.');
   }
+  if (codeIntel.length) sections.push('Code intelligence:\n' + codeIntel.join('\n'));
 
-  // --- Tasks ---
+  // --- Planning & Tasks (use for multi-step work) ---
+  const planning: string[] = [];
+  if (availableTools.has('enter-plan-mode')) {
+    planning.push('- `enter-plan-mode()`: activate structured planning for multi-step tasks.');
+  }
+  if (availableTools.has('exit-plan-mode')) {
+    planning.push('- `exit-plan-mode({summary?})`: deactivate plan mode. Pass summary of accomplishments.');
+  }
   if (availableTools.has('task-create')) {
-    lines.push('- `task-create({title, details?})`: create a new tracked task.');
-  }
-  if (availableTools.has('task-list')) {
-    lines.push('- `task-list({})`: list all tracked tasks.');
-  }
-  if (availableTools.has('task-get')) {
-    lines.push('- `task-get({taskId})`: fetch a tracked task by id.');
+    planning.push('- `task-create({title, details?})`: create a tracked task.');
   }
   if (availableTools.has('task-update')) {
-    lines.push(
-      '- `task-update({taskId, title?, details?, status?, outputPath?})`: update a task. status must be one of `pending` | `in_progress` | `completed` | `cancelled` | `failed`.'
+    planning.push(
+      '- `task-update({taskId, status?, ...})`: set "in_progress" when starting, "completed" when done, "cancelled" if unnecessary, "failed" if blocked.'
     );
   }
-  if (availableTools.has('task-output')) {
-    lines.push('- `task-output({taskId})`: read the output file for a tracked task.');
-  }
   if (availableTools.has('task-stop')) {
-    lines.push('- `task-stop({taskId})`: stop a running tracked task.');
+    planning.push('- `task-stop({taskId})`: cancel a task no longer needed.');
+  }
+  if (availableTools.has('task-list')) {
+    planning.push('- `task-list()`: list all tracked tasks.');
+  }
+  if (availableTools.has('task-get')) {
+    planning.push('- `task-get({taskId})`: fetch a tracked task by id.');
+  }
+  if (availableTools.has('task-output')) {
+    planning.push('- `task-output({taskId})`: read the output file for a tracked task.');
   }
   if (availableTools.has('todo-write')) {
-    lines.push('- `todo-write({items})`: bulk-create tracked tasks from a string array checklist. items is string[].');
+    planning.push('- `todo-write({items: string[]})`: bulk-create tasks from a checklist.');
   }
+  if (planning.length) sections.push('Planning & Tasks (use for multi-step work):\n' + planning.join('\n'));
+
+  // --- Scheduling ---
+  const scheduling: string[] = [];
+  if (availableTools.has('cron-create')) {
+    scheduling.push("- `cron-create({title, prompt, kind, intervalSeconds?, runAt?})`: schedule a prompt. Kind must be 'once' or 'interval'.");
+  }
+  if (availableTools.has('cron-delete')) {
+    scheduling.push('- `cron-delete({scheduleId})`: cancel a scheduled prompt.');
+  }
+  if (availableTools.has('cron-list')) {
+    scheduling.push('- `cron-list()`: list all scheduled prompts.');
+  }
+  if (scheduling.length) sections.push('Scheduling:\n' + scheduling.join('\n'));
+
+  // --- Agents & Teams ---
+  const agents: string[] = [];
+  if (availableTools.has('agent')) {
+    agents.push('- `agent({prompt})`: launch a background agent for complex subtasks.');
+  }
+  if (availableTools.has('send-message')) {
+    agents.push('- `send-message({sessionId, message})`: continue an agent session with more instructions.');
+  }
+  if (availableTools.has('team-create')) {
+    agents.push('- `team-create({title, agentPrompts})`: create agents working in parallel.');
+  }
+  if (availableTools.has('team-delete')) {
+    agents.push('- `team-delete({teamId})`: archive a completed team.');
+  }
+  if (agents.length) sections.push('Agents & Teams:\n' + agents.join('\n'));
+
+  // --- Worktrees ---
+  const worktrees: string[] = [];
+  if (availableTools.has('enter-worktree')) {
+    worktrees.push('- `enter-worktree({repoRoot, branch})`: create an isolated git worktree for parallel work.');
+  }
+  if (availableTools.has('exit-worktree')) {
+    worktrees.push('- `exit-worktree({sessionId})`: leave and clean up a worktree session.');
+  }
+  if (worktrees.length) sections.push('Worktrees:\n' + worktrees.join('\n'));
 
   // --- MCP ---
+  const mcp: string[] = [];
   if (availableTools.has('list-mcp-resources')) {
-    lines.push('- `list-mcp-resources({})`: list all readable resources on the local MCP surface.');
+    mcp.push('- `list-mcp-resources()`: list MCP resources.');
   }
   if (availableTools.has('read-mcp-resource')) {
-    lines.push('- `read-mcp-resource({resource})`: read one MCP resource by label or source path.');
+    mcp.push('- `read-mcp-resource({resource})`: read an MCP resource by label or path.');
   }
+  if (mcp.length) sections.push('MCP:\n' + mcp.join('\n'));
 
   // --- Meta ---
+  const meta: string[] = [];
+  if (availableTools.has('ask-user-question')) {
+    meta.push('- `ask-user-question({question, options})`: ask the user a clarifying question.');
+  }
   if (availableTools.has('tool-search')) {
-    lines.push('- `tool-search({query})`: discover available tools, skills, and MCP capabilities by keyword.');
+    meta.push('- `tool-search({query})`: discover available tools and skills by keyword.');
   }
   if (availableTools.has('skill')) {
-    lines.push('- `skill({skillId, prompt?})`: invoke a skill by id. prompt is an optional user request to combine with the skill.');
+    meta.push('- `skill({skillId, prompt?})`: invoke a registered skill.');
   }
+  if (meta.length) sections.push('Meta:\n' + meta.join('\n'));
 
-  return lines.join('\n');
+  return heading + '\n\n' + sections.join('\n\n');
 }
 
 function findLatestUnrecoveredToolFailure(toolInvocations: ToolInvocation[]): ToolInvocation | null {
@@ -1174,8 +1238,147 @@ function extractInlineMarkupToolCalls(content: string): {
   };
 }
 
+/**
+ * Fallback parser for models that output slash commands as plain text instead of native tool_calls.
+ * This is only used in explicit recovery rounds marked by the bridge.
+ */
+function extractTextCommandToolCalls(content: string): {
+  cleanedContent: string;
+  toolCalls: InlineMarkupToolCall[];
+} {
+  const toolCalls: InlineMarkupToolCall[] = [];
+
+  const commandMap: Record<string, string> = {
+    'plan-on': 'enter-plan-mode',
+    'plan-off': 'exit-plan-mode',
+    'task-create': 'task-create',
+    'task-update': 'task-update',
+    'task-list': 'task-list',
+    'task-stop': 'task-stop',
+    'todo': 'todo-write',
+    'ls': 'workspace-lister',
+    'workspace-lister': 'workspace-lister',
+    'workspace-search': 'workspace-search',
+    'read': 'file-reader',
+    'file-reader': 'file-reader',
+    'write': 'write',
+    'edit': 'edit',
+    'grep': 'workspace-search',
+    'glob': 'glob',
+    'bash': 'bash',
+    'powershell': 'powershell',
+    'code-runner': 'code-runner',
+    'web': 'web-search',
+    'web-search': 'web-search',
+    'web-fetch': 'web-fetch',
+    'knowledge': 'knowledge-search',
+    'knowledge-search': 'knowledge-search',
+    'agent': 'agent',
+    'send-message': 'send-message',
+    'team-create': 'team-create',
+    'team-delete': 'team-delete',
+    'skill': 'skill',
+    'tool-search': 'tool-search',
+    'lsp': 'lsp',
+    'monitor': 'monitor',
+    'cron-create': 'cron-create',
+    'cron-delete': 'cron-delete',
+    'cron-list': 'cron-list',
+    'worktree-enter': 'enter-worktree',
+    'worktree-exit': 'exit-worktree',
+    'ask-user-question': 'ask-user-question',
+    'mcp-list': 'list-mcp-resources',
+    'mcp-read': 'read-mcp-resource'
+  };
+
+  // Map plain-arg tool names to their primary parameter
+  const argMapping: Record<string, string> = {
+    'file-reader': 'path',
+    'write': 'filePath',
+    'edit': 'filePath',
+    'workspace-search': 'query',
+    'knowledge-search': 'query',
+    'web-search': 'query',
+    'web-fetch': 'url',
+    'workspace-lister': 'path',
+    'glob': 'pattern',
+    'bash': 'command',
+    'powershell': 'command',
+    'monitor': 'command',
+    'code-runner': 'code',
+    'lsp': 'symbol',
+    'skill': 'skillId',
+    'todo-write': 'items'
+  };
+
+  let remaining = content;
+
+  // Phase 1: Extract /command with fenced code blocks
+  // Matches: /powershell\n```lang\n...\n``` or /bash\n```sh\n...\n```
+  const CODE_BLOCK_PATTERN = /(?:^|\n)\s*\/([\w-]+)\s*\n```[\w]*\n([\s\S]*?)\n```/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = CODE_BLOCK_PATTERN.exec(remaining)) !== null) {
+    const cmd = match[1] as string;
+    const codeBlock = (match[2] as string).trim();
+    const toolName = commandMap[cmd];
+    if (!toolName || !codeBlock) continue;
+
+    const param = argMapping[toolName] ?? 'prompt';
+    const args: Record<string, unknown> = {};
+    if (toolName === 'todo-write') {
+      args.items = codeBlock.split('\n').map((s: string) => s.replace(/^[-*\d.)\s]+/, '').trim()).filter(Boolean);
+    } else if (toolName === 'edit') {
+      args.filePath = codeBlock;
+    } else {
+      args[param] = codeBlock;
+    }
+    toolCalls.push({ toolName, arguments: args });
+    remaining = remaining.replace(match[0], '');
+    CODE_BLOCK_PATTERN.lastIndex = 0; // reset after content mutation
+  }
+
+  // Phase 2: Extract /command with JSON args {...} or plain args
+  const TEXT_COMMAND_PATTERN = /(?:^|\n)\s*\/([\w-]+)(?:\s+(\{[\s\S]*?\})|\s+(.+?))?(?=\n|$)/g;
+  remaining = remaining.replace(TEXT_COMMAND_PATTERN, (_match, cmd: string, jsonObj: string | undefined, plainArg: string | undefined) => {
+    const toolName = commandMap[cmd];
+    if (!toolName) return _match;
+
+    let args: Record<string, unknown> = {};
+    if (jsonObj) {
+      args = parseJsonishRecord(jsonObj) ?? { __raw: jsonObj };
+    } else if (plainArg) {
+      const param = argMapping[toolName] ?? 'prompt';
+      if (toolName === 'todo-write') {
+        args.items = plainArg.trim().split(',').map((s: string) => s.trim());
+      } else {
+        args[param] = plainArg.trim();
+      }
+    }
+
+    toolCalls.push({ toolName, arguments: args });
+    return '';
+  });
+
+  return {
+    cleanedContent: remaining.replace(/\n{3,}/g, '\n\n').trim(),
+    toolCalls
+  };
+}
+
+function shouldRecoverTextCommandToolCalls(messages: OllamaChatMessage[]): boolean {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role !== 'system') continue;
+    return message.content.includes(TEXT_COMMAND_RECOVERY_MARKER);
+  }
+
+  return false;
+}
+
 function buildInlineToolExecutionResultPrompt(toolOutputs: string[]): string {
   return [
+    TEXT_COMMAND_RECOVERY_MARKER,
     INTERCEPTED_TOOL_CALL_CONTINUATION_SYSTEM_PROMPT,
     'Tool results:',
     ...toolOutputs
@@ -1536,7 +1739,7 @@ export class ChatService {
         throw new Error('Image generation is not available in this app context.');
       }
 
-      const job = await this.generationService.startImageJob({
+      const startedJob = await this.generationService.startImageJob({
         conversationId: conversation.id,
         prompt: automaticGenerationPlan.prompt,
         mode: automaticGenerationPlan.mode,
@@ -1547,16 +1750,16 @@ export class ChatService {
         kind: 'generation',
         requestId: randomUUID(),
         conversation: touchedConversation,
-        job,
-        model: job.model
+        job: startedJob.job,
+        model: startedJob.job.model
       });
 
       this.logger.info(
         {
           conversationId: touchedConversation.id,
-          jobId: job.id,
-          mode: job.mode,
-          model: job.model,
+          jobId: startedJob.job.id,
+          mode: startedJob.job.mode,
+          model: startedJob.job.model,
           reason: automaticGenerationPlan.reason,
           referenceImageCount: automaticGenerationPlan.referenceImages.length
         },
@@ -3169,7 +3372,22 @@ export class ChatService {
     const contextSources: ContextSource[] = [];
 
     for (let round = 0; round < INLINE_TOOL_CALL_ROUND_LIMIT; round += 1) {
-      const { cleanedContent, toolCalls } = extractInlineMarkupToolCalls(content);
+      let { cleanedContent, toolCalls } = extractInlineMarkupToolCalls(content);
+      const allowTextCommandRecovery = shouldRecoverTextCommandToolCalls(messages);
+
+      // Fallback: only in explicit recovery rounds, try parsing slash commands.
+      if (toolCalls.length === 0 && allowTextCommandRecovery) {
+        const textCommandResult = extractTextCommandToolCalls(content);
+        if (textCommandResult.toolCalls.length > 0) {
+          toolCalls = textCommandResult.toolCalls;
+          cleanedContent = textCommandResult.cleanedContent;
+          this.logger.info(
+            { conversationId: input.conversationId, model: input.model, round: round + 1,
+              toolNames: toolCalls.map((tc) => tc.toolName) },
+            'Recovered text-command tool calls from provider response'
+          );
+        }
+      }
 
       if (toolCalls.length === 0) {
         return {
@@ -3655,9 +3873,17 @@ export class ChatService {
     const firstNonSystemIndex = messages.findIndex((message) => message.role !== 'system');
     const guidanceParts = [
       NATIVE_TOOL_LOOP_SYSTEM_PROMPT,
-      PLAN_MODE_NATIVE_TOOL_LOOP_SYSTEM_PROMPT,
       buildNativeToolReferencePrompt(toolDefinitions)
     ];
+
+    // Conditionally inject plan mode guidance only when relevant
+    const lastUserStr = messages.filter((m) => m.role === 'user').pop()?.content ?? '';
+    const isPlanActive = planContext?.planState?.status === 'active';
+    const hasExistingTasks = (planContext?.tasks?.length ?? 0) > 0;
+    const looksLikeMultiStep = NATIVE_TOOL_CALLING_PATTERN.test(lastUserStr);
+    if (isPlanActive || hasExistingTasks || looksLikeMultiStep) {
+      guidanceParts.push(PLAN_MODE_NATIVE_TOOL_LOOP_SYSTEM_PROMPT);
+    }
 
     if (planContext) {
       const { planState, tasks } = planContext;

@@ -6,12 +6,13 @@ The current implementation follows the required layer boundaries:
 
 - `renderer/` renders the UI and only talks through `window.ollamaDesktop`
 - `electron/preload.ts` exposes the typed bridge
-- `electron/main.ts` owns startup, BrowserWindow creation, IPC registration, and process lifecycle
+- `electron/main.ts` owns startup, splash/main BrowserWindow creation, IPC registration, and process lifecycle
 - `bridge/` contains orchestration for settings, SQLite, routed chat, tools, skills, RAG, and the Python child process
 - `inference_server/` hosts the FastAPI bootstrap service
 - `comfyui_backend/` contains the bundled ComfyUI sidecar tree
 - the production Electron main build preserves modules instead of forcing a single chunk, which keeps the packaged main-process bundle stable with the current bridge/tool graph
 - packaged Windows builds copy `python_embeded/`, `inference_server/`, `comfyui_backend/`, `skills/`, and other runtime assets into Electron `resources/`, while mutable state stays under Electron `userData/`
+- startup now shows a lightweight static splash window from `Assets/splash/` before `createDesktopAppContext` runs, and the main chat window stays hidden until its renderer finishes loading
 
 Milestone coverage today:
 
