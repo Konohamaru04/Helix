@@ -120,6 +120,12 @@ function looksLikeDirectoryListPrompt(prompt: string): boolean {
   );
 }
 
+function requiresWorkspaceRootTool(toolId: string | null | undefined): boolean {
+  return ['workspace-lister', 'workspace-opener', 'workspace-search'].includes(
+    toolId ?? ''
+  );
+}
+
 function looksLikeWorkspaceSearchPrompt(prompt: string): boolean {
   return (
     /\b(find|search|locate|grep|where|which file|look for)\b/i.test(prompt) &&
@@ -468,7 +474,8 @@ function detectAutoSkillIntent(
 
 function detectHeuristicToolIntent(
   prompt: string,
-  workspaceHasKnowledge: boolean
+  workspaceHasKnowledge: boolean,
+  workspaceRootConnected: boolean
 ): ToolIntent | null {
   if (looksLikeKnowledgeSearchPrompt(prompt) && workspaceHasKnowledge) {
     return {
@@ -491,7 +498,7 @@ function detectHeuristicToolIntent(
     };
   }
 
-  if (looksLikeWorkspaceOpenPrompt(prompt)) {
+  if (workspaceRootConnected && looksLikeWorkspaceOpenPrompt(prompt)) {
     return {
       toolId: 'workspace-opener',
       reason: 'workspace-opener-tool-routing'
@@ -505,14 +512,14 @@ function detectHeuristicToolIntent(
     };
   }
 
-  if (looksLikeDirectoryListPrompt(prompt)) {
+  if (workspaceRootConnected && looksLikeDirectoryListPrompt(prompt)) {
     return {
       toolId: 'workspace-lister',
       reason: 'workspace-lister-tool-routing'
     };
   }
 
-  if (looksLikeWorkspaceSearchPrompt(prompt)) {
+  if (workspaceRootConnected && looksLikeWorkspaceSearchPrompt(prompt)) {
     return {
       toolId: 'workspace-search',
       reason: 'workspace-search-tool-routing'
@@ -535,6 +542,7 @@ export interface RouteInput {
   attachments: MessageAttachment[];
   recentMessages: StoredMessage[];
   workspaceHasKnowledge: boolean;
+  workspaceRootConnected?: boolean;
   explicitSkillId: string | null;
   explicitToolId: string | null;
   modelAnalysis?: ModelRouteAnalysis | null;
@@ -571,13 +579,18 @@ export class ChatRouter {
       [...input.recentMessages]
         .reverse()
         .find((message) => message.role === 'assistant' && message.routeTrace)?.routeTrace ?? null;
+    const workspaceRootConnected = input.workspaceRootConnected ?? true;
     const followUp =
       looksLikeFollowUp(input.prompt) ||
       looksLikeToolCorrectionFollowUp(input.prompt, latestAssistantRoute);
     const shouldUseHeuristics =
       trustedModelAnalysis === null || suppressedModelToolId !== null;
     const heuristicToolIntent = shouldUseHeuristics
-      ? detectHeuristicToolIntent(input.prompt, input.workspaceHasKnowledge)
+      ? detectHeuristicToolIntent(
+          input.prompt,
+          input.workspaceHasKnowledge,
+          workspaceRootConnected
+        )
       : null;
     const autoSkillIntent = shouldUseHeuristics
       ? detectAutoSkillIntent(input.prompt, input.workspaceHasKnowledge)
@@ -592,7 +605,8 @@ export class ChatRouter {
     const modelToolIntent =
       suppressedModelToolId === null &&
       trustedModelAnalysis?.toolId !== null &&
-      trustedModelAnalysis?.toolId !== undefined
+      trustedModelAnalysis?.toolId !== undefined &&
+      (workspaceRootConnected || !requiresWorkspaceRootTool(trustedModelAnalysis.toolId))
         ? {
             toolId: trustedModelAnalysis.toolId,
             reason: 'model-tool-routing'
@@ -631,7 +645,11 @@ export class ChatRouter {
           }
         : modelToolIntent ??
           heuristicToolIntent ??
-          (shouldUseHeuristics && followUp && latestAssistantRoute?.activeToolId
+          (shouldUseHeuristics &&
+          followUp &&
+          latestAssistantRoute?.activeToolId &&
+          (workspaceRootConnected ||
+            !requiresWorkspaceRootTool(latestAssistantRoute.activeToolId))
             ? {
                 toolId: latestAssistantRoute.activeToolId,
                 reason: 'follow-up-tool-carry-forward'

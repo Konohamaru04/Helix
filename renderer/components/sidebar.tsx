@@ -1,9 +1,11 @@
+import { useState, type MouseEvent } from 'react';
 import type {
   ConversationSearchResult,
   ConversationSummary,
   WorkspaceSummary
 } from '@bridge/ipc/contracts';
 import { APP_COMPANY_NAME, APP_DISPLAY_NAME } from '@bridge/branding';
+import { ContextMenu, type ContextMenuItem } from '@renderer/components/context-menu';
 
 interface SidebarProps {
   workspaces: WorkspaceSummary[];
@@ -16,6 +18,8 @@ interface SidebarProps {
   onSelectConversation: (conversationId: string) => void;
   onSearchQueryChange: (query: string) => void;
   onDeleteWorkspace: (workspaceId: string) => void;
+  onSetWorkspaceFolder?: (workspaceId: string) => void;
+  onClearWorkspaceFolder?: (workspaceId: string) => void;
   onNewChat: () => void;
   onNewWorkspace: () => void;
   onDeleteConversation?: (conversationId: string) => void;
@@ -23,11 +27,26 @@ interface SidebarProps {
   onClose?: () => void;
 }
 
+type SidebarContextMenuState =
+  | {
+      kind: 'workspace';
+      workspace: WorkspaceSummary;
+      x: number;
+      y: number;
+    }
+  | {
+      kind: 'conversation';
+      conversation: ConversationSummary;
+      x: number;
+      y: number;
+    };
+
 function formatTimestamp(value: string) {
   return new Date(value).toLocaleString();
 }
 
 export function Sidebar(props: SidebarProps) {
+  const [contextMenu, setContextMenu] = useState<SidebarContextMenuState | null>(null);
   const conversationsByWorkspace = props.workspaces.map((workspace) => ({
     workspace,
     conversations: props.conversations.filter(
@@ -37,6 +56,90 @@ export function Sidebar(props: SidebarProps) {
   const unassignedConversations = props.conversations.filter(
     (conversation) => conversation.workspaceId === null
   );
+  const contextMenuItems: ContextMenuItem[] =
+    contextMenu?.kind === 'workspace'
+      ? [
+          {
+            key: 'open-workspace',
+            label: 'Open workspace',
+            onSelect: () => props.onSelectWorkspace(contextMenu.workspace.id)
+          },
+          {
+            key: 'set-workspace-folder',
+            label: contextMenu.workspace.rootPath ? 'Change folder' : 'Connect folder',
+            onSelect: () => props.onSetWorkspaceFolder?.(contextMenu.workspace.id),
+            disabled: !props.onSetWorkspaceFolder
+          },
+          ...(contextMenu.workspace.rootPath && props.onClearWorkspaceFolder
+            ? [
+                {
+                  key: 'clear-workspace-folder',
+                  label: 'Disconnect folder',
+                  onSelect: () => props.onClearWorkspaceFolder?.(contextMenu.workspace.id)
+                }
+              ]
+            : []),
+          {
+            key: 'delete-workspace',
+            label: 'Delete workspace',
+            danger: true,
+            onSelect: () => {
+              if (
+                window.confirm(
+                  `Delete workspace "${contextMenu.workspace.name}"? Conversations will be unassigned.`
+                )
+              ) {
+                props.onDeleteWorkspace(contextMenu.workspace.id);
+              }
+            }
+          }
+        ]
+      : contextMenu?.kind === 'conversation'
+        ? [
+            {
+              key: 'open-chat',
+              label: 'Open chat',
+              onSelect: () => props.onSelectConversation(contextMenu.conversation.id)
+            },
+            ...(props.onDeleteConversation
+              ? [
+                  {
+                    key: 'delete-chat',
+                    label: 'Delete chat',
+                    danger: true,
+                    onSelect: () =>
+                      props.onDeleteConversation?.(contextMenu.conversation.id)
+                  }
+                ]
+              : [])
+          ]
+        : [];
+
+  function openWorkspaceContextMenu(
+    event: MouseEvent<HTMLElement>,
+    workspace: WorkspaceSummary
+  ) {
+    event.preventDefault();
+    setContextMenu({
+      kind: 'workspace',
+      workspace,
+      x: event.clientX,
+      y: event.clientY
+    });
+  }
+
+  function openConversationContextMenu(
+    event: MouseEvent<HTMLElement>,
+    conversation: ConversationSummary
+  ) {
+    event.preventDefault();
+    setContextMenu({
+      kind: 'conversation',
+      conversation,
+      x: event.clientX,
+      y: event.clientY
+    });
+  }
 
   return (
     <aside className="flex h-full w-80 shrink-0 flex-col border-r border-white/10 bg-slate-950/80 backdrop-blur">
@@ -70,19 +173,12 @@ export function Sidebar(props: SidebarProps) {
           Workspaces
         </p>
         <div className="flex flex-wrap gap-2">
-          <button
-            className={`rounded-full px-3 py-1.5 text-xs font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 ${
-              props.activeWorkspaceId === null
-                ? 'bg-cyan-400 text-slate-950'
-                : 'border border-white/10 text-slate-300 hover:border-white/20 hover:bg-white/5'
-            }`}
-            onClick={() => props.onSelectWorkspace(null)}
-            type="button"
-          >
-            All
-          </button>
           {props.workspaces.map((workspace) => (
-            <div key={workspace.id} className="group relative flex items-center">
+            <div
+              key={workspace.id}
+              className="group relative flex items-center"
+              onContextMenu={(event) => openWorkspaceContextMenu(event, workspace)}
+            >
               <button
                 className={`rounded-full px-3 py-1.5 text-xs font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 ${
                   workspace.id === props.activeWorkspaceId
@@ -165,7 +261,13 @@ export function Sidebar(props: SidebarProps) {
                 const active = result.conversation.id === props.activeConversationId;
 
                 return (
-                  <div key={result.conversation.id} className="group relative">
+                  <div
+                    key={result.conversation.id}
+                    className="group relative"
+                    onContextMenu={(event) =>
+                      openConversationContextMenu(event, result.conversation)
+                    }
+                  >
                     <button
                       className={`w-full rounded-2xl border px-4 py-3 text-left transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 ${
                         active
@@ -207,7 +309,7 @@ export function Sidebar(props: SidebarProps) {
           </>
         ) : (
           <div className="space-y-5">
-            {props.activeWorkspaceId === null && unassignedConversations.length > 0 ? (
+            {unassignedConversations.length > 0 ? (
               <div>
                 <p className="px-2 pb-2 text-xs uppercase tracking-[0.2em] text-slate-500">
                   Unassigned
@@ -217,7 +319,13 @@ export function Sidebar(props: SidebarProps) {
                     const active = conversation.id === props.activeConversationId;
 
                     return (
-                      <div key={conversation.id} className="group relative">
+                      <div
+                        key={conversation.id}
+                        className="group relative"
+                        onContextMenu={(event) =>
+                          openConversationContextMenu(event, conversation)
+                        }
+                      >
                         <button
                           className={`w-full rounded-2xl border px-4 py-3 text-left transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 ${
                             active
@@ -273,7 +381,13 @@ export function Sidebar(props: SidebarProps) {
                     const active = conversation.id === props.activeConversationId;
 
                     return (
-                      <div key={conversation.id} className="group relative">
+                      <div
+                        key={conversation.id}
+                        className="group relative"
+                        onContextMenu={(event) =>
+                          openConversationContextMenu(event, conversation)
+                        }
+                      >
                         <button
                           className={`w-full rounded-2xl border px-4 py-3 text-left transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 ${
                             active
@@ -316,6 +430,15 @@ export function Sidebar(props: SidebarProps) {
           </div>
         )}
       </div>
+      {contextMenu ? (
+        <ContextMenu
+          items={contextMenuItems}
+          label={contextMenu.kind === 'workspace' ? 'Workspace actions' : 'Chat actions'}
+          onClose={() => setContextMenu(null)}
+          x={contextMenu.x}
+          y={contextMenu.y}
+        />
+      ) : null}
     </aside>
   );
 }

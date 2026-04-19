@@ -2,6 +2,12 @@ import { z } from 'zod';
 
 const uuidSchema = z.string().uuid();
 const timestampSchema = z.string().min(1);
+const skillIdSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(80)
+  .regex(/^[a-z0-9][a-z0-9-_]*$/u, 'Use lowercase letters, numbers, hyphens, or underscores.');
 
 export const messageRoleSchema = z.enum(['system', 'user', 'assistant']);
 export const messageStatusSchema = z.enum(['pending', 'streaming', 'completed', 'failed']);
@@ -151,11 +157,14 @@ export const toolDefinitionSchema = z.object({
 });
 
 export const skillDefinitionSchema = z.object({
-  id: z.string().min(1),
+  id: skillIdSchema,
   title: z.string().min(1),
   description: z.string().min(1),
   prompt: z.string().min(1),
-  source: z.enum(['builtin', 'user'])
+  source: z.enum(['builtin', 'user']),
+  readOnly: z.boolean().optional(),
+  createdAt: timestampSchema.optional(),
+  updatedAt: timestampSchema.optional()
 });
 
 export const toolInvocationSchema = z.object({
@@ -262,7 +271,9 @@ export const storedMessageSchema = z.object({
   model: z.string().nullable(),
   correlationId: uuidSchema.nullable(),
   pinned: z.boolean().optional(),
+  toolInvocationCount: z.number().int().min(0).optional(),
   toolInvocations: z.array(toolInvocationSchema).optional(),
+  contextSourceCount: z.number().int().min(0).optional(),
   contextSources: z.array(contextSourceSchema).optional(),
   usage: messageUsageSchema.nullable().optional(),
   routeTrace: routeTraceSchema.nullable().optional(),
@@ -529,7 +540,7 @@ export const searchConversationsInputSchema = z.object({
 export const createWorkspaceInputSchema = z.object({
   name: z.string().trim().min(1).max(80),
   prompt: z.string().trim().max(5000).optional(),
-  rootPath: z.string().trim().min(1).optional()
+  rootPath: z.string().trim().min(1)
 });
 
 export const updateWorkspaceRootInputSchema = z.object({
@@ -539,6 +550,20 @@ export const updateWorkspaceRootInputSchema = z.object({
 
 export const deleteWorkspaceInputSchema = z.object({
   workspaceId: uuidSchema
+});
+
+export const createSkillInputSchema = z.object({
+  title: z.string().trim().min(1).max(120),
+  description: z.string().trim().min(1).max(280),
+  prompt: z.string().trim().min(1).max(50_000)
+});
+
+export const updateSkillInputSchema = createSkillInputSchema.extend({
+  skillId: skillIdSchema
+});
+
+export const deleteSkillInputSchema = z.object({
+  skillId: skillIdSchema
 });
 
 export const capabilityPermissionInputSchema = z.object({
@@ -727,7 +752,9 @@ const chatStreamMessageSnapshotSchema = z.object({
   content: z.string(),
   status: messageStatusSchema,
   model: z.string().nullable().optional(),
+  toolInvocationCount: z.number().int().min(0).optional(),
   toolInvocations: z.array(toolInvocationSchema).optional(),
+  contextSourceCount: z.number().int().min(0).optional(),
   contextSources: z.array(contextSourceSchema).optional(),
   usage: messageUsageSchema.nullable().optional(),
   routeTrace: routeTraceSchema.nullable().optional()
@@ -768,6 +795,7 @@ export const chatStreamEventSchema = z.discriminatedUnion('type', [
 ]);
 
 export const conversationIdSchema = z.string().uuid();
+export const messageIdSchema = z.string().uuid();
 
 export type ConversationSummary = z.infer<typeof conversationSummarySchema>;
 export type WorkspaceSummary = z.infer<typeof workspaceSummarySchema>;
@@ -820,6 +848,9 @@ export type SearchConversationsInput = z.infer<typeof searchConversationsInputSc
 export type CreateWorkspaceInput = z.infer<typeof createWorkspaceInputSchema>;
 export type UpdateWorkspaceRootInput = z.infer<typeof updateWorkspaceRootInputSchema>;
 export type DeleteWorkspaceInput = z.infer<typeof deleteWorkspaceInputSchema>;
+export type CreateSkillInput = z.infer<typeof createSkillInputSchema>;
+export type UpdateSkillInput = z.infer<typeof updateSkillInputSchema>;
+export type DeleteSkillInput = z.infer<typeof deleteSkillInputSchema>;
 export type CapabilityPermissionInput = z.infer<typeof capabilityPermissionInputSchema>;
 export type WorkspaceDirectorySelection = z.infer<
   typeof workspaceDirectorySelectionSchema
@@ -884,8 +915,12 @@ export const IpcChannels = {
   chatListConversations: 'chat:list-conversations',
   chatSearchConversations: 'chat:search-conversations',
   chatGetMessages: 'chat:get-messages',
+  chatGetMessage: 'chat:get-message',
   chatListTools: 'chat:list-tools',
   chatListSkills: 'chat:list-skills',
+  chatCreateSkill: 'chat:create-skill',
+  chatUpdateSkill: 'chat:update-skill',
+  chatDeleteSkill: 'chat:delete-skill',
   chatListKnowledgeDocuments: 'chat:list-knowledge-documents',
   chatImportWorkspaceKnowledge: 'chat:import-workspace-knowledge',
   chatImportConversation: 'chat:import-conversation',
@@ -949,8 +984,12 @@ export interface DesktopApi {
     listConversations: () => Promise<ConversationSummary[]>;
     searchConversations: (input: SearchConversationsInput) => Promise<ConversationSearchResult[]>;
     getConversationMessages: (conversationId: string) => Promise<StoredMessage[]>;
+    getMessage: (messageId: string) => Promise<StoredMessage | null>;
     listTools: () => Promise<ToolDefinition[]>;
     listSkills: () => Promise<SkillDefinition[]>;
+    createSkill: (input: CreateSkillInput) => Promise<SkillDefinition>;
+    updateSkill: (input: UpdateSkillInput) => Promise<SkillDefinition>;
+    deleteSkill: (input: DeleteSkillInput) => Promise<void>;
     listKnowledgeDocuments: (input: KnowledgeDocumentsInput) => Promise<KnowledgeDocument[]>;
     importWorkspaceKnowledge: (
       input: KnowledgeDocumentsInput

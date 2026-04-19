@@ -206,6 +206,58 @@ describe('MessageList', () => {
     );
   });
 
+  it('shows a rotating empty-state tip whenever the blank transcript reappears', async () => {
+    const randomSpy = vi
+      .spyOn(Math, 'random')
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(0);
+
+    try {
+      const { rerender } = render(
+        <MessageList
+          conversationTitle="Empty tip test"
+          generationJobs={[]}
+          messages={[]}
+          streaming={false}
+        />
+      );
+
+      expect(await screen.findByText('Bind a folder to this workspace')).toBeInTheDocument();
+      expect(
+        screen.getByText(
+          'Link a local project folder from the composer actions so tools and imports stay scoped to the right files.'
+        )
+      ).toBeInTheDocument();
+
+      rerender(
+        <MessageList
+          conversationTitle="Empty tip test"
+          generationJobs={[]}
+          messages={[userMessage]}
+          streaming={false}
+        />
+      );
+
+      rerender(
+        <MessageList
+          conversationTitle="Empty tip test"
+          generationJobs={[]}
+          messages={[]}
+          streaming={false}
+        />
+      );
+
+      expect(await screen.findByText('Import files for grounded answers')).toBeInTheDocument();
+      expect(
+        screen.getByText(
+          'Text-like attachments and workspace imports become searchable context that can show up later in Sources.'
+        )
+      ).toBeInTheDocument();
+    } finally {
+      randomSpy.mockRestore();
+    }
+  });
+
   it('preserves the provided message order when timestamps are identical', () => {
     render(
       <MessageList

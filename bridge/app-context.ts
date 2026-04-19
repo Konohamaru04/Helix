@@ -80,7 +80,11 @@ export class DesktopAppContext {
       path.join(options.userDataPath, 'python-worker'),
       [getDeferredPythonSitePackagesPath(options.userDataPath)]
     );
-    this.skillRegistry = new SkillRegistry(skillsDirectory);
+    this.skillRegistry = new SkillRegistry(
+      skillsDirectory,
+      this.database,
+      this.logger.child({ scope: 'skills' })
+    );
     this.ragService = new RagService(this.database, this.logger.child({ scope: 'rag' }));
     this.generationRepository = new GenerationRepository(this.database);
     this.capabilityService = new CapabilityService(

@@ -97,6 +97,28 @@ describe('ToolDispatcher', () => {
     }
   });
 
+  it('hides workspace-bound native tool definitions until a workspace folder is connected', () => {
+    const harness = createHarness();
+
+    try {
+      const rootlessToolNames = harness.dispatcher
+        .listOllamaToolDefinitions({ workspaceRootPath: null })
+        .map((definition) => definition.function.name);
+      const rootedToolNames = harness.dispatcher
+        .listOllamaToolDefinitions({ workspaceRootPath: harness.directory })
+        .map((definition) => definition.function.name);
+
+      expect(rootlessToolNames).not.toContain('workspace-lister');
+      expect(rootlessToolNames).not.toContain('workspace-search');
+      expect(rootlessToolNames).not.toContain('workspace-opener');
+      expect(rootedToolNames).toContain('workspace-lister');
+      expect(rootedToolNames).toContain('workspace-search');
+      expect(rootedToolNames).toContain('workspace-opener');
+    } finally {
+      harness.database.close();
+    }
+  });
+
   it('handles calculator prompts that include a follow-up explanation request', async () => {
     const harness = createHarness();
 
@@ -379,6 +401,34 @@ describe('ToolDispatcher', () => {
       expect(result.toolInvocations[0]?.inputSummary).toBe('.');
       expect(result.assistantContent).toContain('src/');
       expect(result.assistantContent).toContain('README.md');
+      expect(result.contextSources[0]?.sourcePath).toBe(workspaceRoot);
+    } finally {
+      harness.database.close();
+    }
+  });
+
+  it('does not treat natural-language topical phrases as workspace paths', async () => {
+    const harness = createHarness();
+
+    try {
+      const workspaceRoot = path.join(harness.directory, 'workspace-root');
+      mkdirSync(path.join(workspaceRoot, 'posts'), { recursive: true });
+      writeFileSync(
+        path.join(workspaceRoot, 'how_transformers_actually_work_fact_checked.md'),
+        '# Fact checked blog',
+        'utf8'
+      );
+
+      const result = await harness.dispatcher.execute({
+        toolId: 'workspace-lister',
+        prompt: 'identify the gaps in the blog',
+        workspaceRootPath: workspaceRoot
+      });
+
+      expect(result.toolInvocations[0]?.status).toBe('completed');
+      expect(result.toolInvocations[0]?.inputSummary).toBe('.');
+      expect(result.assistantContent).toContain('posts/');
+      expect(result.assistantContent).toContain('how_transformers_actually_work_fact_checked.md');
       expect(result.contextSources[0]?.sourcePath).toBe(workspaceRoot);
     } finally {
       harness.database.close();

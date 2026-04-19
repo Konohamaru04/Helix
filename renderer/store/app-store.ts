@@ -6,8 +6,10 @@ import type {
   ChatStreamEvent,
   CapabilityPermission,
   CapabilityTask,
+  CreateSkillInput,
   ConversationSearchResult,
   ConversationSummary,
+  DeleteSkillInput,
   GenerationJob,
   GenerationStreamEvent,
   ImageGenerationModelCatalog,
@@ -22,6 +24,7 @@ import type {
   SystemStatus,
   TeamSession,
   ToolDefinition,
+  UpdateSkillInput,
   UpdateUserSettings,
   UserSettings,
   WorktreeSession,
@@ -55,6 +58,15 @@ function upsertWorkspace(existing: WorkspaceSummary[], nextWorkspace: WorkspaceS
   return [...withoutExisting, nextWorkspace].sort((left, right) =>
     left.name.localeCompare(right.name)
   );
+}
+
+function sortSkills(skills: SkillDefinition[]) {
+  return [...skills].sort((left, right) => left.title.localeCompare(right.title));
+}
+
+function upsertSkill(existing: SkillDefinition[], nextSkill: SkillDefinition) {
+  const withoutExisting = existing.filter((skill) => skill.id !== nextSkill.id);
+  return sortSkills([...withoutExisting, nextSkill]);
 }
 
 function upsertGenerationJobList(existing: GenerationJob[], nextJob: GenerationJob) {
@@ -162,7 +174,9 @@ function applyAssistantStreamSnapshot(
     content: string;
     status: StoredMessage['status'];
     model?: StoredMessage['model'];
+    toolInvocationCount?: number;
     toolInvocations?: StoredMessage['toolInvocations'];
+    contextSourceCount?: number;
     contextSources?: StoredMessage['contextSources'];
     usage?: StoredMessage['usage'];
     routeTrace?: StoredMessage['routeTrace'];
@@ -173,13 +187,33 @@ function applyAssistantStreamSnapshot(
     content: snapshot.content,
     status: snapshot.status,
     model: snapshot.model === undefined ? message.model : snapshot.model,
+    toolInvocationCount:
+      snapshot.toolInvocationCount === undefined
+        ? snapshot.toolInvocations === undefined
+          ? message.toolInvocationCount ?? message.toolInvocations?.length ?? 0
+          : snapshot.toolInvocations.length
+        : snapshot.toolInvocationCount,
     toolInvocations:
       snapshot.toolInvocations === undefined
-        ? message.toolInvocations
+        ? snapshot.toolInvocationCount !== undefined &&
+          message.toolInvocations !== undefined &&
+          snapshot.toolInvocationCount !== message.toolInvocations.length
+          ? undefined
+          : message.toolInvocations
         : snapshot.toolInvocations,
+    contextSourceCount:
+      snapshot.contextSourceCount === undefined
+        ? snapshot.contextSources === undefined
+          ? message.contextSourceCount ?? message.contextSources?.length ?? 0
+          : snapshot.contextSources.length
+        : snapshot.contextSourceCount,
     contextSources:
       snapshot.contextSources === undefined
-        ? message.contextSources
+        ? snapshot.contextSourceCount !== undefined &&
+          message.contextSources !== undefined &&
+          snapshot.contextSourceCount !== message.contextSources.length
+          ? undefined
+          : message.contextSources
         : snapshot.contextSources,
     usage: snapshot.usage === undefined ? message.usage : snapshot.usage,
     routeTrace:
@@ -207,9 +241,15 @@ function applyStreamEventToMessages(
         content: event.content,
         status: event.status,
         ...(event.model === undefined ? {} : { model: event.model }),
+        ...(event.toolInvocationCount === undefined
+          ? {}
+          : { toolInvocationCount: event.toolInvocationCount }),
         ...(event.toolInvocations === undefined
           ? {}
           : { toolInvocations: event.toolInvocations }),
+        ...(event.contextSourceCount === undefined
+          ? {}
+          : { contextSourceCount: event.contextSourceCount }),
         ...(event.contextSources === undefined
           ? {}
           : { contextSources: event.contextSources }),
@@ -225,9 +265,15 @@ function applyStreamEventToMessages(
         content: event.content,
         status: 'completed',
         ...(event.model === undefined ? {} : { model: event.model }),
+        ...(event.toolInvocationCount === undefined
+          ? {}
+          : { toolInvocationCount: event.toolInvocationCount }),
         ...(event.toolInvocations === undefined
           ? {}
           : { toolInvocations: event.toolInvocations }),
+        ...(event.contextSourceCount === undefined
+          ? {}
+          : { contextSourceCount: event.contextSourceCount }),
         ...(event.contextSources === undefined
           ? {}
           : { contextSources: event.contextSources }),
@@ -347,6 +393,8 @@ interface AppStoreState {
   settingsDrawerOpen: boolean;
   queueDrawerOpen: boolean;
   planDrawerOpen: boolean;
+  agentsDrawerOpen: boolean;
+  skillsDrawerOpen: boolean;
   sidebarOpen: boolean;
   streamingAssistantIds: string[];
   pendingStreamEventsByAssistantId: Record<string, ChatStreamEvent>;
@@ -358,11 +406,13 @@ interface AppStoreState {
     additionalModelsDirectory?: string | null
   ) => Promise<ImageGenerationModelCatalog>;
   refreshCapabilitySurface: () => Promise<void>;
+  refreshSkills: () => Promise<void>;
   refreshSystemStatus: () => Promise<void>;
   rehydrateConversationMessages: (conversationId: string) => Promise<void>;
+  loadMessageArtifacts: (messageId: string) => Promise<void>;
   refreshWorkspaceKnowledge: (workspaceId: string) => Promise<void>;
   selectWorkspace: (workspaceId: string | null) => Promise<void>;
-  createWorkspace: (input: { name: string; rootPath?: string }) => Promise<void>;
+  createWorkspace: (input: { name: string; rootPath: string }) => Promise<void>;
   pickWorkspaceDirectory: () => Promise<string | null>;
   updateWorkspaceRoot: (workspaceId: string, rootPath: string | null) => Promise<void>;
   deleteWorkspace: (workspaceId: string) => Promise<void>;
@@ -372,10 +422,15 @@ interface AppStoreState {
   toggleSettingsDrawer: (open?: boolean) => void;
   toggleQueueDrawer: (open?: boolean) => void;
   togglePlanDrawer: (open?: boolean) => void;
+  toggleAgentsDrawer: (open?: boolean) => void;
+  toggleSkillsDrawer: (open?: boolean) => void;
   toggleSidebar: (open?: boolean) => void;
   setSelectedModel: (model: string) => void;
   setSelectedThinkMode: (thinkMode: ChatThinkModeSelection) => void;
   updateSettings: (patch: UpdateUserSettings) => Promise<void>;
+  createSkill: (input: CreateSkillInput) => Promise<SkillDefinition>;
+  updateSkill: (input: UpdateSkillInput) => Promise<SkillDefinition>;
+  deleteSkill: (input: DeleteSkillInput) => Promise<void>;
   grantCapabilityPermission: (capabilityId: string) => Promise<void>;
   revokeCapabilityPermission: (capabilityId: string) => Promise<void>;
   deleteTask: (taskId: string) => Promise<void>;
@@ -431,6 +486,8 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
   settingsDrawerOpen: false,
   queueDrawerOpen: false,
   planDrawerOpen: false,
+  agentsDrawerOpen: false,
+  skillsDrawerOpen: false,
   sidebarOpen: typeof window !== 'undefined' ? window.matchMedia('(min-width: 1280px)').matches : false,
   streamingAssistantIds: [],
   pendingStreamEventsByAssistantId: {},
@@ -584,6 +641,11 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
     });
   },
 
+  refreshSkills: async () => {
+    const availableSkills = await getDesktopApi().chat.listSkills();
+    set({ availableSkills: sortSkills(availableSkills) });
+  },
+
   refreshSystemStatus: async () => {
     const api = getDesktopApi();
     const status = await api.system.getStatus();
@@ -599,6 +661,31 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
         [conversationId]: messages
       }
     }));
+  },
+
+  loadMessageArtifacts: async (messageId) => {
+    const detailedMessage = await getDesktopApi().chat.getMessage(messageId);
+
+    if (!detailedMessage) {
+      return;
+    }
+
+    set((state) => {
+      const nextMessagesByConversation = { ...state.messagesByConversation };
+      const messages = nextMessagesByConversation[detailedMessage.conversationId];
+
+      if (!messages) {
+        return state;
+      }
+
+      nextMessagesByConversation[detailedMessage.conversationId] = messages.map((message) =>
+        message.id === detailedMessage.id ? detailedMessage : message
+      );
+
+      return {
+        messagesByConversation: nextMessagesByConversation
+      };
+    });
   },
 
   refreshWorkspaceKnowledge: async (workspaceId) => {
@@ -814,6 +901,18 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
     }));
   },
 
+  toggleAgentsDrawer: (open) => {
+    set((state) => ({
+      agentsDrawerOpen: open ?? !state.agentsDrawerOpen
+    }));
+  },
+
+  toggleSkillsDrawer: (open) => {
+    set((state) => ({
+      skillsDrawerOpen: open ?? !state.skillsDrawerOpen
+    }));
+  },
+
   toggleSidebar: (open) => {
     set((state) => ({
       sidebarOpen: open ?? !state.sidebarOpen
@@ -852,6 +951,29 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
           ? ''
           : get().selectedThinkMode
     });
+  },
+
+  createSkill: async (input) => {
+    const skill = await getDesktopApi().chat.createSkill(input);
+    set((state) => ({
+      availableSkills: upsertSkill(state.availableSkills, skill)
+    }));
+    return skill;
+  },
+
+  updateSkill: async (input) => {
+    const skill = await getDesktopApi().chat.updateSkill(input);
+    set((state) => ({
+      availableSkills: upsertSkill(state.availableSkills, skill)
+    }));
+    return skill;
+  },
+
+  deleteSkill: async (input) => {
+    await getDesktopApi().chat.deleteSkill(input);
+    set((state) => ({
+      availableSkills: state.availableSkills.filter((skill) => skill.id !== input.skillId)
+    }));
   },
 
   grantCapabilityPermission: async (capabilityId) => {

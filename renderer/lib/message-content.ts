@@ -9,6 +9,7 @@ const THINKING_PATTERNS = [
   /<reasoning\b[^>]*>([\s\S]*?)<\/reasoning>/gi
 ];
 const OPEN_THINKING_PATTERN = /<(think|thinking|reasoning)\b[^>]*>([\s\S]*)$/i;
+const DANGLING_THINKING_TAG_PATTERN = /<\/?(?:think|thinking|reasoning)\b[^>]*>/gi;
 const LABELED_THINKING_PATTERN =
   /^\s*(?:thinking|reasoning)\s*:?\s*\n+([\s\S]*?)\n+(?:final answer|answer|response)\s*:?\s*\n+([\s\S]*)$/i;
 
@@ -53,6 +54,9 @@ export function parseAssistantContent(content: string): ParsedAssistantContent {
 
   return {
     thinkingBlocks,
-    answer: answer.replace(/\n{3,}/g, '\n\n').trim()
+    answer: answer
+      .replace(DANGLING_THINKING_TAG_PATTERN, '')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim()
   };
 }

@@ -98,7 +98,7 @@ function createChatServiceHarness(options: {
   const turnMetadataService = new TurnMetadataService(database);
   const ragService = new RagService(database, logger);
   const generationRepository = new GenerationRepository(database);
-  const skillRegistry = new SkillRegistry(path.join('E:\\OllamaDesktop', 'skills'));
+  const skillRegistry = new SkillRegistry(path.join('E:\\OllamaDesktop', 'skills'), database);
   skillRegistry.load();
   const memoryService = new MemoryService(repository, turnMetadataService);
   const queue = new BridgeQueue();
@@ -272,6 +272,93 @@ describe('ChatService', () => {
       expect(importedMessages[0]?.attachments[0]?.fileName).toBe('notes.md');
       expect(importedMessages[0]?.attachments[0]?.filePath).toBeNull();
       expect(importedMessages[0]?.attachments[0]?.extractedText).toBe('# Notes');
+    } finally {
+      harness.database.close();
+    }
+  });
+
+  it('returns lightweight UI messages with artifact counts while keeping full details in SQLite', async () => {
+    const directory = mkdtempSync(path.join(tmpdir(), 'ollama-desktop-chat-ui-metadata-'));
+    tempDirectories.push(directory);
+    const harness = createChatServiceHarness({
+      directory,
+      loggerName: 'chat-ui-metadata-test'
+    });
+
+    try {
+      const workspace = harness.repository.ensureDefaultWorkspace();
+      const conversation = harness.repository.createConversation({
+        prompt: 'Metadata count test',
+        workspaceId: workspace.id
+      });
+
+      harness.repository.createMessage({
+        conversationId: conversation.id,
+        role: 'user',
+        content: 'Inspect the settings flow.',
+        status: 'completed'
+      });
+
+      const assistantMessage = harness.repository.createMessage({
+        conversationId: conversation.id,
+        role: 'assistant',
+        content: 'Done.',
+        status: 'completed'
+      });
+
+      harness.turnMetadataService.saveAssistantTurnArtifacts({
+        messageId: assistantMessage.id,
+        routeTrace: {
+          strategy: 'rag-tool',
+          reason: 'workspace-knowledge-routing',
+          confidence: 0.9,
+          selectedModel: 'llama3.2:latest',
+          fallbackModel: null,
+          activeSkillId: 'builder',
+          activeToolId: 'read',
+          usedWorkspacePrompt: true,
+          usedPinnedMessages: false,
+          usedRag: true,
+          usedTools: true
+        },
+        usage: {
+          promptTokens: 120,
+          completionTokens: 30,
+          totalTokens: 150
+        },
+        toolInvocations: [
+          harness.turnMetadataService.createToolInvocation({
+            toolId: 'read',
+            displayName: 'Read',
+            status: 'completed',
+            inputSummary: 'E:/workspace/settings.ts',
+            outputSummary: 'Loaded the settings file',
+            outputText: '### Read\n\nsettings content',
+            errorMessage: null
+          })
+        ],
+        contextSources: [
+          harness.turnMetadataService.createContextSource({
+            kind: 'document_chunk',
+            label: 'settings.md',
+            excerpt: 'Settings are persisted locally.',
+            sourcePath: 'E:/workspace/settings.md',
+            documentId: null,
+            score: 0.12
+          })
+        ]
+      });
+
+      const uiMessages = harness.service.listMessagesForUi(conversation.id);
+      const lightweightAssistantMessage = uiMessages.at(-1);
+      const hydratedAssistantMessage = harness.service.getMessage(assistantMessage.id);
+
+      expect(lightweightAssistantMessage?.toolInvocationCount).toBe(1);
+      expect(lightweightAssistantMessage?.contextSourceCount).toBe(1);
+      expect(lightweightAssistantMessage?.toolInvocations).toBeUndefined();
+      expect(lightweightAssistantMessage?.contextSources).toBeUndefined();
+      expect(hydratedAssistantMessage?.toolInvocations).toHaveLength(1);
+      expect(hydratedAssistantMessage?.contextSources).toHaveLength(1);
     } finally {
       harness.database.close();
     }
@@ -1377,8 +1464,10 @@ describe('ChatService', () => {
     try {
       const projectAlpha = path.join(directory, 'project-alpha');
       const projectBeta = path.join(directory, 'project-beta');
+      const projectGamma = path.join(directory, 'project-gamma');
       mkdirSync(projectAlpha, { recursive: true });
       mkdirSync(projectBeta, { recursive: true });
+      mkdirSync(projectGamma, { recursive: true });
 
       const alphaWorkspace = await harness.service.createWorkspace({
         name: 'Project Alpha',
@@ -1395,7 +1484,8 @@ describe('ChatService', () => {
       ).rejects.toThrow('already connected');
 
       const betaWorkspace = await harness.service.createWorkspace({
-        name: 'Project Beta'
+        name: 'Project Beta',
+        rootPath: projectGamma
       });
       const updatedAlpha = await harness.service.updateWorkspaceRoot({
         workspaceId: alphaWorkspace.id,
@@ -1540,6 +1630,157 @@ describe('ChatService', () => {
       expect(result.content).toContain('/task-create {"title":"Ship Milestone 4.1"}');
       expect(result.toolInvocations).toHaveLength(0);
       expect(harness.capabilityService.listTasks(null)).toHaveLength(0);
+    } finally {
+      harness.database.close();
+    }
+  });
+
+  it('auto-recovers command-only parenthesized slash commands with stray think tags', async () => {
+    const directory = mkdtempSync(
+      path.join(tmpdir(), 'ollama-desktop-inline-text-command-command-only-')
+    );
+    tempDirectories.push(directory);
+    const workspaceRoot = path.join(directory, 'blog-export');
+    mkdirSync(path.join(workspaceRoot, 'posts'), { recursive: true });
+    writeFileSync(path.join(workspaceRoot, 'posts', 'article.md'), '# Draft blog post\n', 'utf8');
+    const completeChat = vi.fn().mockResolvedValue({
+      content: 'I inspected the connected blog workspace and can continue with the gap analysis.',
+      doneReason: 'stop',
+      thinking: '',
+      toolCalls: []
+    });
+    const harness = createChatServiceHarness({
+      directory,
+      loggerName: 'chat-inline-text-command-command-only-test',
+      models: ['glm-5:cloud'],
+      completeChat
+    });
+
+    try {
+      const result = await (
+        harness.service as unknown as {
+          recoverInlineToolCalls: (input: {
+            backend: 'ollama' | 'nvidia';
+            baseUrl: string;
+            apiKey: string | null;
+            model: string;
+            messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>;
+            content: string;
+            doneReason: string | null;
+            workspaceRootPath: string | null;
+            workspaceId: string | null;
+            conversationId: string;
+          }) => Promise<{
+            content: string;
+            doneReason: string | null;
+            toolInvocations: Array<{ toolId: string; status: string }>;
+            contextSources: unknown[];
+          }>;
+        }
+      ).recoverInlineToolCalls({
+        backend: 'ollama',
+        baseUrl: 'http://127.0.0.1:11434',
+        apiKey: null,
+        model: 'glm-5:cloud',
+        messages: [
+          {
+            role: 'system',
+            content: 'Normal tool guidance without an explicit text-command recovery marker.'
+          }
+        ],
+        content: `/workspace-lister </think>\n\n/workspace-lister(path="${workspaceRoot.replace(/\\/g, '\\\\')}")`,
+        doneReason: 'stop',
+        workspaceRootPath: workspaceRoot,
+        workspaceId: null,
+        conversationId: 'conversation-command-only'
+      });
+
+      expect(result.content).toBe(
+        'I inspected the connected blog workspace and can continue with the gap analysis.'
+      );
+      expect(result.toolInvocations.map((invocation) => `${invocation.toolId}:${invocation.status}`)).toEqual([
+        'workspace-lister:completed'
+      ]);
+      expect(result.contextSources.length).toBeGreaterThan(0);
+      expect(completeChat).toHaveBeenCalledTimes(1);
+    } finally {
+      harness.database.close();
+    }
+  });
+
+  it('auto-recovers command-only JSON tool_calls output', async () => {
+    const directory = mkdtempSync(
+      path.join(tmpdir(), 'ollama-desktop-inline-json-tool-calls-')
+    );
+    tempDirectories.push(directory);
+    const workspaceRoot = path.join(directory, 'workspace-root');
+    mkdirSync(workspaceRoot, { recursive: true });
+    writeFileSync(
+      path.join(workspaceRoot, 'how_transformers_actually_work_fact_checked.md'),
+      '# Fact checked blog\n\nNeeds clearer framing.\n',
+      'utf8'
+    );
+    const completeChat = vi.fn().mockResolvedValue({
+      content: 'I read the fact-checked blog draft and can now list the missing sections.',
+      doneReason: 'stop',
+      thinking: '',
+      toolCalls: []
+    });
+    const harness = createChatServiceHarness({
+      directory,
+      loggerName: 'chat-inline-json-tool-calls-test',
+      models: ['glm-5:cloud'],
+      completeChat
+    });
+
+    try {
+      const result = await (
+        harness.service as unknown as {
+          recoverInlineToolCalls: (input: {
+            backend: 'ollama' | 'nvidia';
+            baseUrl: string;
+            apiKey: string | null;
+            model: string;
+            messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>;
+            content: string;
+            doneReason: string | null;
+            workspaceRootPath: string | null;
+            workspaceId: string | null;
+            conversationId: string;
+          }) => Promise<{
+            content: string;
+            doneReason: string | null;
+            toolInvocations: Array<{ toolId: string; status: string }>;
+            contextSources: unknown[];
+          }>;
+        }
+      ).recoverInlineToolCalls({
+        backend: 'ollama',
+        baseUrl: 'http://127.0.0.1:11434',
+        apiKey: null,
+        model: 'glm-5:cloud',
+        messages: [
+          {
+            role: 'system',
+            content: 'Normal native tool guidance.'
+          }
+        ],
+        content:
+          'tool_calls\n[{"id":"call_1","type":"function","function":{"name":"read","arguments":"{\\"path\\":\\"how_transformers_actually_work_fact_checked.md\\"}"}}]',
+        doneReason: 'stop',
+        workspaceRootPath: workspaceRoot,
+        workspaceId: null,
+        conversationId: 'conversation-json-tool-calls'
+      });
+
+      expect(result.content).toBe(
+        'I read the fact-checked blog draft and can now list the missing sections.'
+      );
+      expect(result.toolInvocations.map((invocation) => `${invocation.toolId}:${invocation.status}`)).toEqual([
+        'read:completed'
+      ]);
+      expect(result.contextSources.length).toBeGreaterThan(0);
+      expect(completeChat).toHaveBeenCalledTimes(1);
     } finally {
       harness.database.close();
     }
@@ -2533,7 +2774,7 @@ describe('ChatService', () => {
         streamEvents.some(
           (event) =>
             event.type === 'update' &&
-            event.toolInvocations?.some((invocation) => invocation.toolId === 'read')
+            (event.toolInvocationCount ?? 0) > 0
         )
       ).toBe(true);
       expect(streamChat).not.toHaveBeenCalled();
@@ -2629,6 +2870,107 @@ describe('ChatService', () => {
             message.content.includes('`write({filePath|path, content})`')
         )
       ).toBe(true);
+    } finally {
+      harness.database.close();
+    }
+  });
+
+  it('uses native tool calling for grounded workspace-inspection turns', async () => {
+    const directory = mkdtempSync(path.join(tmpdir(), 'ollama-desktop-grounded-native-tool-'));
+    tempDirectories.push(directory);
+    const streamChat = vi.fn();
+    const completeChat = vi
+      .fn()
+      .mockResolvedValueOnce({
+        content: '',
+        doneReason: 'stop',
+        thinking: '',
+        toolCalls: [
+          {
+            type: 'function' as const,
+            function: {
+              name: 'workspace-lister',
+              arguments: {
+                path: '.'
+              }
+            }
+          }
+        ]
+      })
+      .mockResolvedValueOnce({
+        content: '',
+        doneReason: 'stop',
+        thinking: '',
+        toolCalls: [
+          {
+            type: 'function' as const,
+            function: {
+              name: 'read',
+              arguments: {
+                filePath: 'blog.md'
+              }
+            }
+          }
+        ]
+      })
+      .mockResolvedValueOnce({
+        content: 'I reviewed the blog draft and identified missing problem framing, proof points, and a concrete CTA.',
+        doneReason: 'stop',
+        thinking: '',
+        toolCalls: []
+      });
+    const harness = createChatServiceHarness({
+      directory,
+      loggerName: 'chat-grounded-native-tool-test',
+      models: ['glm-5:cloud'],
+      streamChat,
+      completeChat
+    });
+
+    try {
+      const workspaceRoot = path.join(directory, 'workspace-root');
+      mkdirSync(workspaceRoot, { recursive: true });
+      writeFileSync(
+        path.join(workspaceRoot, 'blog.md'),
+        '# Blog Draft\n\nThe post introduces the feature but does not explain the user pain clearly.\n',
+        'utf8'
+      );
+
+      const workspace = harness.repository.ensureDefaultWorkspace();
+      harness.repository.updateWorkspaceRoot(workspace.id, workspaceRoot);
+
+      const accepted = await harness.service.startChatTurn(
+        {
+          prompt: '@grounded identify the gaps in the blog',
+          workspaceId: workspace.id
+        },
+        () => undefined
+      );
+
+      await vi.waitFor(() => {
+        const messages = harness.service.listMessages(accepted.conversation.id);
+        expect(messages.at(-1)?.status).toBe('completed');
+      });
+
+      const messages = harness.service.listMessages(accepted.conversation.id);
+      const assistantMessage = messages.at(-1);
+      const firstNativeToolCallMessages = getMockMessages(completeChat.mock.calls[0]?.[0]);
+
+      expect(assistantMessage?.toolInvocations?.map((invocation) => invocation.toolId)).toEqual([
+        'workspace-lister',
+        'read'
+      ]);
+      expect(assistantMessage?.content).toContain('identified missing problem framing');
+      expect(
+        firstNativeToolCallMessages.some(
+          (message) =>
+            message.role === 'system' &&
+            message.content.includes('Available tools') &&
+            message.content.includes('never plain-text commands')
+        )
+      ).toBe(true);
+      expect(streamChat).not.toHaveBeenCalled();
+      expect(completeChat).toHaveBeenCalledTimes(3);
     } finally {
       harness.database.close();
     }
@@ -3829,7 +4171,7 @@ describe('ChatService', () => {
           if (
             !rejectedRichUpdate &&
             event.type === 'update' &&
-            (event.contextSources?.length ?? 0) > 0
+            (event.contextSourceCount ?? 0) > 0
           ) {
             rejectedRichUpdate = true;
             throw new Error('Renderer rejected a rich progress payload');
@@ -4095,6 +4437,61 @@ describe('ChatService', () => {
         expect(assistantMessage?.toolInvocations?.[0]?.inputSummary).toBe('.');
       });
 
+      expect(streamChat).toHaveBeenCalledTimes(1);
+    } finally {
+      harness.database.close();
+    }
+  });
+
+  it('keeps natural-language directory prompts in plain chat when no workspace folder is connected', async () => {
+    const directory = mkdtempSync(path.join(tmpdir(), 'ollama-desktop-rootless-workspace-listing-'));
+    tempDirectories.push(directory);
+    const streamChat = vi.fn(
+      (input: {
+        baseUrl: string;
+        model: string;
+        messages: Array<{
+          role: 'system' | 'user' | 'assistant';
+          content: string;
+          images?: string[];
+        }>;
+        onDelta: (delta: string) => void;
+      }) => {
+        input.onDelta('I need a connected workspace folder before I can inspect local files.');
+        return Promise.resolve({ doneReason: 'stop' });
+      }
+    );
+    const harness = createChatServiceHarness({
+      directory,
+      loggerName: 'chat-rootless-workspace-listing-test',
+      models: ['glm-4.7-flash:latest'],
+      streamChat
+    });
+
+    try {
+      const workspace = harness.repository.ensureDefaultWorkspace();
+
+      const accepted = await harness.service.startChatTurn(
+        {
+          prompt: 'List all the files in this directory',
+          workspaceId: workspace.id
+        },
+        () => undefined
+      );
+
+      await vi.waitFor(() => {
+        const messages = harness.service.listMessages(accepted.conversation.id);
+        const assistantMessage = messages.at(-1);
+
+        expect(assistantMessage?.status).toBe('completed');
+        expect(assistantMessage?.toolInvocations ?? []).toHaveLength(0);
+      });
+
+      const messages = harness.service.listMessages(accepted.conversation.id);
+      const assistantMessage = messages.at(-1);
+
+      expect(assistantMessage?.routeTrace?.activeToolId).toBeNull();
+      expect(assistantMessage?.content).toContain('connected workspace folder');
       expect(streamChat).toHaveBeenCalledTimes(1);
     } finally {
       harness.database.close();

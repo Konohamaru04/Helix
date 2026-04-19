@@ -401,8 +401,12 @@ function extractWorkspaceListPath(prompt: string): string {
   );
   const extractedPath =
     prepositionMatch?.[1] ?? prepositionMatch?.[2] ?? prepositionMatch?.[3] ?? null;
+  const shouldTreatPrepositionAsPath =
+    looksLikeWorkspaceListIntent(trimmedPrompt) ||
+    /\b(directory|folder|path|root)\b/i.test(trimmedPrompt) ||
+    inlinePathCandidate !== null;
 
-  if (extractedPath) {
+  if (extractedPath && shouldTreatPrepositionAsPath) {
     const normalizedPath = extractedPath.trim();
     return isWorkspaceRootAlias(normalizedPath) ? '.' : normalizedPath;
   }
@@ -725,6 +729,12 @@ const NATIVE_OLLAMA_TOOL_IDS = [
   'skill'
 ] as const;
 
+const WORKSPACE_ROOT_REQUIRED_TOOL_IDS = new Set([
+  'workspace-lister',
+  'workspace-opener',
+  'workspace-search'
+]);
+
 export interface ToolExecutionResult {
   assistantContent: string;
   toolInvocations: ToolInvocation[];
@@ -792,8 +802,20 @@ export class ToolDispatcher {
     return this.listDefinitions().find((tool) => tool.command === commandToken) ?? null;
   }
 
-  listOllamaToolDefinitions(): OllamaToolDefinition[] {
+  requiresWorkspaceRoot(toolId: string): boolean {
+    return WORKSPACE_ROOT_REQUIRED_TOOL_IDS.has(toolId);
+  }
+
+  listOllamaToolDefinitions(options?: {
+    workspaceRootPath?: string | null;
+  }): OllamaToolDefinition[] {
+    const workspaceRootConnected = Boolean(options?.workspaceRootPath);
+
     return NATIVE_OLLAMA_TOOL_IDS
+      .filter(
+        (toolId) =>
+          workspaceRootConnected || !this.requiresWorkspaceRoot(toolId)
+      )
       .filter((toolId) => this.getById(toolId) !== null)
       .map((toolId) => this.buildOllamaToolDefinition(toolId))
       .filter((definition): definition is OllamaToolDefinition => definition !== null);

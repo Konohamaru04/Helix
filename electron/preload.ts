@@ -17,7 +17,9 @@ import {
   chatStreamEventSchema,
   chatTurnAcceptedSchema,
   conversationIdSchema,
+  createSkillInputSchema,
   deleteConversationInputSchema,
+  deleteSkillInputSchema,
   editMessageInputSchema,
   generationJobSchema,
   generationStreamEventSchema,
@@ -31,9 +33,10 @@ import {
   exportConversationInputSchema,
   exportConversationResultSchema,
   imageGenerationModelCatalogSchema,
-  importWorkspaceKnowledgeResultSchema,
-  messageAttachmentSchema,
-  knowledgeDocumentSchema,
+    importWorkspaceKnowledgeResultSchema,
+    messageAttachmentSchema,
+    messageIdSchema,
+    knowledgeDocumentSchema,
   knowledgeDocumentsInputSchema,
   listImageGenerationModelsInputSchema,
   listGenerationJobsInputSchema,
@@ -49,6 +52,7 @@ import {
   systemStatusSchema,
   teamSessionSchema,
   toolDefinitionSchema,
+  updateSkillInputSchema,
   updateWorkspaceRootInputSchema,
   updateUserSettingsSchema,
   userSettingsSchema,
@@ -251,6 +255,14 @@ const desktopApi: DesktopApi = {
 
       return payload.map((message) => storedMessageSchema.parse(message));
     },
+    getMessage: async (messageId) => {
+      const payload: unknown = await ipcRenderer.invoke(
+        IpcChannels.chatGetMessage,
+        messageIdSchema.parse(messageId)
+      );
+
+      return payload ? storedMessageSchema.parse(payload) : null;
+    },
     listTools: async () => {
       const payload = (await ipcRenderer.invoke(IpcChannels.chatListTools)) as unknown[];
 
@@ -260,6 +272,26 @@ const desktopApi: DesktopApi = {
       const payload = (await ipcRenderer.invoke(IpcChannels.chatListSkills)) as unknown[];
 
       return payload.map((skill) => skillDefinitionSchema.parse(skill));
+    },
+    createSkill: async (input) =>
+      skillDefinitionSchema.parse(
+        await ipcRenderer.invoke(
+          IpcChannels.chatCreateSkill,
+          createSkillInputSchema.parse(input)
+        )
+      ),
+    updateSkill: async (input) =>
+      skillDefinitionSchema.parse(
+        await ipcRenderer.invoke(
+          IpcChannels.chatUpdateSkill,
+          updateSkillInputSchema.parse(input)
+        )
+      ),
+    deleteSkill: async (input) => {
+      await ipcRenderer.invoke(
+        IpcChannels.chatDeleteSkill,
+        deleteSkillInputSchema.parse(input)
+      );
     },
     listKnowledgeDocuments: async (input) => {
       const payload = (await ipcRenderer.invoke(

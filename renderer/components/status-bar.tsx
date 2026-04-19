@@ -4,8 +4,12 @@ interface StatusBarProps {
   systemStatus: SystemStatus | null;
   queueOpen?: boolean;
   planOpen?: boolean;
+  agentsOpen?: boolean;
+  skillsOpen?: boolean;
   onOpenQueue: () => void;
   onOpenPlan: () => void;
+  onOpenAgents: () => void;
+  onOpenSkills: () => void;
   onOpenSettings: () => void;
   activeTextBackend: 'ollama' | 'nvidia';
   onTextBackendChange: (backend: 'ollama' | 'nvidia') => void;
@@ -188,6 +192,20 @@ export function StatusBar(props: StatusBarProps) {
           type="button"
         >
           Plan
+        </button>
+        <button
+          className={`rounded-full border px-3 py-1.5 text-xs font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 ${props.agentsOpen ? activeButtonClass : idleButtonClass}`}
+          onClick={props.onOpenAgents}
+          type="button"
+        >
+          Agents
+        </button>
+        <button
+          className={`rounded-full border px-3 py-1.5 text-xs font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 ${props.skillsOpen ? activeButtonClass : idleButtonClass}`}
+          onClick={props.onOpenSkills}
+          type="button"
+        >
+          Skills
         </button>
         <button
           className={`rounded-full border px-3 py-1.5 text-xs font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 ${props.queueOpen ? activeButtonClass : idleButtonClass}`}

@@ -4,7 +4,6 @@ import {
   type ConversationExportPayload,
   type ConversationSearchResult,
   type ConversationSummary,
-  type CreateWorkspaceInput,
   type MessageAttachment,
   type StoredMessage,
   type WorkspaceSummary,
@@ -98,6 +97,12 @@ export interface ConversationMemorySummaryRecord {
   updatedAt: string;
 }
 
+interface RepositoryCreateWorkspaceInput {
+  name: string;
+  prompt?: string | undefined;
+  rootPath?: string | null | undefined;
+}
+
 export class ChatRepository {
   constructor(private readonly database: DatabaseManager) {}
 
@@ -173,7 +178,7 @@ export class ChatRepository {
     return row ? this.parseWorkspaceRow(row) : null;
   }
 
-  createWorkspace(input: CreateWorkspaceInput): WorkspaceSummary {
+  createWorkspace(input: RepositoryCreateWorkspaceInput): WorkspaceSummary {
     const createdAt = nowIso();
     const workspace = workspaceSummarySchema.parse({
       id: randomUUID(),

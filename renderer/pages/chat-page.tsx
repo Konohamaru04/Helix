@@ -3,11 +3,13 @@ import {
   type MessageAttachment,
   type StoredMessage
 } from '@bridge/ipc/contracts';
+import { AgentsDrawer } from '@renderer/components/agents-drawer';
 import { ChatComposer } from '@renderer/components/chat-composer';
 import { DesktopOnlyNotice } from '@renderer/components/desktop-only-notice';
 import { MessageList } from '@renderer/components/message-list';
 import { PlanDrawer } from '@renderer/components/plan-drawer';
 import { QueueDrawer } from '@renderer/components/queue-drawer';
+import { SkillsDrawer } from '@renderer/components/skills-drawer';
 import { SettingsDrawer } from '@renderer/components/settings-drawer';
 import { Sidebar } from '@renderer/components/sidebar';
 import { StatusBar } from '@renderer/components/status-bar';
@@ -89,6 +91,7 @@ export function ChatPage() {
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [creatingWorkspace, setCreatingWorkspace] = useState(false);
   const [workspaceDraft, setWorkspaceDraft] = useState('');
+  const [workspaceRootDraft, setWorkspaceRootDraft] = useState<string | null>(null);
   const [submitPhase, setSubmitPhase] = useState<SubmitPhase | null>(null);
   const submitLockRef = useRef(false);
   const initialized = useAppStore((state) => state.initialized);
@@ -102,6 +105,7 @@ export function ChatPage() {
     (state) => state.imageGenerationModelCatalog
   );
   const availableTools = useAppStore((state) => state.availableTools);
+  const availableSkills = useAppStore((state) => state.availableSkills);
   const capabilityPermissions = useAppStore((state) => state.capabilityPermissions);
   const capabilityTasks = useAppStore((state) => state.capabilityTasks);
   const capabilitySchedules = useAppStore((state) => state.capabilitySchedules);
@@ -122,6 +126,8 @@ export function ChatPage() {
   const selectedThinkMode = useAppStore((state) => state.selectedThinkMode);
   const settingsDrawerOpen = useAppStore((state) => state.settingsDrawerOpen);
   const queueDrawerOpen = useAppStore((state) => state.queueDrawerOpen);
+  const agentsDrawerOpen = useAppStore((state) => state.agentsDrawerOpen);
+  const skillsDrawerOpen = useAppStore((state) => state.skillsDrawerOpen);
   const streamingAssistantIds = useAppStore((state) => state.streamingAssistantIds);
   const selectWorkspace = useAppStore((state) => state.selectWorkspace);
   const createWorkspace = useAppStore((state) => state.createWorkspace);
@@ -129,17 +135,25 @@ export function ChatPage() {
   const updateWorkspaceRoot = useAppStore((state) => state.updateWorkspaceRoot);
   const deleteWorkspace = useAppStore((state) => state.deleteWorkspace);
   const refreshWorkspaceKnowledge = useAppStore((state) => state.refreshWorkspaceKnowledge);
+  const refreshCapabilitySurface = useAppStore((state) => state.refreshCapabilitySurface);
+  const refreshSkills = useAppStore((state) => state.refreshSkills);
+  const loadMessageArtifacts = useAppStore((state) => state.loadMessageArtifacts);
   const setSearchQuery = useAppStore((state) => state.setSearchQuery);
   const selectConversation = useAppStore((state) => state.selectConversation);
   const toggleSettingsDrawer = useAppStore((state) => state.toggleSettingsDrawer);
   const toggleQueueDrawer = useAppStore((state) => state.toggleQueueDrawer);
   const togglePlanDrawer = useAppStore((state) => state.togglePlanDrawer);
+  const toggleAgentsDrawer = useAppStore((state) => state.toggleAgentsDrawer);
+  const toggleSkillsDrawer = useAppStore((state) => state.toggleSkillsDrawer);
   const planDrawerOpen = useAppStore((state) => state.planDrawerOpen);
   const sidebarOpen = useAppStore((state) => state.sidebarOpen);
   const toggleSidebar = useAppStore((state) => state.toggleSidebar);
   const setSelectedModel = useAppStore((state) => state.setSelectedModel);
   const setSelectedThinkMode = useAppStore((state) => state.setSelectedThinkMode);
   const updateSettings = useAppStore((state) => state.updateSettings);
+  const createSkill = useAppStore((state) => state.createSkill);
+  const updateSkill = useAppStore((state) => state.updateSkill);
+  const deleteSkill = useAppStore((state) => state.deleteSkill);
   const grantCapabilityPermission = useAppStore(
     (state) => state.grantCapabilityPermission
   );
@@ -243,11 +257,40 @@ export function ChatPage() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [sidebarOpen, toggleSidebar]);
 
+  useEffect(() => {
+    if (!agentsDrawerOpen) {
+      return;
+    }
+
+    void refreshCapabilitySurface();
+  }, [agentsDrawerOpen, refreshCapabilitySurface]);
+
+  useEffect(() => {
+    if (!skillsDrawerOpen) {
+      return;
+    }
+
+    void refreshSkills();
+  }, [refreshSkills, skillsDrawerOpen]);
+
   function resetComposer() {
     setComposerDraft('');
     setComposerAttachments([]);
     setComposerMode('chat');
     setEditingMessageId(null);
+  }
+
+  function toggleWorkspaceCreator() {
+    setCreatingWorkspace((current) => {
+      const next = !current;
+
+      if (!next) {
+        setWorkspaceDraft('');
+        setWorkspaceRootDraft(null);
+      }
+
+      return next;
+    });
   }
 
   if (!desktopRuntimeAvailable) {
@@ -418,11 +461,28 @@ export function ChatPage() {
     }
   }
 
-  async function handleConnectWorkspaceFolder() {
-    if (!activeWorkspace) {
+  async function handleCreateWorkspace() {
+    const trimmedName = workspaceDraft.trim();
+    const rootPath = workspaceRootDraft?.trim() ?? '';
+
+    if (!trimmedName || !rootPath) {
       return;
     }
 
+    try {
+      setSubmissionError(null);
+      await createWorkspace({ name: trimmedName, rootPath });
+      setWorkspaceDraft('');
+      setWorkspaceRootDraft(null);
+      setCreatingWorkspace(false);
+    } catch (error) {
+      setSubmissionError(
+        error instanceof Error ? error.message : 'Unable to create workspace.'
+      );
+    }
+  }
+
+  async function handlePickWorkspaceRoot() {
     try {
       setSubmissionError(null);
       const rootPath = await pickWorkspaceDirectory();
@@ -431,7 +491,24 @@ export function ChatPage() {
         return;
       }
 
-      await updateWorkspaceRoot(activeWorkspace.id, rootPath);
+      setWorkspaceRootDraft(rootPath);
+    } catch (error) {
+      setSubmissionError(
+        error instanceof Error ? error.message : 'Unable to select workspace folder.'
+      );
+    }
+  }
+
+  async function handleSetWorkspaceFolder(workspaceId: string) {
+    try {
+      setSubmissionError(null);
+      const rootPath = await pickWorkspaceDirectory();
+
+      if (!rootPath) {
+        return;
+      }
+
+      await updateWorkspaceRoot(workspaceId, rootPath);
     } catch (error) {
       setSubmissionError(
         error instanceof Error ? error.message : 'Unable to connect workspace folder.'
@@ -439,36 +516,13 @@ export function ChatPage() {
     }
   }
 
-  async function handleDisconnectWorkspaceFolder() {
-    if (!activeWorkspace) {
-      return;
-    }
-
+  async function handleClearWorkspaceFolder(workspaceId: string) {
     try {
       setSubmissionError(null);
-      await updateWorkspaceRoot(activeWorkspace.id, null);
+      await updateWorkspaceRoot(workspaceId, null);
     } catch (error) {
       setSubmissionError(
         error instanceof Error ? error.message : 'Unable to disconnect workspace folder.'
-      );
-    }
-  }
-
-  async function handleCreateWorkspace() {
-    const trimmedName = workspaceDraft.trim();
-
-    if (!trimmedName) {
-      return;
-    }
-
-    try {
-      setSubmissionError(null);
-      await createWorkspace({ name: trimmedName });
-      setWorkspaceDraft('');
-      setCreatingWorkspace(false);
-    } catch (error) {
-      setSubmissionError(
-        error instanceof Error ? error.message : 'Unable to create workspace.'
       );
     }
   }
@@ -481,6 +535,51 @@ export function ChatPage() {
       setSubmissionError(
         error instanceof Error ? error.message : 'Unable to update the text backend.'
       );
+    }
+  }
+
+  async function handleCreateSkill(input: {
+    title: string;
+    description: string;
+    prompt: string;
+  }) {
+    try {
+      setSubmissionError(null);
+      await createSkill(input);
+    } catch (error) {
+      setSubmissionError(
+        error instanceof Error ? error.message : 'Unable to create skill.'
+      );
+      throw error;
+    }
+  }
+
+  async function handleUpdateSkill(input: {
+    skillId: string;
+    title: string;
+    description: string;
+    prompt: string;
+  }) {
+    try {
+      setSubmissionError(null);
+      await updateSkill(input);
+    } catch (error) {
+      setSubmissionError(
+        error instanceof Error ? error.message : 'Unable to update skill.'
+      );
+      throw error;
+    }
+  }
+
+  async function handleDeleteSkill(skillId: string) {
+    try {
+      setSubmissionError(null);
+      await deleteSkill({ skillId });
+    } catch (error) {
+      setSubmissionError(
+        error instanceof Error ? error.message : 'Unable to delete skill.'
+      );
+      throw error;
     }
   }
 
@@ -507,11 +606,17 @@ export function ChatPage() {
                 void selectWorkspace(workspaceId);
               }}
               onDeleteWorkspace={(workspaceId) => void deleteWorkspace(workspaceId)}
+              onSetWorkspaceFolder={(workspaceId) => {
+                void handleSetWorkspaceFolder(workspaceId);
+              }}
+              onClearWorkspaceFolder={(workspaceId) => {
+                void handleClearWorkspaceFolder(workspaceId);
+              }}
               onNewChat={() => {
                 resetComposer();
                 void selectConversation(null);
               }}
-              onNewWorkspace={() => setCreatingWorkspace((current) => !current)}
+              onNewWorkspace={toggleWorkspaceCreator}
               onDeleteConversation={(conversationId) => {
                 void deleteConversation(conversationId);
               }}
@@ -548,11 +653,17 @@ export function ChatPage() {
                     toggleSidebar(false);
                   }}
                   onDeleteWorkspace={(workspaceId) => void deleteWorkspace(workspaceId)}
+                  onSetWorkspaceFolder={(workspaceId) => {
+                    void handleSetWorkspaceFolder(workspaceId);
+                  }}
+                  onClearWorkspaceFolder={(workspaceId) => {
+                    void handleClearWorkspaceFolder(workspaceId);
+                  }}
                   onNewChat={() => {
                     resetComposer();
                     void selectConversation(null);
                   }}
-                  onNewWorkspace={() => setCreatingWorkspace((current) => !current)}
+                  onNewWorkspace={toggleWorkspaceCreator}
                   onDeleteConversation={(conversationId) => {
                     void deleteConversation(conversationId);
                   }}
@@ -625,10 +736,35 @@ export function ChatPage() {
                           value={workspaceDraft}
                         />
                       </div>
+                      <div className="min-w-[18rem] flex-1">
+                        <label
+                          className="sr-only"
+                          htmlFor="chat-workspace-root"
+                        >
+                          Workspace folder
+                        </label>
+                        <button
+                          aria-label="Workspace folder"
+                          className="flex w-full items-center justify-between rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-left text-sm text-slate-100 transition hover:border-white/20 hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
+                          id="chat-workspace-root"
+                          onClick={() => {
+                            void handlePickWorkspaceRoot();
+                          }}
+                          type="button"
+                        >
+                          <span className="truncate text-slate-100">
+                            {workspaceRootDraft ?? 'Select workspace folder'}
+                          </span>
+                          <span className="ml-3 shrink-0 text-xs uppercase tracking-[0.16em] text-cyan-200/70">
+                            Browse
+                          </span>
+                        </button>
+                      </div>
                       <button
                         className="rounded-2xl border border-white/10 px-4 py-3 text-sm font-medium text-slate-100 transition hover:border-white/20 hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
                         onClick={() => {
                           setWorkspaceDraft('');
+                          setWorkspaceRootDraft(null);
                           setCreatingWorkspace(false);
                         }}
                         type="button"
@@ -636,7 +772,8 @@ export function ChatPage() {
                         Cancel
                       </button>
                       <button
-                        className="rounded-2xl bg-cyan-400 px-4 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-300"
+                        className="rounded-2xl bg-cyan-400 px-4 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-300"
+                        disabled={!workspaceDraft.trim() || !workspaceRootDraft}
                         onClick={() => {
                           void handleCreateWorkspace();
                         }}
@@ -661,6 +798,9 @@ export function ChatPage() {
                     void handleRetryGenerationJob(jobId);
                   }}
                   onEditMessage={handleEditMessage}
+                  onLoadMessageArtifacts={(messageId) => {
+                    void loadMessageArtifacts(messageId);
+                  }}
                   onTogglePin={(message, pinned) => {
                     void handleTogglePinned(message, pinned);
                   }}
@@ -699,10 +839,6 @@ export function ChatPage() {
                   onExitImageMode={() => {
                     setComposerMode('chat');
                   }}
-                  onConfigureWorkspaceFolder={handleConnectWorkspaceFolder}
-                  onDisconnectWorkspaceFolder={
-                    activeWorkspace?.rootPath ? handleDisconnectWorkspaceFolder : undefined
-                  }
                   onImportWorkspaceKnowledge={handleImportKnowledge}
                   onPromptChange={setComposerDraft}
                   onRemoveAttachment={(attachmentId) => {
@@ -730,14 +866,18 @@ export function ChatPage() {
         <StatusBar
           activeTextBackend={activeTextBackend}
           availableModels={availableModels}
+          onOpenAgents={() => toggleAgentsDrawer()}
           onOpenPlan={() => togglePlanDrawer()}
           onOpenQueue={() => toggleQueueDrawer()}
+          onOpenSkills={() => toggleSkillsDrawer()}
           onOpenSettings={() => toggleSettingsDrawer(true)}
+          agentsOpen={agentsDrawerOpen}
           onSelectedModelChange={setSelectedModel}
           onSelectedThinkModeChange={(value) => setSelectedThinkMode(value as '' | 'off' | 'on' | 'low' | 'medium' | 'high')}
           onTextBackendChange={(backend) => void handleTextBackendChange(backend)}
           planOpen={planDrawerOpen}
           queueOpen={queueDrawerOpen}
+          skillsOpen={skillsDrawerOpen}
           selectedModel={selectedModel}
           selectedThinkMode={selectedThinkMode}
           settingsOpen={settingsDrawerOpen}
@@ -797,6 +937,22 @@ export function ChatPage() {
         open={planDrawerOpen}
         planState={capabilityPlanState}
         tasks={capabilityTasks}
+      />
+
+      <AgentsDrawer
+        agents={capabilityAgents}
+        onClose={() => toggleAgentsDrawer(false)}
+        open={agentsDrawerOpen}
+        teams={capabilityTeams}
+      />
+
+      <SkillsDrawer
+        onClose={() => toggleSkillsDrawer(false)}
+        onCreateSkill={(input) => handleCreateSkill(input)}
+        onDeleteSkill={(skillId) => handleDeleteSkill(skillId)}
+        onUpdateSkill={(input) => handleUpdateSkill(input)}
+        open={skillsDrawerOpen}
+        skills={availableSkills}
       />
     </div>
   );

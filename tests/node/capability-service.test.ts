@@ -27,7 +27,7 @@ function createHarness() {
   const chatRepository = new ChatRepository(database);
   chatRepository.ensureDefaultWorkspace();
   const capabilityRepository = new CapabilityRepository(database);
-  const skillRegistry = new SkillRegistry(path.join('E:\\OllamaDesktop', 'skills'));
+  const skillRegistry = new SkillRegistry(path.join('E:\\OllamaDesktop', 'skills'), database);
   skillRegistry.load();
   const ollamaClient = {
     getStatus: vi.fn().mockResolvedValue({

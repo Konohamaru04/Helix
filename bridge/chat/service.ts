@@ -14,7 +14,9 @@ import type {
   ChatStartAccepted,
   ContextSource,
   ConversationExportPayload,
+  CreateSkillInput,
   CreateWorkspaceInput,
+  DeleteSkillInput,
   EditMessageInput,
   ChatStreamEvent,
   ChatTurnAccepted,
@@ -32,6 +34,7 @@ import type {
   TextInferenceBackend,
   ToolDefinition,
   ToolInvocation,
+  UpdateSkillInput,
   UserSettings
 } from '@bridge/ipc/contracts';
 import {
@@ -221,6 +224,7 @@ const CODING_VERIFICATION_TOOL_IDS = new Set([
   'powershell',
   'lsp'
 ]);
+const NATIVE_TOOL_LOOP_SKILL_IDS = new Set(['builder', 'debugger', 'grounded']);
 const NATIVE_TOOL_LOOP_ESCALATION_TOOL_IDS = new Set([
   'read',
   'file-reader',
@@ -1198,6 +1202,245 @@ interface InlineMarkupToolCall {
   arguments: Record<string, unknown>;
 }
 
+const THINKING_BLOCK_PATTERN =
+  /<(think|thinking|reasoning)\b[^>]*>[\s\S]*?<\/\1>/gi;
+const THINKING_TAG_PATTERN = /<\/?(?:think|thinking|reasoning)\b[^>]*>/gi;
+
+function sanitizeTextCommandRecoveryContent(content: string): string {
+  return content
+    .replace(THINKING_BLOCK_PATTERN, '\n')
+    .replace(THINKING_TAG_PATTERN, ' ')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function decodeTextCommandQuotedValue(value: string): string | null {
+  const quote = value[0];
+
+  if ((quote !== '"' && quote !== "'") || value.length < 2) {
+    return null;
+  }
+
+  let decoded = '';
+
+  for (let index = 1; index < value.length; index += 1) {
+    const char = value[index];
+
+    if (char === undefined) {
+      break;
+    }
+
+    if (char === quote) {
+      return index === value.length - 1 ? decoded : null;
+    }
+
+    if (char === '\\') {
+      const next = value[index + 1];
+
+      if (next === undefined) {
+        decoded += '\\';
+        continue;
+      }
+
+      if (next === quote || next === '\\') {
+        decoded += next;
+        index += 1;
+        continue;
+      }
+
+      if (next === 'n') {
+        decoded += '\n';
+        index += 1;
+        continue;
+      }
+
+      if (next === 'r') {
+        decoded += '\r';
+        index += 1;
+        continue;
+      }
+
+      if (next === 't') {
+        decoded += '\t';
+        index += 1;
+        continue;
+      }
+
+      decoded += '\\';
+      continue;
+    }
+
+    decoded += char;
+  }
+
+  return null;
+}
+
+function coerceTextCommandValue(value: string): unknown {
+  const trimmed = value.trim();
+
+  if (!trimmed) {
+    return '';
+  }
+
+  const decodedQuotedValue = decodeTextCommandQuotedValue(trimmed);
+
+  if (decodedQuotedValue !== null) {
+    return decodedQuotedValue;
+  }
+
+  if (/^(true|false)$/i.test(trimmed)) {
+    return trimmed.toLowerCase() === 'true';
+  }
+
+  if (/^null$/i.test(trimmed)) {
+    return null;
+  }
+
+  if (/^-?\d+(?:\.\d+)?$/.test(trimmed)) {
+    return Number(trimmed);
+  }
+
+  if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+    return parseJsonishRecord(trimmed) ?? trimmed;
+  }
+
+  return trimmed;
+}
+
+function parseParenthesizedTextCommandArguments(value: string): Record<string, unknown> | null {
+  const trimmed = value.trim();
+
+  if (!trimmed) {
+    return {};
+  }
+
+  const parsedArguments: Record<string, unknown> = {};
+  let index = 0;
+
+  while (index < trimmed.length) {
+    while (index < trimmed.length && /[\s,]/.test(trimmed[index] ?? '')) {
+      index += 1;
+    }
+
+    if (index >= trimmed.length) {
+      break;
+    }
+
+    const keyMatch = /^[A-Za-z_][\w-]*/.exec(trimmed.slice(index));
+
+    if (!keyMatch) {
+      return null;
+    }
+
+    const key = keyMatch[0];
+    index += key.length;
+
+    while (index < trimmed.length && /\s/.test(trimmed[index] ?? '')) {
+      index += 1;
+    }
+
+    const separator = trimmed[index];
+
+    if (separator !== '=' && separator !== ':') {
+      return null;
+    }
+
+    index += 1;
+
+    while (index < trimmed.length && /\s/.test(trimmed[index] ?? '')) {
+      index += 1;
+    }
+
+    if (index >= trimmed.length) {
+      return null;
+    }
+
+    const valueStart = index;
+    let inQuote: '"' | "'" | null = null;
+    let braceDepth = 0;
+    let bracketDepth = 0;
+
+    while (index < trimmed.length) {
+      const char = trimmed[index];
+
+      if (char === undefined) {
+        break;
+      }
+
+      if (inQuote) {
+        if (char === '\\') {
+          index += 2;
+          continue;
+        }
+
+        if (char === inQuote) {
+          inQuote = null;
+        }
+
+        index += 1;
+        continue;
+      }
+
+      if (char === '"' || char === "'") {
+        inQuote = char;
+        index += 1;
+        continue;
+      }
+
+      if (char === '{') {
+        braceDepth += 1;
+        index += 1;
+        continue;
+      }
+
+      if (char === '}') {
+        braceDepth = Math.max(0, braceDepth - 1);
+        index += 1;
+        continue;
+      }
+
+      if (char === '[') {
+        bracketDepth += 1;
+        index += 1;
+        continue;
+      }
+
+      if (char === ']') {
+        bracketDepth = Math.max(0, bracketDepth - 1);
+        index += 1;
+        continue;
+      }
+
+      if (char === ',' && braceDepth === 0 && bracketDepth === 0) {
+        break;
+      }
+
+      index += 1;
+    }
+
+    const rawValue = trimmed.slice(valueStart, index).trim();
+
+    if (!rawValue) {
+      return null;
+    }
+
+    parsedArguments[key] = coerceTextCommandValue(rawValue);
+
+    if (trimmed[index] === ',') {
+      index += 1;
+    }
+  }
+
+  return parsedArguments;
+}
+
+function extractSlashCommandAlias(value: string): string | null {
+  const match = value.trim().match(/^\/([\w-]+)/);
+  return match?.[1] ?? null;
+}
+
 function extractInlineMarkupToolCalls(content: string): {
   cleanedContent: string;
   toolCalls: InlineMarkupToolCall[];
@@ -1311,7 +1554,7 @@ function extractTextCommandToolCalls(content: string): {
     'todo-write': 'items'
   };
 
-  let remaining = content;
+  let remaining = sanitizeTextCommandRecoveryContent(content);
 
   // Phase 1: Extract /command with fenced code blocks
   // Matches: /powershell\n```lang\n...\n``` or /bash\n```sh\n...\n```
@@ -1338,32 +1581,177 @@ function extractTextCommandToolCalls(content: string): {
     CODE_BLOCK_PATTERN.lastIndex = 0; // reset after content mutation
   }
 
-  // Phase 2: Extract /command with JSON args {...} or plain args
-  const TEXT_COMMAND_PATTERN = /(?:^|\n)\s*\/([\w-]+)(?:\s+(\{[\s\S]*?\})|\s+(.+?))?(?=\n|$)/g;
-  remaining = remaining.replace(TEXT_COMMAND_PATTERN, (_match, cmd: string, jsonObj: string | undefined, plainArg: string | undefined) => {
-    const toolName = commandMap[cmd];
-    if (!toolName) return _match;
+  // Phase 2: Extract one-line /command invocations.
+  const lines = remaining.split(/\r?\n/);
+  const cleanedLines: string[] = [];
 
+  for (let index = 0; index < lines.length; index += 1) {
+    const originalLine = lines[index] ?? '';
+    const trimmedLine = originalLine.trim();
+
+    if (!trimmedLine) {
+      cleanedLines.push('');
+      continue;
+    }
+
+    if (!trimmedLine.startsWith('/')) {
+      cleanedLines.push(originalLine);
+      continue;
+    }
+
+    const commandAlias = extractSlashCommandAlias(trimmedLine);
+    const toolName = commandAlias ? commandMap[commandAlias] : null;
+
+    if (!toolName) {
+      cleanedLines.push(originalLine);
+      continue;
+    }
+
+    const rawArgs = trimmedLine.slice(commandAlias!.length + 1).trim();
     let args: Record<string, unknown> = {};
-    if (jsonObj) {
-      args = parseJsonishRecord(jsonObj) ?? { __raw: jsonObj };
-    } else if (plainArg) {
+
+    if (rawArgs.startsWith('(') && rawArgs.endsWith(')')) {
+      const parsedArgs = parseParenthesizedTextCommandArguments(rawArgs.slice(1, -1));
+      if (!parsedArgs) {
+        cleanedLines.push(originalLine);
+        continue;
+      }
+      args = parsedArgs;
+    } else if (rawArgs.startsWith('{') && rawArgs.endsWith('}')) {
+      args = parseJsonishRecord(rawArgs) ?? { __raw: rawArgs };
+    } else if (rawArgs) {
       const param = argMapping[toolName] ?? 'prompt';
       if (toolName === 'todo-write') {
-        args.items = plainArg.trim().split(',').map((s: string) => s.trim());
+        args.items = rawArgs
+          .split(',')
+          .map((value) => value.trim())
+          .filter(Boolean);
       } else {
-        args[param] = plainArg.trim();
+        args[param] = rawArgs;
+      }
+    }
+
+    if (Object.keys(args).length === 0) {
+      const nextNonBlankLine = lines
+        .slice(index + 1)
+        .map((line) => line.trim())
+        .find(Boolean);
+      const nextAlias = nextNonBlankLine ? extractSlashCommandAlias(nextNonBlankLine) : null;
+      const nextToolName = nextAlias ? commandMap[nextAlias] : null;
+
+      if (
+        nextToolName === toolName &&
+        nextNonBlankLine !== undefined &&
+        /^(?:\/[\w-]+\s*(?:\(|\{)|\/[\w-]+\s+\S)/.test(nextNonBlankLine)
+      ) {
+        continue;
       }
     }
 
     toolCalls.push({ toolName, arguments: args });
-    return '';
-  });
+  }
 
   return {
-    cleanedContent: remaining.replace(/\n{3,}/g, '\n\n').trim(),
+    cleanedContent: cleanedLines.join('\n').replace(/\n{3,}/g, '\n\n').trim(),
     toolCalls
   };
+}
+
+function parseJsonToolCallArguments(value: unknown): Record<string, unknown> {
+  if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+
+  if (typeof value !== 'string') {
+    return {};
+  }
+
+  const trimmed = value.trim();
+
+  if (!trimmed) {
+    return {};
+  }
+
+  return parseJsonishRecord(trimmed) ?? { __raw: trimmed };
+}
+
+function extractJsonTextToolCalls(content: string): {
+  cleanedContent: string;
+  toolCalls: InlineMarkupToolCall[];
+} {
+  const normalizedContent = sanitizeTextCommandRecoveryContent(content);
+
+  if (!normalizedContent) {
+    return { cleanedContent: '', toolCalls: [] };
+  }
+
+  const fencedMatch = normalizedContent.match(/^```(?:json)?\s*([\s\S]*?)```$/i);
+  const rawPayload = (fencedMatch?.[1] ?? normalizedContent).trim();
+  const jsonPayload = rawPayload.replace(/^tool_calls\b\s*:?\s*/i, '').trim();
+
+  if (!jsonPayload.startsWith('[') || !jsonPayload.endsWith(']')) {
+    return {
+      cleanedContent: normalizedContent,
+      toolCalls: []
+    };
+  }
+
+  try {
+    const parsed = JSON.parse(jsonPayload) as unknown;
+
+    if (!Array.isArray(parsed)) {
+      return {
+        cleanedContent: normalizedContent,
+        toolCalls: []
+      };
+    }
+
+    const toolCalls = parsed.flatMap((item) => {
+      if (typeof item !== 'object' || item === null || Array.isArray(item)) {
+        return [];
+      }
+
+      const itemRecord = item as Record<string, unknown>;
+      const functionRecord =
+        typeof itemRecord.function === 'object' &&
+        itemRecord.function !== null &&
+        !Array.isArray(itemRecord.function)
+          ? (itemRecord.function as Record<string, unknown>)
+          : itemRecord;
+      const toolName =
+        typeof functionRecord.name === 'string' ? functionRecord.name.trim() : null;
+
+      if (!toolName) {
+        return [];
+      }
+
+      return [
+        {
+          toolName,
+          arguments: parseJsonToolCallArguments(
+            functionRecord.arguments ?? functionRecord.args
+          )
+        }
+      ];
+    });
+
+    if (toolCalls.length === 0) {
+      return {
+        cleanedContent: normalizedContent,
+        toolCalls: []
+      };
+    }
+
+    return {
+      cleanedContent: '',
+      toolCalls
+    };
+  } catch {
+    return {
+      cleanedContent: normalizedContent,
+      toolCalls: []
+    };
+  }
 }
 
 function shouldRecoverTextCommandToolCalls(messages: OllamaChatMessage[]): boolean {
@@ -1419,12 +1807,42 @@ export class ChatService {
     return this.decorateMessages(this.repository.listMessages(conversationId));
   }
 
+  listMessagesForUi(conversationId: string) {
+    return this.decorateMessages(this.repository.listMessages(conversationId), {
+      includeArtifacts: false
+    });
+  }
+
+  getMessage(messageId: string) {
+    const message = this.repository.getMessage(messageId);
+    return message
+      ? (this.decorateMessages([message])[0] ?? message)
+      : null;
+  }
+
   listTools(): ToolDefinition[] {
     return this.toolDispatcher.listDefinitions();
   }
 
   listSkills(): SkillDefinition[] {
     return this.skillRegistry.list();
+  }
+
+  createSkill(input: CreateSkillInput): SkillDefinition {
+    const skill = this.skillRegistry.createSkill(input);
+    this.logger.info({ skillId: skill.id }, 'Created user skill');
+    return skill;
+  }
+
+  updateSkill(input: UpdateSkillInput): SkillDefinition {
+    const skill = this.skillRegistry.updateSkill(input);
+    this.logger.info({ skillId: skill.id }, 'Updated user skill');
+    return skill;
+  }
+
+  deleteSkill(input: DeleteSkillInput): void {
+    this.skillRegistry.deleteSkill(input.skillId);
+    this.logger.info({ skillId: input.skillId }, 'Deleted user skill');
   }
 
   listKnowledgeDocuments(workspaceId: string): KnowledgeDocument[] {
@@ -1451,28 +1869,24 @@ export class ChatService {
     }
 
     this.turnMetadataService.setMessagePinned(message.id, message.conversationId, pinned);
-    return this.decorateMessage(message.id);
+    return this.decorateMessage(message.id, { includeArtifacts: false });
   }
 
   async createWorkspace(input: CreateWorkspaceInput) {
     const request = createWorkspaceInputSchema.parse(input);
-    const rootPath = request.rootPath
-      ? await this.resolveWorkspaceRootPath(request.rootPath)
-      : undefined;
+    const rootPath = await this.resolveWorkspaceRootPath(request.rootPath);
 
-    if (rootPath) {
-      const existingWorkspace = this.repository.findWorkspaceByRootPath(rootPath);
+    const existingWorkspace = this.repository.findWorkspaceByRootPath(rootPath);
 
-      if (existingWorkspace) {
-        throw new Error(
-          `The folder is already connected to workspace "${existingWorkspace.name}".`
-        );
-      }
+    if (existingWorkspace) {
+      throw new Error(
+        `The folder is already connected to workspace "${existingWorkspace.name}".`
+      );
     }
 
     const workspace = this.repository.createWorkspace({
       ...request,
-      ...(rootPath ? { rootPath } : {})
+      rootPath
     });
 
     this.logger.info(
@@ -2150,7 +2564,13 @@ export class ChatService {
 
     const availableTools = this.toolDispatcher
       .listDefinitions()
-      .filter((tool) => tool.autoRoutable && tool.availability === 'available');
+      .filter(
+        (tool) =>
+          tool.autoRoutable &&
+          tool.availability === 'available' &&
+          ((input.workspaceRootConnected ?? false) ||
+            !this.toolDispatcher.requiresWorkspaceRoot(tool.id))
+      );
     const availableSkills = this.skillRegistry.list();
 
     try {
@@ -2460,6 +2880,7 @@ export class ChatService {
       attachments: input.attachments,
       recentMessages,
       workspaceHasKnowledge,
+      workspaceRootConnected,
       explicitSkillId: directives.explicitSkillId,
       explicitToolId: directives.explicitToolId,
       modelAnalysis
@@ -2730,8 +3151,8 @@ export class ChatService {
         doneReason: 'tool-complete',
         model: input.accepted.model,
         routeTrace,
-        toolInvocations: result.toolInvocations,
-        contextSources: result.contextSources,
+        toolInvocationCount: result.toolInvocations.length,
+        contextSourceCount: result.contextSources.length,
         usage
       });
 
@@ -2940,7 +3361,9 @@ export class ChatService {
       status: 'streaming',
       model: accepted.model,
       routeTrace,
-      ...(toolInvocations.length > 0 ? { toolInvocations } : {})
+      toolInvocationCount: toolInvocations.length,
+      contextSourceCount: context.sources.length,
+      usage: initialUsage
     });
 
     this.logger.info(
@@ -3033,7 +3456,9 @@ export class ChatService {
         modelSizeBytes: input.routePlan.selectedModelSizeBytes,
         priorConversationTokenTotal
       });
-      const nativeToolDefinitions = this.toolDispatcher.listOllamaToolDefinitions();
+      const nativeToolDefinitions = this.toolDispatcher.listOllamaToolDefinitions({
+        workspaceRootPath: workspace?.rootPath ?? null
+      });
       const shouldUseNativeToolLoop =
         input.routePlan.supportsNativeToolLoop &&
         this.shouldOfferNativeToolCalling({
@@ -3374,16 +3799,52 @@ export class ChatService {
     for (let round = 0; round < INLINE_TOOL_CALL_ROUND_LIMIT; round += 1) {
       let { cleanedContent, toolCalls } = extractInlineMarkupToolCalls(content);
       const allowTextCommandRecovery = shouldRecoverTextCommandToolCalls(messages);
+      const jsonTextToolCallResult =
+        toolCalls.length === 0 ? extractJsonTextToolCalls(content) : null;
+      const autoRecoverableTextCommandResult =
+        toolCalls.length === 0 ? extractTextCommandToolCalls(content) : null;
+      const shouldRecoverJsonTextToolCalls =
+        jsonTextToolCallResult !== null &&
+        jsonTextToolCallResult.toolCalls.length > 0 &&
+        jsonTextToolCallResult.cleanedContent.length === 0;
+      const shouldAutoRecoverTextCommands =
+        autoRecoverableTextCommandResult !== null &&
+        autoRecoverableTextCommandResult.toolCalls.length > 0 &&
+        autoRecoverableTextCommandResult.cleanedContent.length === 0;
 
-      // Fallback: only in explicit recovery rounds, try parsing slash commands.
-      if (toolCalls.length === 0 && allowTextCommandRecovery) {
-        const textCommandResult = extractTextCommandToolCalls(content);
+      if (toolCalls.length === 0 && shouldRecoverJsonTextToolCalls) {
+        toolCalls = jsonTextToolCallResult?.toolCalls ?? [];
+        cleanedContent = jsonTextToolCallResult?.cleanedContent ?? '';
+        this.logger.info(
+          {
+            conversationId: input.conversationId,
+            model: input.model,
+            round: round + 1,
+            recoveryMode: 'json-tool_calls-output',
+            toolNames: toolCalls.map((tc) => tc.toolName)
+          },
+          'Recovered text-command tool calls from provider response'
+        );
+      }
+
+      // Fallback: recover slash commands in explicit recovery rounds or when the assistant
+      // emitted command-only output instead of a final answer.
+      if (toolCalls.length === 0 && (allowTextCommandRecovery || shouldAutoRecoverTextCommands)) {
+        const textCommandResult =
+          autoRecoverableTextCommandResult ?? extractTextCommandToolCalls(content);
         if (textCommandResult.toolCalls.length > 0) {
           toolCalls = textCommandResult.toolCalls;
           cleanedContent = textCommandResult.cleanedContent;
           this.logger.info(
-            { conversationId: input.conversationId, model: input.model, round: round + 1,
-              toolNames: toolCalls.map((tc) => tc.toolName) },
+            {
+              conversationId: input.conversationId,
+              model: input.model,
+              round: round + 1,
+              recoveryMode: allowTextCommandRecovery
+                ? 'explicit-recovery-round'
+                : 'command-only-output',
+              toolNames: toolCalls.map((tc) => tc.toolName)
+            },
             'Recovered text-command tool calls from provider response'
           );
         }
@@ -3518,8 +3979,7 @@ export class ChatService {
       NATIVE_TOOL_CALLING_PATTERN.test(input.prompt) ||
       looksLikeNativeFileMutationPrompt(input.prompt) ||
       (input.workspaceRootPath !== null && looksLikeRepositoryAnalysisPrompt(input.prompt)) ||
-      (input.workspaceRootPath !== null &&
-        ['builder', 'debugger'].includes(input.routeDecision.activeSkillId ?? ''))
+      NATIVE_TOOL_LOOP_SKILL_IDS.has(input.routeDecision.activeSkillId ?? '')
     );
   }
 
@@ -3531,7 +3991,9 @@ export class ChatService {
     status: StoredMessage['status'];
     model?: string | null;
     routeTrace?: RouteTrace | null;
+    toolInvocationCount?: number;
     toolInvocations?: ToolInvocation[];
+    contextSourceCount?: number;
     contextSources?: ContextSource[];
     usage?: MessageUsage | null;
   }): void {
@@ -3543,7 +4005,19 @@ export class ChatService {
       status: input.status,
       ...(input.model === undefined ? {} : { model: input.model }),
       ...(input.routeTrace === undefined ? {} : { routeTrace: input.routeTrace }),
+      ...(input.toolInvocationCount === undefined && input.toolInvocations === undefined
+        ? {}
+        : {
+            toolInvocationCount:
+              input.toolInvocationCount ?? input.toolInvocations?.length ?? 0
+          }),
       ...(input.toolInvocations === undefined ? {} : { toolInvocations: input.toolInvocations }),
+      ...(input.contextSourceCount === undefined && input.contextSources === undefined
+        ? {}
+        : {
+            contextSourceCount:
+              input.contextSourceCount ?? input.contextSources?.length ?? 0
+          }),
       ...(input.contextSources === undefined ? {} : { contextSources: input.contextSources }),
       ...(input.usage === undefined ? {} : { usage: input.usage })
     });
@@ -3557,7 +4031,9 @@ export class ChatService {
     doneReason: string | null;
     model?: string | null;
     routeTrace?: RouteTrace | null;
+    toolInvocationCount?: number;
     toolInvocations?: ToolInvocation[];
+    contextSourceCount?: number;
     contextSources?: ContextSource[];
     usage?: MessageUsage | null;
   }): void {
@@ -3569,7 +4045,19 @@ export class ChatService {
       doneReason: input.doneReason,
       ...(input.model === undefined ? {} : { model: input.model }),
       ...(input.routeTrace === undefined ? {} : { routeTrace: input.routeTrace }),
+      ...(input.toolInvocationCount === undefined && input.toolInvocations === undefined
+        ? {}
+        : {
+            toolInvocationCount:
+              input.toolInvocationCount ?? input.toolInvocations?.length ?? 0
+          }),
       ...(input.toolInvocations === undefined ? {} : { toolInvocations: input.toolInvocations }),
+      ...(input.contextSourceCount === undefined && input.contextSources === undefined
+        ? {}
+        : {
+            contextSourceCount:
+              input.contextSourceCount ?? input.contextSources?.length ?? 0
+          }),
       ...(input.contextSources === undefined ? {} : { contextSources: input.contextSources }),
       ...(input.usage === undefined ? {} : { usage: input.usage })
     });
@@ -3584,10 +4072,18 @@ export class ChatService {
     status: StoredMessage['status'];
     model?: string | null;
     routeTrace?: RouteTrace | null;
+    toolInvocationCount?: number;
     toolInvocations?: ToolInvocation[];
+    contextSourceCount?: number;
     contextSources?: ContextSource[];
     usage?: MessageUsage | null;
   }): void {
+    const eventInput = {
+      ...input,
+      toolInvocationCount: input.toolInvocationCount ?? input.toolInvocations?.length ?? 0,
+      contextSourceCount: input.contextSourceCount ?? input.contextSources?.length ?? 0
+    };
+
     try {
       this.repository.updateMessage(input.assistantMessageId, {
         content: input.content,
@@ -3606,20 +4102,20 @@ export class ChatService {
       );
     }
 
-    try {
-      this.emitAssistantUpdateEvent(input);
-      return;
-    } catch (error) {
-      this.logger.warn(
-        {
-          conversationId: input.conversationId,
-          assistantMessageId: input.assistantMessageId,
-          error: error instanceof Error ? error.message : String(error),
-          toolInvocationCount: input.toolInvocations?.length ?? 0,
-          contextSourceCount: input.contextSources?.length ?? 0
-        },
-        'Unable to emit full assistant progress payload; retrying with minimal payload'
-      );
+    if (
+      input.routeTrace != null &&
+      (input.usage !== undefined ||
+        input.toolInvocations !== undefined ||
+        input.contextSources !== undefined)
+    ) {
+      this.saveAssistantTurnArtifactsSafely({
+        conversationId: input.conversationId,
+        assistantMessageId: input.assistantMessageId,
+        routeTrace: input.routeTrace,
+        usage: input.usage ?? null,
+        toolInvocations: input.toolInvocations ?? [],
+        contextSources: input.contextSources ?? []
+      });
     }
 
     try {
@@ -3629,6 +4125,8 @@ export class ChatService {
         assistantMessageId: input.assistantMessageId,
         content: input.content,
         status: input.status,
+        toolInvocationCount: eventInput.toolInvocationCount,
+        contextSourceCount: eventInput.contextSourceCount,
         ...(input.model === undefined ? {} : { model: input.model })
       });
     } catch (error) {
@@ -3638,7 +4136,7 @@ export class ChatService {
           assistantMessageId: input.assistantMessageId,
           error: error instanceof Error ? error.message : String(error)
         },
-        'Unable to emit minimal assistant progress payload'
+        'Unable to emit lightweight assistant progress payload'
       );
     }
   }
@@ -3707,6 +4205,9 @@ export class ChatService {
     toolInvocations: ToolInvocation[];
     contextSources: ContextSource[];
   }): void {
+    const toolInvocationCount = input.toolInvocations.length;
+    const contextSourceCount = input.contextSources.length;
+
     try {
       this.repository.updateMessage(input.assistantMessageId, {
         content: input.content,
@@ -3742,8 +4243,8 @@ export class ChatService {
         doneReason: input.doneReason,
         ...(input.model === undefined ? {} : { model: input.model }),
         routeTrace: input.routeTrace,
-        toolInvocations: input.toolInvocations,
-        contextSources: input.contextSources,
+        toolInvocationCount,
+        contextSourceCount,
         usage: input.usage
       });
       return;
@@ -3753,8 +4254,8 @@ export class ChatService {
           conversationId: input.conversationId,
           assistantMessageId: input.assistantMessageId,
           error: error instanceof Error ? error.message : String(error),
-          toolInvocationCount: input.toolInvocations.length,
-          contextSourceCount: input.contextSources.length
+          toolInvocationCount,
+          contextSourceCount
         },
         'Unable to emit full assistant completion payload; retrying with minimal payload'
       );
@@ -3767,6 +4268,8 @@ export class ChatService {
         assistantMessageId: input.assistantMessageId,
         content: input.content,
         doneReason: input.doneReason,
+        toolInvocationCount,
+        contextSourceCount,
         ...(input.model === undefined ? {} : { model: input.model })
       });
     } catch (error) {
@@ -4564,18 +5067,27 @@ export class ChatService {
     return resolvedRootPath;
   }
 
-  private decorateMessages(messages: StoredMessage[]): StoredMessage[] {
-    return this.turnMetadataService.decorateMessages(messages);
+  private decorateMessages(
+    messages: StoredMessage[],
+    options?: { includeArtifacts?: boolean }
+  ): StoredMessage[] {
+    return this.turnMetadataService.decorateMessages(messages, {
+      includeToolInvocations: options?.includeArtifacts ?? true,
+      includeContextSources: options?.includeArtifacts ?? true
+    });
   }
 
-  private decorateMessage(messageId: string): StoredMessage {
+  private decorateMessage(
+    messageId: string,
+    options?: { includeArtifacts?: boolean }
+  ): StoredMessage {
     const message = this.repository.getMessage(messageId);
 
     if (!message) {
       throw new Error(`Message ${messageId} was not found.`);
     }
 
-    return this.decorateMessages([message])[0] ?? message;
+    return this.decorateMessages([message], options)[0] ?? message;
   }
 
   private isKnownLocalFilePath(normalizedPath: string): boolean {

@@ -210,8 +210,12 @@ const mockApi = {
     listConversations: vi.fn(),
     searchConversations: vi.fn(),
     getConversationMessages: vi.fn(),
+    getMessage: vi.fn().mockResolvedValue(null),
     listTools: vi.fn(),
     listSkills: vi.fn(),
+    createSkill: vi.fn(),
+    updateSkill: vi.fn(),
+    deleteSkill: vi.fn(),
     listKnowledgeDocuments: vi.fn(),
     importWorkspaceKnowledge: vi.fn(),
     importConversation: vi.fn(),
@@ -437,6 +441,13 @@ describe('ChatPage', () => {
     render(<App />);
 
     expect(await screen.findAllByRole('button', { name: 'Settings' })).toHaveLength(1);
+  });
+
+  it('does not render the legacy All workspace filter', async () => {
+    render(<App />);
+
+    expect(await screen.findByRole('button', { name: '+ Workspace' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'All' })).not.toBeInTheDocument();
   });
 
   it('does not duplicate the active chat heading inside the transcript', async () => {
@@ -791,6 +802,47 @@ describe('ChatPage', () => {
     });
   });
 
+  it('opens workspace actions on right click', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    render(<App />);
+
+    fireEvent.contextMenu(await screen.findByRole('button', { name: workspace.name }));
+
+    expect(screen.getByRole('menu', { name: 'Workspace actions' })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: 'Open workspace' })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: 'Connect folder' })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: 'Delete workspace' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete workspace' }));
+
+    await waitFor(() => {
+      expect(mockApi.chat.deleteWorkspace).toHaveBeenCalledWith({
+        workspaceId: workspace.id
+      });
+    });
+  });
+
+  it('connects a folder to an existing workspace from the workspace context menu', async () => {
+    mockApi.chat.updateWorkspaceRoot.mockResolvedValue({
+      ...workspace,
+      rootPath: 'E:/Projects/demo-app'
+    });
+
+    render(<App />);
+
+    fireEvent.contextMenu(await screen.findByRole('button', { name: workspace.name }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Connect folder' }));
+
+    await waitFor(() => {
+      expect(mockApi.chat.pickWorkspaceDirectory).toHaveBeenCalledTimes(1);
+      expect(mockApi.chat.updateWorkspaceRoot).toHaveBeenCalledWith({
+        workspaceId: workspace.id,
+        rootPath: 'E:/Projects/demo-app'
+      });
+    });
+  });
+
   it('calls deleteConversation for a chat that has associated image jobs', async () => {
     mockApi.chat.listConversations.mockResolvedValue([conversation]);
     mockApi.chat.getConversationMessages.mockResolvedValue([userMessage]);
@@ -811,7 +863,61 @@ describe('ChatPage', () => {
     });
   });
 
-  it('connects a local folder to the active workspace', async () => {
+  it('opens chat actions on right click', async () => {
+    mockApi.chat.listConversations.mockResolvedValue([conversation]);
+    mockApi.chat.getConversationMessages.mockResolvedValue([userMessage, assistantMessage]);
+
+    render(<App />);
+
+    fireEvent.contextMenu((await screen.findAllByText(conversation.title))[0]!);
+
+    expect(screen.getByRole('menu', { name: 'Chat actions' })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: 'Open chat' })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: 'Delete chat' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete chat' }));
+
+    await waitFor(() => {
+      expect(mockApi.chat.deleteConversation).toHaveBeenCalledWith({
+        conversationId: conversation.id
+      });
+    });
+  });
+
+  it('creates a workspace only after a folder is selected', async () => {
+    const newWorkspace = {
+      ...workspace,
+      id: '50000000-0000-4000-8000-000000000099',
+      name: 'Frontend',
+      rootPath: 'E:/Projects/demo-app'
+    };
+
+    mockApi.chat.createWorkspace.mockResolvedValue(newWorkspace);
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole('button', { name: '+ Workspace' }));
+    fireEvent.change(screen.getByLabelText('Workspace name'), {
+      target: { value: 'Frontend' }
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Workspace folder' }));
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Workspace folder' })).toHaveTextContent(
+        'E:/Projects/demo-app'
+      );
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }));
+
+    await waitFor(() => {
+      expect(mockApi.chat.pickWorkspaceDirectory).toHaveBeenCalledTimes(1);
+      expect(mockApi.chat.createWorkspace).toHaveBeenCalledWith({
+        name: 'Frontend',
+        rootPath: 'E:/Projects/demo-app'
+      });
+    });
+  });
+
+  it('does not expose folder rebinding actions from the workspace menu', async () => {
     render(<App />);
 
     fireEvent.click(
@@ -819,19 +925,9 @@ describe('ChatPage', () => {
         name: 'Open workspace settings'
       })
     );
-    fireEvent.click(
-      await screen.findByRole('menuitem', {
-        name: 'Connect folder'
-      })
-    );
 
-    await waitFor(() => {
-      expect(mockApi.chat.pickWorkspaceDirectory).toHaveBeenCalledTimes(1);
-      expect(mockApi.chat.updateWorkspaceRoot).toHaveBeenCalledWith({
-        workspaceId: workspace.id,
-        rootPath: 'E:/Projects/demo-app'
-      });
-    });
+    expect(screen.getByRole('menuitem', { name: 'Add docs' })).toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: /folder/i })).not.toBeInTheDocument();
   });
 
   it('starts a fresh conversation inside a newly created workspace', async () => {
@@ -839,7 +935,7 @@ describe('ChatPage', () => {
       ...workspace,
       id: '50000000-0000-4000-8000-000000000099',
       name: 'Frontend',
-      rootPath: null
+      rootPath: 'E:/Projects/demo-app'
     };
 
     mockApi.chat.listConversations.mockResolvedValue([conversation]);
@@ -852,11 +948,18 @@ describe('ChatPage', () => {
     fireEvent.change(screen.getByLabelText('Workspace name'), {
       target: { value: 'Frontend' }
     });
+    fireEvent.click(screen.getByRole('button', { name: 'Workspace folder' }));
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Workspace folder' })).toHaveTextContent(
+        'E:/Projects/demo-app'
+      );
+    });
     fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }));
 
     await waitFor(() => {
       expect(mockApi.chat.createWorkspace).toHaveBeenCalledWith({
-        name: 'Frontend'
+        name: 'Frontend',
+        rootPath: 'E:/Projects/demo-app'
       });
     });
 

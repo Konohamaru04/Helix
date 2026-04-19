@@ -23,9 +23,7 @@ interface ChatComposerProps {
   onAttach: () => Promise<void>;
   onEnterImageMode: () => void;
   onExitImageMode: () => void;
-  onConfigureWorkspaceFolder: () => Promise<void>;
   onImportWorkspaceKnowledge: () => Promise<void>;
-  onDisconnectWorkspaceFolder: (() => Promise<void>) | undefined;
   onRemoveAttachment: (attachmentId: string) => void;
   onCancelEdit: () => void;
   onSubmit: () => Promise<void>;
@@ -84,19 +82,9 @@ export function ChatComposer(props: ChatComposerProps) {
     textareaRef.current?.focus();
   }
 
-  async function handleWorkspaceFolderClick() {
-    setActiveMenu(null);
-    await props.onConfigureWorkspaceFolder();
-  }
-
   async function handleImportKnowledgeClick() {
     setActiveMenu(null);
     await props.onImportWorkspaceKnowledge();
-  }
-
-  async function handleDisconnectWorkspaceClick() {
-    setActiveMenu(null);
-    await props.onDisconnectWorkspaceFolder?.();
   }
   const visibleSubmitLabel =
     props.submitLabel ??
@@ -305,8 +293,8 @@ export function ChatComposer(props: ChatComposerProps) {
                       </p>
                       <p className="mt-1 text-xs text-slate-400">
                         {props.workspaceRootPath
-                          ? 'Project folder connected for relative tool paths.'
-                          : 'Connect a folder and add docs without covering the transcript.'}
+                          ? props.workspaceRootPath
+                          : 'This workspace has no folder binding. New workspaces now require a folder during creation.'}
                       </p>
                       <p className="mt-1 text-xs text-slate-500">
                         {props.knowledgeDocumentCount} knowledge document
@@ -318,16 +306,6 @@ export function ChatComposer(props: ChatComposerProps) {
                       <button
                         className="flex w-full items-center rounded-xl px-3 py-2 text-left text-sm text-slate-100 transition hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
                         onClick={() => {
-                          void handleWorkspaceFolderClick();
-                        }}
-                        role="menuitem"
-                        type="button"
-                      >
-                        {props.workspaceRootPath ? 'Change folder' : 'Connect folder'}
-                      </button>
-                      <button
-                        className="flex w-full items-center rounded-xl px-3 py-2 text-left text-sm text-slate-100 transition hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
-                        onClick={() => {
                           void handleImportKnowledgeClick();
                         }}
                         role="menuitem"
@@ -335,18 +313,6 @@ export function ChatComposer(props: ChatComposerProps) {
                       >
                         Add docs
                       </button>
-                      {props.workspaceRootPath && props.onDisconnectWorkspaceFolder ? (
-                        <button
-                          className="flex w-full items-center rounded-xl px-3 py-2 text-left text-sm text-rose-100 transition hover:bg-rose-500/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-300"
-                          onClick={() => {
-                            void handleDisconnectWorkspaceClick();
-                          }}
-                          role="menuitem"
-                          type="button"
-                        >
-                          Disconnect folder
-                        </button>
-                      ) : null}
                     </div>
                   </div>
                 ) : null}

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { GenerationJob, StoredMessage } from '@bridge/ipc/contracts';
 import { GenerationThreadItem } from '@renderer/components/generation-thread-item';
 import { MessageBubble } from '@renderer/components/message-bubble';
@@ -12,12 +12,66 @@ interface MessageListProps {
   onEditMessage?: (message: StoredMessage) => void;
   onRegenerateMessage?: (message: StoredMessage) => void;
   onTogglePin?: (message: StoredMessage, pinned: boolean) => void;
+  onLoadMessageArtifacts?: (messageId: string) => void;
   onCancelGenerationJob?: (jobId: string) => void;
   onRetryGenerationJob?: (jobId: string) => void;
   streaming: boolean;
 }
 
 const AUTO_SCROLL_THRESHOLD_PX = 96;
+
+const EMPTY_STATE_TIPS = [
+  {
+    eyebrow: 'Workspace tip',
+    title: 'Bind a folder to this workspace',
+    body: 'Connect a local project folder from the workspace chip menu so tools and imports stay scoped to the right files.'
+  },
+  {
+    eyebrow: 'Knowledge tip',
+    title: 'Import files for grounded answers',
+    body: 'Text-like attachments and workspace imports become searchable context that can show up later in Sources.'
+  },
+  {
+    eyebrow: 'Skills tip',
+    title: 'Shape behavior with local skills',
+    body: 'Open the Skills drawer from the status bar to create or edit reusable prompts that routing can pick up immediately.'
+  },
+  {
+    eyebrow: 'Agents tip',
+    title: 'Inspect background agent sessions',
+    body: 'The Agents drawer shows sub-agent transcripts, current status, and team membership after agentic tool runs.'
+  },
+  {
+    eyebrow: 'Memory tip',
+    title: 'Pin messages that must stay in context',
+    body: 'Important assistant messages can be pinned so follow-up turns keep key facts close without repeating yourself.'
+  },
+  {
+    eyebrow: 'Queue tip',
+    title: 'Track long-running work from Queue',
+    body: 'Image jobs stream inline in chat and stay recoverable from the global queue drawer if you need to retry or inspect them.'
+  },
+  {
+    eyebrow: 'Trace tip',
+    title: 'Tools and Sources stay lightweight by default',
+    body: 'Heavy tool traces and source excerpts load only when you expand a specific message, which keeps large chats responsive.'
+  },
+  {
+    eyebrow: 'Routing tip',
+    title: 'Leave the model on Auto for normal work',
+    body: 'The bridge can route between general chat, coding, vision, grounded answers, and tool-assisted flows before the reply starts.'
+  }
+] as const;
+
+function pickRandomTipIndex(previousIndex: number | null = null) {
+  const nextIndex = Math.floor(Math.random() * EMPTY_STATE_TIPS.length);
+
+  if (EMPTY_STATE_TIPS.length <= 1 || previousIndex === null || nextIndex !== previousIndex) {
+    return nextIndex;
+  }
+
+  return (nextIndex + 1) % EMPTY_STATE_TIPS.length;
+}
 
 function scrollDistanceFromBottom(element: HTMLElement) {
   return element.scrollHeight - element.scrollTop - element.clientHeight;
@@ -57,6 +111,12 @@ export function MessageList(props: MessageListProps) {
       return left.sequence - right.sequence;
     });
   }, [props.generationJobs, props.messages]);
+  const emptyStateVisible = timelineItems.length === 0 && !props.pendingLabel;
+  const [emptyTipIndex, setEmptyTipIndex] = useState(() => pickRandomTipIndex());
+  const lastTipIndexRef = useRef<number>(emptyTipIndex);
+  const visibleEmptyStateKeyRef = useRef<string | null>(
+    emptyStateVisible ? conversationKey : null
+  );
   const lastTimelineSignature = useMemo(() => {
     const lastItem = timelineItems.at(-1);
 
@@ -87,10 +147,27 @@ export function MessageList(props: MessageListProps) {
   const lastAssistantMessageId = [...props.messages]
     .reverse()
     .find((message) => message.role === 'assistant')?.id;
+  const emptyStateTip = EMPTY_STATE_TIPS[emptyTipIndex] ?? EMPTY_STATE_TIPS[0];
 
   useEffect(() => {
     followOutputRef.current = true;
   }, [conversationKey]);
+
+  useEffect(() => {
+    if (!emptyStateVisible) {
+      visibleEmptyStateKeyRef.current = null;
+      return;
+    }
+
+    if (visibleEmptyStateKeyRef.current === conversationKey) {
+      return;
+    }
+
+    const nextTipIndex = pickRandomTipIndex(lastTipIndexRef.current);
+    lastTipIndexRef.current = nextTipIndex;
+    visibleEmptyStateKeyRef.current = conversationKey;
+    setEmptyTipIndex(nextTipIndex);
+  }, [conversationKey, emptyStateVisible]);
 
   useEffect(() => {
     const transcript = transcriptRef.current;
@@ -154,14 +231,13 @@ export function MessageList(props: MessageListProps) {
         ) : (
           <div className="mx-auto flex h-full max-w-2xl flex-col items-center justify-center rounded-[2rem] border border-dashed border-white/10 bg-slate-900/40 px-10 py-14 text-center shadow-panel">
             <p className="text-sm uppercase tracking-[0.3em] text-cyan-200/70">
-              Local-first chat
+              {emptyStateTip.eyebrow}
             </p>
             <h2 className="mt-4 text-4xl font-semibold text-white">
-              Start a local conversation
+              {emptyStateTip.title}
             </h2>
             <p className="mt-4 max-w-xl text-base leading-7 text-slate-300">
-              Workspaces, knowledge import, routing, tools, and pinned memory all
-              come alive once you send the first message in this workspace.
+              {emptyStateTip.body}
             </p>
           </div>
         )
@@ -206,6 +282,9 @@ export function MessageList(props: MessageListProps) {
                   canRegenerate={canRegenerate}
                   message={message}
                   {...(props.onEditMessage ? { onEdit: props.onEditMessage } : {})}
+                  {...(props.onLoadMessageArtifacts
+                    ? { onLoadArtifacts: props.onLoadMessageArtifacts }
+                    : {})}
                   {...(props.onTogglePin ? { onTogglePin: props.onTogglePin } : {})}
                   {...(props.onRegenerateMessage
                     ? { onRegenerate: props.onRegenerateMessage }

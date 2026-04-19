@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import '@testing-library/jest-dom/vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { StatusBar } from '@renderer/components/status-bar';
 
@@ -9,8 +9,10 @@ describe('StatusBar', () => {
   it('renders GPU usage as used VRAM instead of free VRAM', () => {
     render(
       <StatusBar
+        onOpenAgents={vi.fn()}
         onOpenPlan={vi.fn()}
         onOpenQueue={vi.fn()}
+        onOpenSkills={vi.fn()}
         onOpenSettings={vi.fn()}
         activeTextBackend="ollama"
         onTextBackendChange={vi.fn()}
@@ -68,5 +70,31 @@ describe('StatusBar', () => {
     );
 
     expect(screen.getByText('1024 / 16384 MiB')).toBeInTheDocument();
+  });
+
+  it('opens the agents drawer from the status bar', () => {
+    const onOpenAgents = vi.fn();
+
+    render(
+      <StatusBar
+        onOpenAgents={onOpenAgents}
+        onOpenPlan={vi.fn()}
+        onOpenQueue={vi.fn()}
+        onOpenSkills={vi.fn()}
+        onOpenSettings={vi.fn()}
+        activeTextBackend="ollama"
+        onTextBackendChange={vi.fn()}
+        selectedModel=""
+        availableModels={[]}
+        onSelectedModelChange={vi.fn()}
+        selectedThinkMode=""
+        onSelectedThinkModeChange={vi.fn()}
+        systemStatus={null}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Agents' }));
+
+    expect(onOpenAgents).toHaveBeenCalledTimes(1);
   });
 });

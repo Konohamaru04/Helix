@@ -22,8 +22,6 @@ describe('ChatComposer', () => {
         onCancelEdit={vi.fn()}
         onEnterImageMode={vi.fn()}
         onExitImageMode={vi.fn()}
-        onConfigureWorkspaceFolder={vi.fn().mockResolvedValue(undefined)}
-        onDisconnectWorkspaceFolder={vi.fn().mockResolvedValue(undefined)}
         onImportWorkspaceKnowledge={vi.fn().mockResolvedValue(undefined)}
         onPromptChange={vi.fn()}
         onRemoveAttachment={vi.fn()}
@@ -43,7 +41,7 @@ describe('ChatComposer', () => {
     ).toBeInTheDocument();
   });
 
-  it('opens the workspace menu with folder and docs actions beside the add button', () => {
+  it('opens the workspace menu with docs actions and no folder rebinding controls', () => {
     render(
       <ChatComposer
         activeWorkspaceName="General"
@@ -59,8 +57,6 @@ describe('ChatComposer', () => {
         onCancelEdit={vi.fn()}
         onEnterImageMode={vi.fn()}
         onExitImageMode={vi.fn()}
-        onConfigureWorkspaceFolder={vi.fn().mockResolvedValue(undefined)}
-        onDisconnectWorkspaceFolder={vi.fn().mockResolvedValue(undefined)}
         onImportWorkspaceKnowledge={vi.fn().mockResolvedValue(undefined)}
         onPromptChange={vi.fn()}
         onRemoveAttachment={vi.fn()}
@@ -73,9 +69,8 @@ describe('ChatComposer', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Open workspace settings' }));
 
-    expect(screen.getByRole('menuitem', { name: 'Change folder' })).toBeInTheDocument();
     expect(screen.getByRole('menuitem', { name: 'Add docs' })).toBeInTheDocument();
-    expect(screen.getByRole('menuitem', { name: 'Disconnect folder' })).toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: /folder/i })).not.toBeInTheDocument();
   });
 
   it('shows a visible processing indicator while a submit is starting', () => {
@@ -91,8 +86,6 @@ describe('ChatComposer', () => {
         knowledgeDocumentCount={0}
         onAttach={vi.fn().mockResolvedValue(undefined)}
         onCancelEdit={vi.fn()}
-        onConfigureWorkspaceFolder={vi.fn().mockResolvedValue(undefined)}
-        onDisconnectWorkspaceFolder={vi.fn().mockResolvedValue(undefined)}
         onEnterImageMode={vi.fn()}
         onExitImageMode={vi.fn()}
         onImportWorkspaceKnowledge={vi.fn().mockResolvedValue(undefined)}
@@ -129,8 +122,6 @@ describe('ChatComposer', () => {
         knowledgeDocumentCount={0}
         onAttach={vi.fn().mockResolvedValue(undefined)}
         onCancelEdit={vi.fn()}
-        onConfigureWorkspaceFolder={vi.fn().mockResolvedValue(undefined)}
-        onDisconnectWorkspaceFolder={vi.fn().mockResolvedValue(undefined)}
         onEnterImageMode={vi.fn()}
         onExitImageMode={vi.fn()}
         onImportWorkspaceKnowledge={vi.fn().mockResolvedValue(undefined)}

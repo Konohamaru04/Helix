@@ -60,21 +60,37 @@ interface ContextSourceRow {
   score: number | null;
 }
 
+interface DecorateMessagesOptions {
+  includeToolInvocations?: boolean;
+  includeContextSources?: boolean;
+}
+
 export class TurnMetadataService {
   constructor(private readonly database: DatabaseManager) {}
 
-  decorateMessages(messages: StoredMessage[]): StoredMessage[] {
+  decorateMessages(
+    messages: StoredMessage[],
+    options: DecorateMessagesOptions = {}
+  ): StoredMessage[] {
     const messageIds = messages.map((message) => message.id);
 
     if (messageIds.length === 0) {
       return messages;
     }
 
+    const includeToolInvocations = options.includeToolInvocations ?? true;
+    const includeContextSources = options.includeContextSources ?? true;
     const pinnedMessageIds = this.listPinnedMessageIdsForMessages(messageIds);
     const routeTraceByMessageId = this.getRouteTraceByMessageIds(messageIds);
     const usageByMessageId = this.getUsageByMessageIds(messageIds);
-    const toolInvocationsByMessageId = this.getToolInvocationsByMessageIds(messageIds);
-    const contextSourcesByMessageId = this.getContextSourcesByMessageIds(messageIds);
+    const toolInvocationCountByMessageId = this.getToolInvocationCountByMessageIds(messageIds);
+    const contextSourceCountByMessageId = this.getContextSourceCountByMessageIds(messageIds);
+    const toolInvocationsByMessageId = includeToolInvocations
+      ? this.getToolInvocationsByMessageIds(messageIds)
+      : new Map<string, ToolInvocation[]>();
+    const contextSourcesByMessageId = includeContextSources
+      ? this.getContextSourcesByMessageIds(messageIds)
+      : new Map<string, ContextSource[]>();
 
     return messages.map((message) =>
       storedMessageSchema.parse({
@@ -82,8 +98,20 @@ export class TurnMetadataService {
         pinned: pinnedMessageIds.has(message.id),
         routeTrace: routeTraceByMessageId.get(message.id) ?? null,
         usage: usageByMessageId.get(message.id) ?? null,
-        toolInvocations: toolInvocationsByMessageId.get(message.id) ?? [],
-        contextSources: contextSourcesByMessageId.get(message.id) ?? []
+        toolInvocationCount:
+          toolInvocationCountByMessageId.get(message.id) ??
+          toolInvocationsByMessageId.get(message.id)?.length ??
+          0,
+        ...(includeToolInvocations
+          ? { toolInvocations: toolInvocationsByMessageId.get(message.id) ?? [] }
+          : {}),
+        contextSourceCount:
+          contextSourceCountByMessageId.get(message.id) ??
+          contextSourcesByMessageId.get(message.id)?.length ??
+          0,
+        ...(includeContextSources
+          ? { contextSources: contextSourcesByMessageId.get(message.id) ?? [] }
+          : {})
       })
     );
   }
@@ -400,6 +428,28 @@ export class TurnMetadataService {
     }, new Map());
   }
 
+  private getToolInvocationCountByMessageIds(messageIds: string[]): Map<string, number> {
+    const placeholders = messageIds.map(() => '?').join(', ');
+    const rows = this.database.connection
+      .prepare(`
+        SELECT
+          message_id,
+          COUNT(*) AS tool_invocation_count
+        FROM tool_invocations
+        WHERE message_id IN (${placeholders})
+        GROUP BY message_id
+      `)
+      .all(...messageIds) as Array<{
+      message_id: string;
+      tool_invocation_count: number;
+    }>;
+
+    return rows.reduce<Map<string, number>>((accumulator, row) => {
+      accumulator.set(row.message_id, row.tool_invocation_count);
+      return accumulator;
+    }, new Map());
+  }
+
   private getToolInvocationsByMessageIds(messageIds: string[]): Map<string, ToolInvocation[]> {
     const placeholders = messageIds.map(() => '?').join(', ');
     const rows = this.database.connection
@@ -437,6 +487,28 @@ export class TurnMetadataService {
       });
 
       accumulator.set(row.message_id, [...(accumulator.get(row.message_id) ?? []), invocation]);
+      return accumulator;
+    }, new Map());
+  }
+
+  private getContextSourceCountByMessageIds(messageIds: string[]): Map<string, number> {
+    const placeholders = messageIds.map(() => '?').join(', ');
+    const rows = this.database.connection
+      .prepare(`
+        SELECT
+          message_id,
+          COUNT(*) AS context_source_count
+        FROM message_context_sources
+        WHERE message_id IN (${placeholders})
+        GROUP BY message_id
+      `)
+      .all(...messageIds) as Array<{
+      message_id: string;
+      context_source_count: number;
+    }>;
+
+    return rows.reduce<Map<string, number>>((accumulator, row) => {
+      accumulator.set(row.message_id, row.context_source_count);
       return accumulator;
     }, new Map());
   }

@@ -1,10 +1,13 @@
-import { type ReactNode, useState } from 'react';
+import { memo, type MouseEvent, type ReactNode, useEffect, useState } from 'react';
 import type { StoredMessage } from '@bridge/ipc/contracts';
 import { AttachmentCard } from '@renderer/components/attachment-card';
+import { ContextMenu, type ContextMenuItem } from '@renderer/components/context-menu';
 import { formatTimestamp } from '@renderer/lib/format';
 import { parseAssistantContent } from '@renderer/lib/message-content';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+
+const ARTIFACT_PAGE_SIZE = 25;
 
 interface MessageBubbleProps {
   message: StoredMessage;
@@ -14,6 +17,7 @@ interface MessageBubbleProps {
   onEdit?: (message: StoredMessage) => void;
   onRegenerate?: (message: StoredMessage) => void;
   onTogglePin?: (message: StoredMessage, pinned: boolean) => void;
+  onLoadArtifacts?: (messageId: string) => void;
 }
 
 function formatRouteStrategy(strategy: NonNullable<StoredMessage['routeTrace']>['strategy']) {
@@ -132,78 +136,98 @@ function MarkdownContent(props: { content: string }) {
   );
 }
 
+function ExpandButton(props: {
+  open: boolean;
+  expandLabel: string;
+  collapseLabel: string;
+  onClick: () => void;
+  secondaryText?: string;
+  title: string;
+}) {
+  return (
+    <button
+      aria-expanded={props.open}
+      aria-label={props.open ? props.collapseLabel : props.expandLabel}
+      className="flex w-full cursor-pointer items-center justify-between gap-3 rounded-lg border border-white/10 bg-slate-950/55 px-4 py-2 text-left transition hover:bg-slate-950/80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
+      onClick={props.onClick}
+      type="button"
+    >
+      <div className="min-w-0">
+        <p className="text-xs font-medium uppercase tracking-[0.2em] text-cyan-200/75">
+          {props.title}
+        </p>
+        {props.secondaryText ? (
+          <p className="mt-1 text-xs text-slate-400">{props.secondaryText}</p>
+        ) : null}
+      </div>
+      <span className="flex items-center gap-1 text-[11px] font-medium uppercase tracking-[0.16em] text-slate-200">
+        {props.open ? (
+          <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" />
+          </svg>
+        ) : (
+          <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
+        )}
+        {props.open ? 'Collapse' : 'Expand'}
+      </span>
+    </button>
+  );
+}
+
 function ThinkingBlock(props: { content: string; defaultOpen?: boolean }) {
   const [open, setOpen] = useState(Boolean(props.defaultOpen));
 
   return (
-    <details open={open} onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}>
-      <summary className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border border-white/10 bg-slate-950/70 px-4 py-2 transition-colors duration-150 hover:bg-slate-950/90">
-        <p className="text-xs font-medium uppercase tracking-[0.2em] text-cyan-200/80">
-          Thinking
-        </p>
-        <span className="flex items-center gap-1 text-[11px] font-medium uppercase tracking-[0.16em] text-slate-200">
-          {open ? (
-            <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" /></svg>
-          ) : (
-            <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg>
-          )}
-          {open ? 'Collapse' : 'Expand'}
-        </span>
-      </summary>
-      <div className="whitespace-pre-wrap pb-2 pt-3 text-sm leading-7 text-slate-300">
-        {props.content}
-      </div>
-    </details>
+    <section>
+      <ExpandButton
+        collapseLabel="Collapse thinking"
+        expandLabel="Expand thinking"
+        onClick={() => setOpen((current) => !current)}
+        open={open}
+        title="Thinking"
+      />
+      {open ? (
+        <div className="whitespace-pre-wrap pb-2 pt-3 text-sm leading-7 text-slate-300">
+          {props.content}
+        </div>
+      ) : null}
+    </section>
   );
 }
 
 function MetadataSection(props: {
   title: string;
   children: ReactNode;
-  collapsible?: boolean;
   defaultOpen?: boolean;
   summary?: string;
+  onToggle?: (open: boolean) => void;
 }) {
-  const collapsible = Boolean(props.collapsible);
-  const [open, setOpen] = useState(collapsible ? Boolean(props.defaultOpen) : true);
+  const [open, setOpen] = useState(Boolean(props.defaultOpen));
+  const { onToggle, summary, title } = props;
 
-  if (collapsible) {
-    return (
-      <details open={open} onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}>
-        <summary className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border border-white/10 bg-slate-950/55 px-4 py-2 hover:bg-slate-950/80">
-          <div className="min-w-0">
-            <p className="text-xs font-medium uppercase tracking-[0.2em] text-cyan-200/75">
-              {props.title}
-            </p>
-            {props.summary ? (
-              <p className="mt-1 text-xs text-slate-400">{props.summary}</p>
-            ) : null}
-          </div>
-          <span className="flex items-center gap-1 text-[11px] font-medium uppercase tracking-[0.16em] text-slate-200">
-            {open ? (
-              <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" /></svg>
-            ) : (
-              <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg>
-            )}
-            {open ? 'Collapse' : 'Expand'}
-          </span>
-        </summary>
-        <div className="mt-3">{props.children}</div>
-      </details>
-    );
+  useEffect(() => {
+    if (open) {
+      onToggle?.(true);
+    }
+  }, [open, onToggle, summary]);
+
+  function handleToggle() {
+    setOpen((current) => !current);
   }
 
   return (
     <section>
-      <div className="flex items-center gap-3">
-        <p className="text-xs font-medium uppercase tracking-[0.2em] text-cyan-200/75">
-          {props.title}
-        </p>
-        {props.summary ? (
-          <p className="text-xs text-slate-400">{props.summary}</p>
-        ) : null}
-      </div>
-      <div className="mt-3">{props.children}</div>
+      <ExpandButton
+        collapseLabel={`Collapse ${title}`}
+        expandLabel={`Expand ${title}`}
+        onClick={handleToggle}
+        open={open}
+        title={title}
+        {...(summary === undefined ? {} : { secondaryText: summary })}
+      />
+      {open ? <div className="mt-3">{props.children}</div> : null}
     </section>
   );
 }
@@ -212,12 +236,17 @@ function ToolInvocationCard(props: {
   invocation: NonNullable<StoredMessage['toolInvocations']>[number];
 }) {
   const { invocation } = props;
-  const hasDetailedOutput = Boolean(invocation.outputText?.trim());
   const [open, setOpen] = useState(false);
 
   return (
-    <details open={open} onToggle={(e) => { e.stopPropagation(); setOpen((e.target as HTMLDetailsElement).open); }}>
-      <summary onClick={(e) => e.stopPropagation()} className="flex cursor-pointer flex-wrap items-center justify-between gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 hover:bg-white/[0.06]">
+    <section className="rounded-lg border border-white/10 bg-white/[0.03]">
+      <button
+        aria-expanded={open}
+        aria-label={open ? `Collapse ${invocation.displayName} output` : `Expand ${invocation.displayName} output`}
+        className="flex w-full cursor-pointer flex-wrap items-center justify-between gap-2 px-3 py-2 text-left transition hover:bg-white/[0.03] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
+        onClick={() => setOpen((current) => !current)}
+        type="button"
+      >
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <p className="text-sm font-medium text-slate-100">{invocation.displayName}</p>
           <span
@@ -232,13 +261,17 @@ function ToolInvocationCard(props: {
         </div>
         <span className="flex items-center gap-1 text-[11px] font-medium uppercase tracking-[0.16em] text-slate-400">
           {open ? (
-            <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" /></svg>
+            <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" />
+            </svg>
           ) : (
-            <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg>
+            <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+            </svg>
           )}
           {open ? 'Collapse' : 'Expand'}
         </span>
-      </summary>
+      </button>
       <div className="px-3 pb-2 pt-1">
         <p className="text-xs text-slate-400">Input: {invocation.inputSummary}</p>
         {invocation.outputSummary ? (
@@ -248,33 +281,143 @@ function ToolInvocationCard(props: {
           <p className="mt-1 text-xs text-rose-200">Error: {invocation.errorMessage}</p>
         ) : null}
       </div>
-      {invocation.outputText ? (
+      {open && invocation.outputText ? (
         <div className="border-t border-white/5 px-3 py-3">
           <MarkdownContent content={invocation.outputText} />
         </div>
       ) : null}
-    </details>
+    </section>
   );
 }
 
-export function MessageBubble(props: MessageBubbleProps) {
+function StreamingAnswer(props: { content: string }) {
+  return (
+    <div className="whitespace-pre-wrap break-words rounded-lg border border-white/10 bg-white/[0.02] px-4 py-3 text-sm leading-7 text-slate-200">
+      {props.content}
+    </div>
+  );
+}
+
+function LoadMoreArtifactsButton(props: {
+  remainingCount: number;
+  kind: 'tool' | 'source';
+  onClick: () => void;
+}) {
+  return (
+    <div className="flex justify-center pt-1">
+      <button
+        className="rounded-full border border-white/10 px-3 py-1.5 text-xs font-medium uppercase tracking-[0.16em] text-slate-200 transition hover:border-white/20 hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
+        onClick={props.onClick}
+        type="button"
+      >
+        Show {props.remainingCount} more {props.kind}
+        {props.remainingCount === 1 ? '' : 's'}
+      </button>
+    </div>
+  );
+}
+
+function MessageBubbleComponent(props: MessageBubbleProps) {
   const { message } = props;
   const assistant = message.role === 'assistant';
   const parsedAssistantContent = assistant ? parseAssistantContent(message.content) : null;
   const assistantAnswer = parsedAssistantContent?.answer ?? '';
   const thinkingBlocks = parsedAssistantContent?.thinkingBlocks ?? [];
-  const activeToolCount = message.toolInvocations?.length ?? 0;
+  const activeToolCount = message.toolInvocationCount ?? message.toolInvocations?.length ?? 0;
+  const activeSourceCount = message.contextSourceCount ?? message.contextSources?.length ?? 0;
+  const [visibleToolCount, setVisibleToolCount] = useState(ARTIFACT_PAGE_SIZE);
+  const [visibleSourceCount, setVisibleSourceCount] = useState(ARTIFACT_PAGE_SIZE);
+  const [contextMenuPosition, setContextMenuPosition] = useState<{
+    x: number;
+    y: number;
+  } | null>(null);
+  const messageActionItems: ContextMenuItem[] = [
+    ...(props.canEdit && props.onEdit
+      ? [
+          {
+            key: 'edit',
+            label: 'Edit & resend',
+            onSelect: () => props.onEdit?.(message)
+          }
+        ]
+      : []),
+    ...(props.canRegenerate && props.onRegenerate
+      ? [
+          {
+            key: 'regenerate',
+            label: message.status === 'failed' ? 'Retry response' : 'Regenerate',
+            onSelect: () => props.onRegenerate?.(message)
+          }
+        ]
+      : []),
+    ...(props.canPin && props.onTogglePin
+      ? [
+          {
+            key: 'pin',
+            label: message.pinned ? 'Unpin' : 'Pin',
+            onSelect: () => props.onTogglePin?.(message, !message.pinned)
+          }
+        ]
+      : [])
+  ];
+
+  useEffect(() => {
+    setVisibleToolCount(ARTIFACT_PAGE_SIZE);
+    setVisibleSourceCount(ARTIFACT_PAGE_SIZE);
+    setContextMenuPosition(null);
+  }, [message.id]);
+
+  function handleLoadTools(open: boolean) {
+    if (open && activeToolCount > 0 && message.toolInvocations === undefined) {
+      props.onLoadArtifacts?.(message.id);
+    }
+  }
+
+  function handleLoadSources(open: boolean) {
+    if (open && activeSourceCount > 0 && message.contextSources === undefined) {
+      props.onLoadArtifacts?.(message.id);
+    }
+  }
+
+  const visibleToolInvocations = message.toolInvocations?.slice(0, visibleToolCount) ?? [];
+  const remainingToolCount = Math.max(
+    0,
+    (message.toolInvocations?.length ?? 0) - visibleToolInvocations.length
+  );
+  const visibleContextSources = message.contextSources?.slice(0, visibleSourceCount) ?? [];
+  const remainingSourceCount = Math.max(
+    0,
+    (message.contextSources?.length ?? 0) - visibleContextSources.length
+  );
+
+  function handleContextMenu(event: MouseEvent<HTMLElement>) {
+    if (messageActionItems.length === 0) {
+      return;
+    }
+
+    if (window.getSelection?.()?.toString().trim()) {
+      return;
+    }
+
+    event.preventDefault();
+    setContextMenuPosition({
+      x: event.clientX,
+      y: event.clientY
+    });
+  }
 
   return (
-    <article
-      className={`animate-fade-in-up min-w-0 overflow-hidden ${
-        assistant
-          ? 'text-slate-100'
-          : message.role === 'user'
-            ? 'rounded-[1.75rem] border border-orange-300/20 bg-orange-500/10 px-5 py-4 shadow-panel text-orange-50'
-            : 'rounded-[1.75rem] border border-white/10 bg-slate-950/90 px-5 py-4 shadow-panel text-slate-200'
-      }`}
-    >
+    <>
+      <article
+        className={`animate-fade-in-up min-w-0 overflow-hidden ${
+          assistant
+            ? 'text-slate-100'
+            : message.role === 'user'
+              ? 'rounded-[1.75rem] border border-orange-300/20 bg-orange-500/10 px-5 py-4 shadow-panel text-orange-50'
+              : 'rounded-[1.75rem] border border-white/10 bg-slate-950/90 px-5 py-4 shadow-panel text-slate-200'
+        }`}
+        onContextMenu={handleContextMenu}
+      >
       <div className={`flex items-start justify-between gap-4 ${assistant ? 'py-2' : ''}`}>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
@@ -342,7 +485,11 @@ export function MessageBubble(props: MessageBubbleProps) {
               ))}
 
               {assistantAnswer ? (
-                <MarkdownContent content={assistantAnswer} />
+                message.status === 'streaming' ? (
+                  <StreamingAnswer content={assistantAnswer} />
+                ) : (
+                  <MarkdownContent content={assistantAnswer} />
+                )
               ) : message.status === 'streaming' ? (
                 <div className="rounded-lg border border-dashed border-white/10 px-4 py-3 text-sm text-slate-400">
                   {activeToolCount > 0
@@ -355,56 +502,84 @@ export function MessageBubble(props: MessageBubbleProps) {
                 </div>
               ) : null}
 
-              {message.toolInvocations?.length ? (
+              {activeToolCount > 0 ? (
                 <MetadataSection
-                  title="Tools"
-                  collapsible
                   defaultOpen={false}
+                  onToggle={handleLoadTools}
                   summary={`${activeToolCount} tool${activeToolCount === 1 ? '' : 's'}`}
+                  title="Tools"
                 >
-                  <div className="space-y-3">
-                    {message.toolInvocations.map((invocation) => (
-                      <ToolInvocationCard
-                        key={invocation.id}
-                        invocation={invocation}
-                      />
-                    ))}
-                  </div>
+                  {message.toolInvocations ? (
+                    <div className="space-y-3">
+                      {visibleToolInvocations.map((invocation) => (
+                        <ToolInvocationCard
+                          key={invocation.id}
+                          invocation={invocation}
+                        />
+                      ))}
+                      {remainingToolCount > 0 ? (
+                        <LoadMoreArtifactsButton
+                          kind="tool"
+                          onClick={() =>
+                            setVisibleToolCount((current) => current + ARTIFACT_PAGE_SIZE)
+                          }
+                          remainingCount={Math.min(ARTIFACT_PAGE_SIZE, remainingToolCount)}
+                        />
+                      ) : null}
+                    </div>
+                  ) : (
+                    <p className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-sm text-slate-300">
+                      Loading tool details from local storage...
+                    </p>
+                  )}
                 </MetadataSection>
               ) : null}
 
-              {message.contextSources?.length ? (
+              {activeSourceCount > 0 ? (
                 <MetadataSection
-                  title="Sources"
-                  collapsible
                   defaultOpen={false}
-                  summary={`${message.contextSources.length} source${
-                    message.contextSources.length === 1 ? '' : 's'
-                  }`}
+                  onToggle={handleLoadSources}
+                  summary={`${activeSourceCount} source${activeSourceCount === 1 ? '' : 's'}`}
+                  title="Sources"
                 >
-                  <div className="space-y-3">
-                    {message.contextSources.map((source) => (
-                      <div
-                        key={source.id}
-                        className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2"
-                      >
-                        <div className="flex flex-wrap items-center gap-2">
-                          <p className="text-sm font-medium text-slate-100">{source.label}</p>
-                          <span className="rounded-full bg-slate-800 px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.16em] text-slate-300">
-                            {source.kind === 'pinned_message' ? 'Memory' : 'Knowledge'}
-                          </span>
-                        </div>
-                        <p className="mt-2 whitespace-pre-wrap text-xs leading-6 text-slate-300">
-                          {source.excerpt}
-                        </p>
-                        {source.sourcePath ? (
-                          <p className="mt-2 break-all text-[11px] text-slate-500">
-                            {source.sourcePath}
+                  {message.contextSources ? (
+                    <div className="space-y-3">
+                      {visibleContextSources.map((source) => (
+                        <div
+                          key={source.id}
+                          className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2"
+                        >
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="text-sm font-medium text-slate-100">{source.label}</p>
+                            <span className="rounded-full bg-slate-800 px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.16em] text-slate-300">
+                              {source.kind === 'pinned_message' ? 'Memory' : 'Knowledge'}
+                            </span>
+                          </div>
+                          <p className="mt-2 whitespace-pre-wrap text-xs leading-6 text-slate-300">
+                            {source.excerpt}
                           </p>
-                        ) : null}
-                      </div>
-                    ))}
-                  </div>
+                          {source.sourcePath ? (
+                            <p className="mt-2 break-all text-[11px] text-slate-500">
+                              {source.sourcePath}
+                            </p>
+                          ) : null}
+                        </div>
+                      ))}
+                      {remainingSourceCount > 0 ? (
+                        <LoadMoreArtifactsButton
+                          kind="source"
+                          onClick={() =>
+                            setVisibleSourceCount((current) => current + ARTIFACT_PAGE_SIZE)
+                          }
+                          remainingCount={Math.min(ARTIFACT_PAGE_SIZE, remainingSourceCount)}
+                        />
+                      ) : null}
+                    </div>
+                  ) : (
+                    <p className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-sm text-slate-300">
+                      Loading source details from local storage...
+                    </p>
+                  )}
                 </MetadataSection>
               ) : null}
             </div>
@@ -444,6 +619,30 @@ export function MessageBubble(props: MessageBubbleProps) {
           <p className="mt-1 capitalize">{message.status}</p>
         </div>
       </div>
-    </article>
+      </article>
+      {contextMenuPosition ? (
+        <ContextMenu
+          items={messageActionItems}
+          label="Message actions"
+          onClose={() => setContextMenuPosition(null)}
+          x={contextMenuPosition.x}
+          y={contextMenuPosition.y}
+        />
+      ) : null}
+    </>
   );
 }
+
+function areMessageBubblePropsEqual(
+  previous: Readonly<MessageBubbleProps>,
+  next: Readonly<MessageBubbleProps>
+) {
+  return (
+    previous.message === next.message &&
+    previous.canEdit === next.canEdit &&
+    previous.canRegenerate === next.canRegenerate &&
+    previous.canPin === next.canPin
+  );
+}
+
+export const MessageBubble = memo(MessageBubbleComponent, areMessageBubblePropsEqual);

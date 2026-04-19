@@ -489,6 +489,39 @@ describe('ChatRouter', () => {
     expect(decision.reason).toBe('workspace-lister-tool-routing');
   });
 
+  it('suppresses workspace inspection tools when no workspace folder is connected', () => {
+    const router = new ChatRouter(createLogger('router-rootless-workspace-tool-test'));
+
+    const decision = router.decide(
+      {
+        prompt: 'Show me the project structure',
+        attachments: [],
+        recentMessages: [],
+        workspaceHasKnowledge: false,
+        workspaceRootConnected: false,
+        explicitSkillId: null,
+        explicitToolId: null,
+        modelAnalysis: {
+          toolId: 'workspace-lister',
+          skillId: 'grounded',
+          needsVision: false,
+          prefersCode: false,
+          useWorkspaceKnowledge: false,
+          imageMode: 'none',
+          confidence: 0.92,
+          reason: 'inspect workspace before answering'
+        }
+      },
+      defaultUserSettings,
+      ['llama3.2:latest']
+    );
+
+    expect(decision.activeToolId).toBeNull();
+    expect(decision.strategy).toBe('skill-chat');
+    expect(decision.activeSkillId).toBe('grounded');
+    expect(decision.reason).toBe('model-skill-routing');
+  });
+
   it('routes play/open media prompts to the direct workspace opener tool', () => {
     const router = new ChatRouter(createLogger('router-workspace-opener-test'));
 

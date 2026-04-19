@@ -20,7 +20,9 @@ import {
   conversationIdSchema,
   conversationSearchResultSchema,
   conversationSummarySchema,
+  createSkillInputSchema,
   createWorkspaceInputSchema,
+  deleteSkillInputSchema,
   deleteWorkspaceInputSchema,
   deleteConversationInputSchema,
   editMessageInputSchema,
@@ -34,10 +36,11 @@ import {
   importConversationResultSchema,
   importWorkspaceKnowledgeResultSchema,
   knowledgeDocumentSchema,
-  knowledgeDocumentsInputSchema,
-  listImageGenerationModelsInputSchema,
-  listGenerationJobsInputSchema,
-  messageAttachmentSchema,
+    knowledgeDocumentsInputSchema,
+    listImageGenerationModelsInputSchema,
+    listGenerationJobsInputSchema,
+    messageIdSchema,
+    messageAttachmentSchema,
   openLocalPathInputSchema,
   pinMessageInputSchema,
   planStateSchema,
@@ -50,6 +53,7 @@ import {
   systemStatusSchema,
   teamSessionSchema,
   toolDefinitionSchema,
+  updateSkillInputSchema,
   updateWorkspaceRootInputSchema,
   updateUserSettingsSchema,
   userSettingsSchema,
@@ -396,9 +400,14 @@ export function registerIpcHandlers(context: DesktopAppContext): void {
 
   ipcMain.handle(IpcChannels.chatGetMessages, (_event, conversationId) =>
     context.chatService
-      .listMessages(conversationIdSchema.parse(conversationId))
+      .listMessagesForUi(conversationIdSchema.parse(conversationId))
       .map((message) => storedMessageSchema.parse(message))
   );
+
+  ipcMain.handle(IpcChannels.chatGetMessage, (_event, messageId) => {
+    const message = context.chatService.getMessage(messageIdSchema.parse(messageId));
+    return message ? storedMessageSchema.parse(message) : null;
+  });
 
   ipcMain.handle(IpcChannels.chatListTools, () =>
     context.chatService.listTools().map((tool) => toolDefinitionSchema.parse(tool))
@@ -407,6 +416,22 @@ export function registerIpcHandlers(context: DesktopAppContext): void {
   ipcMain.handle(IpcChannels.chatListSkills, () =>
     context.chatService.listSkills().map((skill) => skillDefinitionSchema.parse(skill))
   );
+
+  ipcMain.handle(IpcChannels.chatCreateSkill, (_event, payload) =>
+    skillDefinitionSchema.parse(
+      context.chatService.createSkill(createSkillInputSchema.parse(payload))
+    )
+  );
+
+  ipcMain.handle(IpcChannels.chatUpdateSkill, (_event, payload) =>
+    skillDefinitionSchema.parse(
+      context.chatService.updateSkill(updateSkillInputSchema.parse(payload))
+    )
+  );
+
+  ipcMain.handle(IpcChannels.chatDeleteSkill, (_event, payload) => {
+    context.chatService.deleteSkill(deleteSkillInputSchema.parse(payload));
+  });
 
   ipcMain.handle(IpcChannels.chatListKnowledgeDocuments, (_event, payload) =>
     context.chatService

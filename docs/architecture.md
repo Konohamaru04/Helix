@@ -41,12 +41,16 @@ The routed chat flow is:
 6. Optional tool execution runs inside the bridge layer.
 7. `buildConversationContext` assembles workspace prompt, active skill prompt, pinned memory, retrieved knowledge, and recent turns.
    The latest user turn is normalized into a markdown envelope with `# Prompt`, optional `# Workspace`, and `# Available Tools` sections so the selected folder path and callable surface are explicit to the model.
+   Workspace-bound local file tools are only advertised when the active workspace has a connected root folder.
 8. For normal chat turns, `ChatService` now routes through a provider-aware text backend layer:
    - `OllamaClient` handles local Ollama chat and the native `/api/chat` tool-call loop when the model should be allowed to auto-select local tools.
    - `NvidiaClient` handles OpenAI-compatible NVIDIA chat completions through `https://integrate.api.nvidia.com/v1`.
+   - Skill-routed grounded inspection turns can also escalate into the native tool loop so workspace analysis happens through real tool invocations instead of plain-text pseudo-commands.
 9. Capability-backed tool calls run only through the bridge and can persist tasks, schedules, agent sessions, worktrees, plan state, permission grants, and audit events in SQLite.
 10. Main proxies typed stream events back to the renderer, including graceful user-driven cancellation for in-flight replies.
-11. The renderer rehydrates the finished message after terminal events so route traces, tool traces, token usage, and sources stay in sync with SQLite.
+11. Assistant message bodies are persisted incrementally during streaming, and route/tool/source metadata is mirrored into SQLite as it becomes available instead of waiting for the turn to finish.
+12. Main proxies lightweight progress events back to the renderer with tool/source counts, while the renderer lazy-loads the heavy tool invocation and source records for an individual message only when those sections are expanded.
+13. The renderer rehydrates the finished message after terminal events so route traces, token usage, and any lazily opened tool/source detail stay in sync with SQLite.
 
 The renderer also uses the same bridge for:
 
@@ -62,13 +66,16 @@ The renderer also uses the same bridge for:
 - system status and settings updates
 - image-generation job start, polling updates, and cancellation
 - tool and skill discovery
+- agent session visibility through a dedicated bottom drawer
 - in-flight chat cancellation
 
 UI layout note:
 
 - the sidebar is intentionally navigation-only for workspace filters, search, and chat history
-- workspace creation stays in the main chat surface, while folder and knowledge actions now live in the composer-side workspace gear menu beside the `+` button
-- settings open from a single header action, while the status bar stays focused on runtime health and queue access
+- workspace creation stays in the main chat surface and now requires both a name and a local folder selection up front; the composer-side workspace gear menu is limited to lightweight workspace actions such as document import
+- key transcript and sidebar entities also expose custom right-click context menus so workspace, chat, and message actions are reachable without hunting for inline affordances; the workspace context menu is also where existing workspaces can connect, change, or disconnect their local folder binding
+- settings open from a single header action, while the status bar stays focused on runtime health plus quick access to plan, agents, skills, and queue drawers
+- when the transcript is empty, the chat surface shows a randomized feature/instruction tip instead of a fixed placeholder so the blank state can teach discovery over time
 
 ## Routing and context
 
@@ -96,7 +103,7 @@ Current provider limits:
 - the NVIDIA backend is currently wired for text chat only
 - image attachments in chat context still require the Ollama multimodal path
 - native tool-calling remains enabled only on the Ollama path in this slice
-- when a non-Ollama provider emits inline tool-call markup, the bridge now intercepts that markup, executes the requested local tool through the existing typed tool dispatcher, and asks the model to continue without exposing the raw markup in the final transcript
+- when a provider emits inline tool-call markup or command-only slash-tool output, the bridge intercepts it, executes the requested local tool through the existing typed tool dispatcher, and asks the model to continue without exposing raw tool markup in the final transcript
 
 Route decisions are persisted per assistant turn with:
 
@@ -129,6 +136,7 @@ Implemented so far:
 - persistent workspaces
 - persistent workspace root-folder bindings
 - persistent conversations and messages
+- incremental assistant message-body persistence during streaming turns
 - normalized message attachments with extracted-text snapshots for text-like files
 - pinned message memory
 - assistant route metadata and token usage
@@ -140,6 +148,12 @@ Implemented so far:
 - hybrid FTS5 plus local-embedding workspace knowledge retrieval
 - multimodal image forwarding to Ollama by base64-encoding local image attachments in Electron main
 - migration 013: workspace-scoped capability_tasks and plan_state with composite primary key
+
+Renderer hydration strategy:
+
+- conversation history loads a lightweight message shape for list rendering
+- heavy tool invocation payloads and RAG source excerpts are fetched per message on demand through typed IPC
+- assistant markdown rendering stays plain-text while a turn is actively streaming, then upgrades to full markdown after completion
 
 The renderer never queries SQLite directly.
 
@@ -167,6 +181,15 @@ Built-in local-workbench tools:
 - `workspace-search`
 - `knowledge-search`
 - `web-search`
+
+Skill registry behavior:
+
+- skills are persisted in SQLite through a bridge-owned registry table
+- built-in skill markdown files are seeded into SQLite at startup and stay read-only in the UI
+- legacy user markdown skills are imported into SQLite without overriding newer DB-edited versions
+- route planning and capability search read skills from the DB-backed registry, not directly from renderer memory or raw files
+- the renderer exposes a dedicated bottom skills drawer with a guided create/edit flow for user skills
+- new user skill IDs are generated in the bridge from the skill title, deduplicated against the registry, and stay immutable after creation so routing references remain stable
 
 Capability-backed tools and runtime actions:
 

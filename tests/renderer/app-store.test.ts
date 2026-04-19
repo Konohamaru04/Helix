@@ -116,8 +116,12 @@ describe('app-store stream buffering', () => {
         listConversations: vi.fn(),
         searchConversations: vi.fn(),
         getConversationMessages: vi.fn().mockResolvedValue([]),
+        getMessage: vi.fn().mockResolvedValue(null),
         listTools: vi.fn(),
         listSkills: vi.fn(),
+        createSkill: vi.fn(),
+        updateSkill: vi.fn(),
+        deleteSkill: vi.fn(),
         listKnowledgeDocuments: vi.fn(),
         importWorkspaceKnowledge: vi.fn(),
         importConversation: vi.fn(),
@@ -344,6 +348,30 @@ describe('app-store stream buffering', () => {
     expect(latestMessage?.toolInvocations?.[0]?.toolId).toBe('read');
     expect(latestMessage?.toolInvocations?.[0]?.status).toBe('completed');
     expect(state.systemStatus?.pendingRequestCount).toBe(1);
+  });
+
+  it('tracks lightweight metadata counts without hydrating the full tool and source payloads', async () => {
+    await useAppStore.getState().sendPrompt('Hello');
+
+    useAppStore.getState().applyStreamEvent({
+      type: 'update',
+      requestId: '30000000-0000-4000-8000-000000000001',
+      assistantMessageId: assistantMessage.id,
+      content: 'Working...',
+      status: 'streaming',
+      model: 'qwen2.5-coder:latest',
+      toolInvocationCount: 12,
+      contextSourceCount: 7
+    });
+
+    const state = useAppStore.getState();
+    const latestMessage = state.messagesByConversation[conversation.id]?.at(-1);
+
+    expect(latestMessage?.content).toBe('Working...');
+    expect(latestMessage?.toolInvocationCount).toBe(12);
+    expect(latestMessage?.contextSourceCount).toBe(7);
+    expect(latestMessage?.toolInvocations).toBeUndefined();
+    expect(latestMessage?.contextSources).toBeUndefined();
   });
 
   it('keeps new chats in auto model mode so routing can use configured roles', async () => {

@@ -15,6 +15,7 @@ import capabilitySurfaceMigration from './migrations/010_capability_surface.sql?
 import toolInvocationOutputTextMigration from './migrations/011_tool_invocation_output_text.sql?raw';
 import taskSequenceMigration from './migrations/012_task_sequence.sql?raw';
 import workspaceScopedTasksMigration from './migrations/013_workspace_scoped_tasks.sql?raw';
+import skillRegistryMigration from './migrations/015_skill_registry.sql?raw';
 
 const bundledMigrations = [
   {
@@ -68,6 +69,10 @@ const bundledMigrations = [
   {
     version: '013_workspace_scoped_tasks.sql',
     sql: workspaceScopedTasksMigration
+  },
+  {
+    version: '015_skill_registry.sql',
+    sql: skillRegistryMigration
   }
 ];
 
