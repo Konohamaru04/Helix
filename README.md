@@ -1,8 +1,6 @@
 # Helix
 
-[![CI](https://github.com/Konohamaru04/Abstergo-Helix/actions/workflows/ci.yml/badge.svg)](https://github.com/Konohamaru04/Abstergo-Helix/actions/workflows/ci.yml)
 [![Build](https://github.com/Konohamaru04/Abstergo-Helix/actions/workflows/build.yml/badge.svg)](https://github.com/Konohamaru04/Abstergo-Helix/actions/workflows/build.yml)
-[![CodeQL](https://github.com/Konohamaru04/Abstergo-Helix/actions/workflows/codeql.yml/badge.svg)](https://github.com/Konohamaru04/Abstergo-Helix/actions/workflows/codeql.yml)
 
 **Local-first desktop AI workbench** — built with Electron, React, SQLite, and a managed Python inference server.
 
