@@ -168,6 +168,26 @@ function hasPlanTaskToolInvocation(event: ChatStreamEvent): boolean {
   return (event.toolInvocations ?? []).some((inv) => PLAN_TASK_TOOL_IDS.has(inv.toolId));
 }
 
+function getCapabilitySurfacePatch(event: ChatStreamEvent) {
+  if (event.type !== 'update' && event.type !== 'complete') {
+    return {};
+  }
+
+  return {
+    ...(event.capabilityTasks === undefined ? {} : { capabilityTasks: event.capabilityTasks }),
+    ...(event.capabilityPlanState === undefined
+      ? {}
+      : { capabilityPlanState: event.capabilityPlanState })
+  };
+}
+
+function hasCapabilitySurfaceSnapshot(event: ChatStreamEvent): boolean {
+  return (
+    (event.type === 'update' || event.type === 'complete') &&
+    (event.capabilityTasks !== undefined || event.capabilityPlanState !== undefined)
+  );
+}
+
 function applyAssistantStreamSnapshot(
   message: StoredMessage,
   snapshot: {
@@ -1313,11 +1333,13 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
             ...state.pendingStreamEventsByAssistantId,
             [event.assistantMessageId]: event
           };
+      const capabilitySurfacePatch = getCapabilitySurfacePatch(event);
 
       if (event.type === 'delta' || event.type === 'update') {
         return {
           messagesByConversation: appliedEvent.messagesByConversation,
-          pendingStreamEventsByAssistantId: nextPendingStreamEvents
+          pendingStreamEventsByAssistantId: nextPendingStreamEvents,
+          ...capabilitySurfacePatch
         };
       }
 
@@ -1327,6 +1349,7 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
           (id) => id !== event.assistantMessageId
         ),
         pendingStreamEventsByAssistantId: nextPendingStreamEvents,
+        ...capabilitySurfacePatch,
         systemStatus: state.systemStatus
           ? {
               ...state.systemStatus,
@@ -1343,8 +1366,10 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
       if (conversationId) {
         void get().rehydrateConversationMessages(conversationId);
       }
-      void get().refreshCapabilitySurface();
-    } else if (hasPlanTaskToolInvocation(event)) {
+      if (!hasCapabilitySurfaceSnapshot(event)) {
+        void get().refreshCapabilitySurface();
+      }
+    } else if (!hasCapabilitySurfaceSnapshot(event) && hasPlanTaskToolInvocation(event)) {
       void get().refreshCapabilitySurface();
     }
   },

@@ -20,6 +20,10 @@ Full verification:
 npm run verify
 ```
 
+Manual prompt benchmark suite:
+
+- see [benchmark-prompts.md](./benchmark-prompts.md) for a manual benchmark catalog covering tools, skills, image analysis, image generation, and image editing
+
 ## Current coverage
 
 The current suite covers:

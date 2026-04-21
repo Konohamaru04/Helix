@@ -165,6 +165,7 @@ describe('app-store stream buffering', () => {
         additionalModelsDirectory: null,
         videoGenerationModel: '',
         pythonPort: 8765,
+        streamingMascotEnabled: true,
         theme: 'system'
       },
       systemStatus: {
@@ -218,6 +219,14 @@ describe('app-store stream buffering', () => {
       imageGenerationModelCatalog: null,
       availableTools: [],
       availableSkills: [],
+      capabilityPermissions: [],
+      capabilityTasks: [],
+      capabilitySchedules: [],
+      capabilityAgents: [],
+      capabilityTeams: [],
+      capabilityWorktrees: [],
+      capabilityPlanState: null,
+      capabilityAuditEvents: [],
       knowledgeDocumentsByWorkspace: {},
       searchQuery: '',
       searchResults: [],
@@ -348,6 +357,62 @@ describe('app-store stream buffering', () => {
     expect(latestMessage?.toolInvocations?.[0]?.toolId).toBe('read');
     expect(latestMessage?.toolInvocations?.[0]?.status).toBe('completed');
     expect(state.systemStatus?.pendingRequestCount).toBe(1);
+  });
+
+  it('applies capability snapshots from stream events immediately', async () => {
+    await useAppStore.getState().sendPrompt('Hello');
+
+    useAppStore.getState().applyStreamEvent({
+      type: 'update',
+      requestId: '30000000-0000-4000-8000-000000000001',
+      assistantMessageId: assistantMessage.id,
+      content: '',
+      status: 'streaming',
+      toolInvocations: [
+        {
+          id: '50000000-0000-4000-8000-000000000020',
+          toolId: 'task-create',
+          displayName: 'Task Create',
+          status: 'completed',
+          inputSummary: 'Inspect routing flow',
+          outputSummary: 'task-id',
+          errorMessage: null,
+          createdAt: '2026-04-08T00:00:01.000Z',
+          updatedAt: '2026-04-08T00:00:01.000Z'
+        }
+      ],
+      capabilityPlanState: {
+        conversationId: conversation.id,
+        workspaceId: workspace.id,
+        status: 'active',
+        summary: 'Plan mode enabled.',
+        createdAt: '2026-04-08T00:00:00.000Z',
+        updatedAt: '2026-04-08T00:00:01.000Z'
+      },
+      capabilityTasks: [
+        {
+          id: '70000000-0000-4000-8000-000000000001',
+          sequence: 1,
+          workspaceId: workspace.id,
+          title: 'Inspect routing flow',
+          status: 'pending',
+          details: null,
+          outputPath: null,
+          parentTaskId: null,
+          createdAt: '2026-04-08T00:00:01.000Z',
+          updatedAt: '2026-04-08T00:00:01.000Z',
+          startedAt: null,
+          completedAt: null
+        }
+      ]
+    });
+
+    const state = useAppStore.getState();
+
+    expect(state.capabilityPlanState?.status).toBe('active');
+    expect(state.capabilityTasks).toHaveLength(1);
+    expect(state.capabilityTasks[0]?.title).toBe('Inspect routing flow');
+    expect(window.ollamaDesktop.capabilities.listTasks).not.toHaveBeenCalled();
   });
 
   it('tracks lightweight metadata counts without hydrating the full tool and source payloads', async () => {

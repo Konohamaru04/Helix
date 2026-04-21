@@ -93,15 +93,16 @@ export function ChatComposer(props: ChatComposerProps) {
   return (
     <form
       aria-busy={props.submitting ? true : undefined}
+      data-mascot-target="composer"
       ref={formRef}
-      className="border-t border-white/10 bg-slate-950/70 px-4 py-4 backdrop-blur sm:px-6"
+      className="motion-panel border-t border-white/10 bg-slate-950/70 px-4 py-4 backdrop-blur sm:px-6"
       onSubmit={(event) => {
         void handleSubmit(event);
       }}
     >
       <div className="mx-auto flex max-w-[88rem] flex-col gap-3">
         {props.editing ? (
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-[1.5rem] border border-cyan-400/20 bg-cyan-400/10 px-4 py-3">
+          <div className="motion-panel flex flex-wrap items-center justify-between gap-3 rounded-[1.5rem] border border-cyan-400/20 bg-cyan-400/10 px-4 py-3">
             <div>
               <p className="text-xs uppercase tracking-[0.24em] text-cyan-100/80">
                 Editing
@@ -111,7 +112,7 @@ export function ChatComposer(props: ChatComposerProps) {
               </p>
             </div>
             <button
-              className="rounded-xl border border-cyan-100/20 px-3 py-1.5 text-xs font-medium text-cyan-50 transition hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-300"
+              className="motion-interactive rounded-xl border border-cyan-100/20 px-3 py-1.5 text-xs font-medium text-cyan-50 transition hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-300"
               onClick={props.onCancelEdit}
               type="button"
             >
@@ -121,7 +122,7 @@ export function ChatComposer(props: ChatComposerProps) {
         ) : null}
 
         {props.generationMode ? (
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-[1.5rem] border border-fuchsia-300/20 bg-fuchsia-500/10 px-4 py-3">
+          <div className="motion-panel flex flex-wrap items-center justify-between gap-3 rounded-[1.5rem] border border-fuchsia-300/20 bg-fuchsia-500/10 px-4 py-3">
             <div>
               <p className="text-xs uppercase tracking-[0.24em] text-fuchsia-100/80">
                 Image generation
@@ -136,7 +137,7 @@ export function ChatComposer(props: ChatComposerProps) {
               </p>
             </div>
             <button
-              className="rounded-xl border border-fuchsia-100/20 px-3 py-1.5 text-xs font-medium text-fuchsia-50 transition hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fuchsia-300"
+              className="motion-interactive rounded-xl border border-fuchsia-100/20 px-3 py-1.5 text-xs font-medium text-fuchsia-50 transition hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fuchsia-300"
               onClick={props.onExitImageMode}
               type="button"
             >
@@ -157,7 +158,7 @@ export function ChatComposer(props: ChatComposerProps) {
           </div>
         ) : null}
 
-        <div className="rounded-[1.75rem] border border-white/10 bg-slate-900/70 p-3 shadow-panel">
+        <div className="motion-focus-ring rounded-[1.75rem] border border-white/10 bg-slate-900/70 p-3 shadow-panel">
           <textarea
             ref={textareaRef}
             id="chat-prompt"
@@ -178,7 +179,7 @@ export function ChatComposer(props: ChatComposerProps) {
           {props.submitting ? (
             <div
               aria-live="polite"
-              className="flex items-center gap-3 px-2 pb-1 text-sm text-cyan-100"
+              className="motion-loader-sweep motion-panel flex items-center gap-3 rounded-2xl border border-cyan-300/10 bg-cyan-400/5 px-3 py-2 text-sm text-cyan-100"
               role="status"
             >
               <span
@@ -189,6 +190,7 @@ export function ChatComposer(props: ChatComposerProps) {
                 <p className="font-medium text-cyan-50">{visibleSubmitLabel}</p>
                 <p className="text-xs text-cyan-100/75">
                   {props.submitHint ?? 'Processing your request.'}
+                  <span className="motion-ellipsis" />
                 </p>
               </div>
             </div>
@@ -204,7 +206,7 @@ export function ChatComposer(props: ChatComposerProps) {
                   aria-expanded={activeMenu === 'add'}
                   aria-haspopup="menu"
                   aria-label="Open add menu"
-                  className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/10 text-lg text-slate-200 transition hover:border-white/20 hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
+                  className="motion-interactive inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/10 text-lg text-slate-200 transition hover:border-white/20 hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
                   disabled={props.disabled}
                   onClick={() =>
                     setActiveMenu((current) => (current === 'add' ? null : 'add'))
@@ -216,11 +218,11 @@ export function ChatComposer(props: ChatComposerProps) {
 
                 {activeMenu === 'add' ? (
                   <div
-                    className="absolute bottom-12 left-0 z-20 min-w-44 rounded-2xl border border-white/10 bg-slate-950/95 p-2 shadow-panel backdrop-blur"
+                    className="motion-menu-pop absolute bottom-12 left-0 z-20 min-w-44 rounded-2xl border border-white/10 bg-slate-950/95 p-2 shadow-panel backdrop-blur"
                     role="menu"
                   >
                     <button
-                      className="flex w-full items-center rounded-xl px-3 py-2 text-left text-sm text-slate-100 transition hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
+                      className="motion-interactive flex w-full items-center rounded-xl px-3 py-2 text-left text-sm text-slate-100 transition hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
                       onClick={() => {
                         void handleAttachClick();
                       }}
@@ -230,7 +232,7 @@ export function ChatComposer(props: ChatComposerProps) {
                       {props.generationMode ? 'Attach reference images' : 'Attach files'}
                     </button>
                     <button
-                      className="flex w-full items-center rounded-xl px-3 py-2 text-left text-sm text-slate-100 transition hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
+                      className="motion-interactive flex w-full items-center rounded-xl px-3 py-2 text-left text-sm text-slate-100 transition hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
                       disabled={!props.imageGenerationAvailable}
                       onClick={handleImageModeClick}
                       role="menuitem"
@@ -247,7 +249,7 @@ export function ChatComposer(props: ChatComposerProps) {
                   aria-expanded={activeMenu === 'workspace'}
                   aria-haspopup="menu"
                   aria-label="Open workspace settings"
-                  className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/10 text-slate-200 transition hover:border-white/20 hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
+                  className="motion-interactive inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/10 text-slate-200 transition hover:border-white/20 hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
                   disabled={!props.workspaceActionsEnabled}
                   onClick={() =>
                     setActiveMenu((current) =>
@@ -281,7 +283,7 @@ export function ChatComposer(props: ChatComposerProps) {
 
                 {activeMenu === 'workspace' ? (
                   <div
-                    className="absolute bottom-12 left-0 z-20 min-w-64 rounded-2xl border border-white/10 bg-slate-950/95 p-2 shadow-panel backdrop-blur"
+                    className="motion-menu-pop absolute bottom-12 left-0 z-20 min-w-64 rounded-2xl border border-white/10 bg-slate-950/95 p-2 shadow-panel backdrop-blur"
                     role="menu"
                   >
                     <div className="border-b border-white/10 px-3 pb-3 pt-2">
@@ -304,7 +306,7 @@ export function ChatComposer(props: ChatComposerProps) {
 
                     <div className="space-y-1 pt-2">
                       <button
-                        className="flex w-full items-center rounded-xl px-3 py-2 text-left text-sm text-slate-100 transition hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
+                        className="motion-interactive flex w-full items-center rounded-xl px-3 py-2 text-left text-sm text-slate-100 transition hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
                         onClick={() => {
                           void handleImportKnowledgeClick();
                         }}
@@ -329,7 +331,7 @@ export function ChatComposer(props: ChatComposerProps) {
 
             {props.streaming ? (
               <button
-                className="inline-flex h-12 shrink-0 items-center justify-center rounded-2xl border border-rose-300/20 bg-rose-500/10 px-5 text-sm font-semibold text-rose-100 transition hover:border-rose-300/30 hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-300"
+                className="motion-interactive inline-flex h-12 shrink-0 items-center justify-center rounded-2xl border border-rose-300/20 bg-rose-500/10 px-5 text-sm font-semibold text-rose-100 transition hover:border-rose-300/30 hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-300"
                 disabled={!props.onStop}
                 onClick={() => {
                   void props.onStop?.();
@@ -340,7 +342,7 @@ export function ChatComposer(props: ChatComposerProps) {
               </button>
             ) : (
               <button
-                className="inline-flex h-12 shrink-0 items-center justify-center rounded-2xl bg-orange-400 px-5 text-sm font-semibold text-slate-950 transition hover:bg-orange-300 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-300"
+                className="composer-submit-button motion-cta motion-interactive inline-flex h-12 shrink-0 items-center justify-center rounded-2xl px-5 text-sm font-semibold transition disabled:cursor-not-allowed focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-300"
                 disabled={props.disabled || props.submitting || !props.prompt.trim()}
                 type="submit"
               >

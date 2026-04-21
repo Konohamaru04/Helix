@@ -36,11 +36,11 @@ export function TitleBar() {
 
   return (
     <div
-      className="h-10 bg-slate-950 border-b border-slate-800 flex items-center justify-between select-none"
+      className="motion-panel motion-window-sheen flex h-10 select-none items-center justify-between border-b border-slate-800 bg-slate-950"
       style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
     >
       <div className="flex items-center gap-2 px-4">
-        <span className="text-slate-100 font-medium text-sm">{APP_DISPLAY_NAME}</span>
+        <span className="motion-text-reveal motion-title-glint text-sm font-medium">{APP_DISPLAY_NAME}</span>
       </div>
 
       <div
@@ -49,7 +49,7 @@ export function TitleBar() {
       >
         <button
           onClick={handleMinimize}
-          className="w-12 h-full flex items-center justify-center text-slate-400 hover:bg-slate-800 hover:text-slate-100 transition-colors"
+          className="motion-interactive flex h-full w-12 items-center justify-center text-slate-400 transition-colors hover:bg-slate-800 hover:text-slate-100"
           aria-label="Minimize"
         >
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
@@ -59,7 +59,7 @@ export function TitleBar() {
 
         <button
           onClick={handleMaximize}
-          className="w-12 h-full flex items-center justify-center text-slate-400 hover:bg-slate-800 hover:text-slate-100 transition-colors"
+          className="motion-interactive flex h-full w-12 items-center justify-center text-slate-400 transition-colors hover:bg-slate-800 hover:text-slate-100"
           aria-label={isMaximized ? 'Restore' : 'Maximize'}
         >
           {isMaximized ? (
@@ -90,7 +90,7 @@ export function TitleBar() {
 
         <button
           onClick={handleClose}
-          className="w-12 h-full flex items-center justify-center text-slate-400 hover:bg-red-600 hover:text-white transition-colors"
+          className="motion-interactive flex h-full w-12 items-center justify-center text-slate-400 transition-colors hover:bg-red-600 hover:text-white"
           aria-label="Close"
         >
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none">

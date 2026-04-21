@@ -16,7 +16,7 @@ function formatGenerationMode(mode: GenerationJob['mode']) {
 export function GenerationThreadItem(props: GenerationThreadItemProps) {
   return (
     <div className="space-y-3">
-      <article className="ml-3 min-w-0 overflow-hidden rounded-[1.75rem] border border-orange-300/20 bg-orange-500/10 px-5 py-4 text-orange-50 shadow-panel">
+      <article className="motion-card ml-3 min-w-0 overflow-hidden rounded-[1.75rem] border border-orange-300/20 bg-orange-500/10 px-5 py-4 text-slate-100 shadow-panel">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
@@ -47,7 +47,7 @@ export function GenerationThreadItem(props: GenerationThreadItemProps) {
         </div>
       </article>
 
-      <div className="min-w-0 overflow-hidden rounded-[1.75rem] border border-cyan-300/20 bg-slate-900/80 px-5 py-4 text-slate-100 shadow-panel">
+      <div className="motion-card min-w-0 overflow-hidden rounded-[1.75rem] border border-cyan-300/20 bg-slate-900/80 px-5 py-4 text-slate-100 shadow-panel">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">

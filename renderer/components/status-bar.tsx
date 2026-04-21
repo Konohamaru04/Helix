@@ -1,4 +1,5 @@
 import type { SystemStatus } from '@bridge/ipc/contracts';
+import { ThemedSelect } from '@renderer/components/themed-select';
 
 interface StatusBarProps {
   systemStatus: SystemStatus | null;
@@ -31,22 +32,12 @@ const THINK_MODE_OPTIONS = [
   { value: 'high', label: 'Think high' }
 ] as const;
 
-function getTextBackendHealth(systemStatus: SystemStatus | null) {
+function getOllamaHealth(systemStatus: SystemStatus | null) {
   if (!systemStatus) {
     return {
       label: 'Ollama',
       healthy: false,
       detail: 'checking'
-    };
-  }
-
-  if (systemStatus.activeTextBackend === 'nvidia') {
-    return {
-      label: 'NVIDIA',
-      healthy: systemStatus.nvidia.configured,
-      detail: systemStatus.nvidia.configured
-        ? `${systemStatus.nvidia.models.length} preset(s)`
-        : systemStatus.nvidia.error ?? 'missing API key'
     };
   }
 
@@ -59,44 +50,41 @@ function getTextBackendHealth(systemStatus: SystemStatus | null) {
   };
 }
 
-function formatVramDetail(systemStatus: SystemStatus | null) {
-  const vram = systemStatus?.python.vram;
-
-  if (!systemStatus?.python.reachable) {
-    return systemStatus?.python.error ?? 'checking';
+function getNvidiaHealth(systemStatus: SystemStatus | null) {
+  if (!systemStatus) {
+    return {
+      label: 'NVIDIA',
+      healthy: false,
+      detail: 'checking'
+    };
   }
 
-  if (!vram) {
-    return 'state unavailable';
-  }
-
-  if (!vram.cudaAvailable || vram.totalMb === null || vram.freeMb === null) {
-    return 'CPU worker';
-  }
-
-  const usedMb = Math.max(0, vram.totalMb - vram.freeMb);
-  const usedDisplay = Math.round(usedMb);
-  const totalDisplay = Math.round(vram.totalMb);
-  return `${usedDisplay} / ${totalDisplay} MiB`;
+  return {
+    label: 'NVIDIA',
+    healthy: systemStatus.nvidia.configured,
+    detail: systemStatus.nvidia.configured
+      ? `${systemStatus.nvidia.models.length} preset(s)`
+      : systemStatus.nvidia.error ?? 'missing API key'
+  };
 }
 
-function formatPythonDetail(systemStatus: SystemStatus | null) {
-  if (!systemStatus?.python.reachable) {
-    return systemStatus?.python.error ?? 'checking';
+function getPythonFailure(systemStatus: SystemStatus | null) {
+  if (!systemStatus || systemStatus.python.reachable) {
+    return null;
   }
 
-  const modelManager = systemStatus.python.modelManager;
-  const loadedModel = modelManager?.loadedModel;
-  const backend = modelManager?.loadedBackend;
-
-  if (loadedModel && backend) {
-    return `${backend} · ${loadedModel}`;
-  }
-
-  return `pid ${systemStatus.python.pid ?? 'n/a'}`;
+  return {
+    label: 'Python',
+    healthy: false,
+    detail: systemStatus.python.error ?? 'offline'
+  };
 }
 
-function ConnectionPill(props: { label: string; healthy: boolean; detail: string }) {
+function ConnectionPill(props: {
+  label: string;
+  healthy: boolean;
+  detail: string;
+}) {
   return (
     <div
       className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs transition-colors duration-150 ${
@@ -112,103 +100,117 @@ function ConnectionPill(props: { label: string; healthy: boolean; detail: string
         }`}
       />
       <span className="font-medium">{props.label}</span>
-      <span className="text-[11px] opacity-80 hidden sm:inline">{props.detail}</span>
+      <span className="hidden text-[11px] opacity-80 sm:inline">{props.detail}</span>
     </div>
   );
 }
 
 export function StatusBar(props: StatusBarProps) {
-  const textBackend = getTextBackendHealth(props.systemStatus);
+  const ollamaHealth = getOllamaHealth(props.systemStatus);
+  const nvidiaHealth = getNvidiaHealth(props.systemStatus);
+  const pythonFailure = getPythonFailure(props.systemStatus);
   const activeButtonClass = 'border-cyan-300/30 bg-cyan-500/15 text-cyan-100 hover:bg-cyan-500/20';
   const idleButtonClass = 'border-white/10 text-slate-200 hover:border-white/20 hover:bg-white/5';
+  const modelOptions = Array.from(
+    new Set([props.selectedModel, ...props.availableModels].filter(Boolean))
+  );
 
   return (
-    <footer className="flex items-center justify-between gap-4 border-t border-white/10 bg-slate-950/90 px-5 py-3 text-sm text-slate-300 backdrop-blur">
+    <footer
+      className="motion-panel flex items-center justify-between gap-4 border-t border-white/10 bg-slate-950/90 px-5 py-3 text-sm text-slate-300 backdrop-blur"
+      data-mascot-target="status-bar"
+    >
       <div className="flex flex-wrap items-center gap-2">
         <ConnectionPill
-          detail={textBackend.detail}
-          healthy={textBackend.healthy}
-          label={textBackend.label}
+          detail={ollamaHealth.detail}
+          healthy={ollamaHealth.healthy}
+          label={ollamaHealth.label}
         />
         <ConnectionPill
-          detail={formatPythonDetail(props.systemStatus)}
-          healthy={props.systemStatus?.python.reachable ?? false}
-          label="Python"
+          detail={nvidiaHealth.detail}
+          healthy={nvidiaHealth.healthy}
+          label={nvidiaHealth.label}
         />
-        <ConnectionPill
-          detail={formatVramDetail(props.systemStatus)}
-          healthy={props.systemStatus?.python.reachable ?? false}
-          label="VRAM"
-        />
+        {pythonFailure ? (
+          <ConnectionPill
+            detail={pythonFailure.detail}
+            healthy={pythonFailure.healthy}
+            label={pythonFailure.label}
+          />
+        ) : null}
       </div>
 
       <div className="flex items-center gap-2">
-        <select
-          aria-label="Text backend"
-          className="appearance-none rounded-full border border-white/10 bg-slate-900/90 px-3 py-1 text-xs text-slate-100 transition hover:border-white/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
-          onChange={(event) => props.onTextBackendChange(event.target.value as 'ollama' | 'nvidia')}
+        <ThemedSelect
+          ariaLabel="Text backend"
+          onChange={(value) => props.onTextBackendChange(value as 'ollama' | 'nvidia')}
+          options={[
+            { value: 'ollama', label: 'Ollama' },
+            { value: 'nvidia', label: 'NVIDIA' }
+          ]}
+          placement="top"
+          size="compact"
           value={props.activeTextBackend}
-        >
-          <option value="ollama">Ollama</option>
-          <option value="nvidia">NVIDIA</option>
-        </select>
+        />
 
-        <select
-          aria-label="Model"
-          className="appearance-none rounded-full border border-white/10 bg-slate-900/90 px-3 py-1 text-xs text-slate-100 transition hover:border-white/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
-          onChange={(event) => props.onSelectedModelChange(event.target.value)}
+        <ThemedSelect
+          ariaLabel="Model"
+          onChange={props.onSelectedModelChange}
+          options={[
+            { value: '', label: 'Auto' },
+            ...modelOptions.map((model) => ({
+              value: model,
+              label: model
+            }))
+          ]}
+          placement="top"
+          size="compact"
           value={props.selectedModel}
-        >
-          <option value="">Auto</option>
-          {props.availableModels.map((model) => (
-            <option key={model} value={model}>{model}</option>
-          ))}
-        </select>
+        />
 
-        <select
-          aria-label="Think mode"
-          className="appearance-none rounded-full border border-white/10 bg-slate-900/90 px-3 py-1 text-xs text-slate-100 transition hover:border-white/20 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
+        <ThemedSelect
+          ariaLabel="Think mode"
           disabled={props.thinkModeDisabled}
-          onChange={(event) => props.onSelectedThinkModeChange(event.target.value)}
+          onChange={props.onSelectedThinkModeChange}
+          options={THINK_MODE_OPTIONS.map((option) => ({
+            value: option.value,
+            label: option.label
+          }))}
+          placement="top"
+          size="compact"
           value={props.selectedThinkMode}
-        >
-          {THINK_MODE_OPTIONS.map((option) => (
-            <option key={option.value || 'auto'} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
+        />
 
         <button
-          className={`rounded-full border px-3 py-1.5 text-xs font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 ${props.settingsOpen ? activeButtonClass : idleButtonClass}`}
+          className={`motion-interactive rounded-full border px-3 py-1.5 text-xs font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 ${props.settingsOpen ? activeButtonClass : idleButtonClass}`}
           onClick={props.onOpenSettings}
           type="button"
         >
           Settings
         </button>
         <button
-          className={`rounded-full border px-3 py-1.5 text-xs font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 ${props.planOpen ? activeButtonClass : idleButtonClass}`}
+          className={`motion-interactive rounded-full border px-3 py-1.5 text-xs font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 ${props.planOpen ? activeButtonClass : idleButtonClass}`}
           onClick={props.onOpenPlan}
           type="button"
         >
           Plan
         </button>
         <button
-          className={`rounded-full border px-3 py-1.5 text-xs font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 ${props.agentsOpen ? activeButtonClass : idleButtonClass}`}
+          className={`motion-interactive rounded-full border px-3 py-1.5 text-xs font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 ${props.agentsOpen ? activeButtonClass : idleButtonClass}`}
           onClick={props.onOpenAgents}
           type="button"
         >
           Agents
         </button>
         <button
-          className={`rounded-full border px-3 py-1.5 text-xs font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 ${props.skillsOpen ? activeButtonClass : idleButtonClass}`}
+          className={`motion-interactive rounded-full border px-3 py-1.5 text-xs font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 ${props.skillsOpen ? activeButtonClass : idleButtonClass}`}
           onClick={props.onOpenSkills}
           type="button"
         >
           Skills
         </button>
         <button
-          className={`rounded-full border px-3 py-1.5 text-xs font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 ${props.queueOpen ? activeButtonClass : idleButtonClass}`}
+          className={`motion-interactive rounded-full border px-3 py-1.5 text-xs font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 ${props.queueOpen ? activeButtonClass : idleButtonClass}`}
           onClick={props.onOpenQueue}
           type="button"
         >

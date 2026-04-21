@@ -209,8 +209,16 @@ function shouldSuppressModelWorkspaceTool(
 }
 
 function looksLikeCodeRunnerPrompt(prompt: string): boolean {
+  const trimmed = prompt.trim();
+  const explicitlyRequestsExecution =
+    /^(?:run|execute|test|evaluate)\b/i.test(trimmed) ||
+    /\b(?:run|execute|test|evaluate)\s+(?:this|the following|my)\b/i.test(prompt);
+
+  if (!explicitlyRequestsExecution) {
+    return false;
+  }
+
   return (
-    /\b(run|execute|test|evaluate)\b/i.test(prompt) &&
     (/```/.test(prompt) ||
       /\b(?:javascript|js|node)\b/i.test(prompt) ||
       /(?:=>|console\.|const\s+|let\s+|var\s+|function\s+|class\s+|return\s+)/.test(prompt))

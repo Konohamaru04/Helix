@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   type MessageAttachment,
-  type StoredMessage
+  type StoredMessage,
+  type UserSettings
 } from '@bridge/ipc/contracts';
 import { AgentsDrawer } from '@renderer/components/agents-drawer';
 import { ChatComposer } from '@renderer/components/chat-composer';
@@ -13,6 +14,7 @@ import { SkillsDrawer } from '@renderer/components/skills-drawer';
 import { SettingsDrawer } from '@renderer/components/settings-drawer';
 import { Sidebar } from '@renderer/components/sidebar';
 import { StatusBar } from '@renderer/components/status-bar';
+import { StreamingMascot } from '@renderer/components/streaming-mascot';
 import { TitleBar } from '@renderer/components/title-bar';
 import { useAppBootstrap } from '@renderer/hooks/use-app-bootstrap';
 import { getDesktopApi, hasDesktopApi } from '@renderer/lib/api';
@@ -78,6 +80,17 @@ function getSubmitFeedback(phase: SubmitPhase | null) {
   }
 
   return null;
+}
+
+function resolveTheme(
+  theme: UserSettings['theme'] | undefined,
+  prefersDark: boolean
+): 'dark' | 'light' {
+  if (theme === 'dark' || theme === 'light') {
+    return theme;
+  }
+
+  return prefersDark ? 'dark' : 'light';
 }
 
 export function ChatPage() {
@@ -234,6 +247,38 @@ export function ChatPage() {
   const headerSubtitle = activeConversation
     ? `Active chat: ${activeConversation.title}`
     : 'Start a new conversation or import workspace knowledge to ground the next turn.';
+
+  useEffect(() => {
+    const root = document.documentElement;
+    const requestedTheme = settings?.theme ?? 'system';
+    const mediaQuery =
+      typeof window.matchMedia === 'function'
+        ? window.matchMedia('(prefers-color-scheme: dark)')
+        : null;
+
+    const applyTheme = () => {
+      const resolvedTheme = resolveTheme(requestedTheme, mediaQuery?.matches ?? true);
+      root.dataset.theme = resolvedTheme;
+      root.dataset.themePreference = requestedTheme;
+      root.style.colorScheme = resolvedTheme;
+    };
+
+    applyTheme();
+
+    if (requestedTheme !== 'system' || !mediaQuery) {
+      return undefined;
+    }
+
+    const handleThemeChange = () => applyTheme();
+
+    if (typeof mediaQuery.addEventListener === 'function') {
+      mediaQuery.addEventListener('change', handleThemeChange);
+      return () => mediaQuery.removeEventListener('change', handleThemeChange);
+    }
+
+    mediaQuery.addListener(handleThemeChange);
+    return () => mediaQuery.removeListener(handleThemeChange);
+  }, [settings?.theme]);
 
   useEffect(() => {
     if (!activeWorkspaceId) {
@@ -584,14 +629,17 @@ export function ChatPage() {
   }
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-slate-950 text-slate-100">
+    <div className="motion-app-shell relative min-h-screen overflow-hidden bg-slate-950 text-slate-100">
       <TitleBar />
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(45,212,191,0.18),_transparent_40%),radial-gradient(circle_at_top_right,_rgba(249,115,22,0.16),_transparent_30%)]" />
+      <div className="motion-ambient pointer-events-none absolute inset-0" />
 
       <div className="relative flex h-[calc(100vh-2.5rem)] flex-col">
         <div className="flex min-h-0 flex-1">
           {/* Inline sidebar — always visible at lg+ */}
-          <div className="hidden h-full lg:block">
+          <div
+            className="hidden h-full lg:block"
+            data-mascot-target="sidebar"
+          >
             <Sidebar
               activeWorkspaceId={activeWorkspaceId}
               activeConversationId={activeConversationId}
@@ -630,11 +678,11 @@ export function ChatPage() {
           {sidebarOpen && (
             <>
               <div
-                className="fixed inset-0 z-20 bg-slate-950/50 backdrop-blur-sm animate-fade-in lg:hidden"
+                className="fixed inset-0 z-20 animate-fade-in bg-slate-950/50 backdrop-blur-sm lg:hidden"
                 onClick={() => toggleSidebar(false)}
                 role="presentation"
               />
-              <aside className="fixed top-10 bottom-0 left-0 z-30 w-80 animate-slide-in-left lg:hidden">
+              <aside className="fixed bottom-0 left-0 top-10 z-30 w-80 animate-slide-in-left lg:hidden">
                 <Sidebar
                   overlayMode
                   onClose={() => toggleSidebar(false)}
@@ -709,18 +757,38 @@ export function ChatPage() {
             </header> */}
 
             {!initialized ? (
-              <div className="flex flex-1 items-center justify-center text-sm text-slate-400">
-                Bootstrapping Electron, SQLite, Ollama health checks, and the Python server...
+              <div className="flex flex-1 items-center justify-center px-6 text-sm text-slate-400">
+                <div
+                  aria-live="polite"
+                  className="motion-panel motion-loader-sweep rounded-[1.75rem] border border-cyan-300/15 bg-slate-900/70 px-6 py-5 text-cyan-50 shadow-panel"
+                  role="status"
+                >
+                  <div className="flex items-start gap-3">
+                    <span
+                      aria-hidden="true"
+                      className="mt-1 h-3.5 w-3.5 shrink-0 rounded-full border-2 border-cyan-200/25 border-t-cyan-200 motion-reduce:animate-none motion-safe:animate-spin"
+                    />
+                    <div>
+                      <p className="motion-text-reveal text-xs uppercase tracking-[0.24em] text-cyan-100/70">
+                        Starting runtime
+                      </p>
+                      <p className="motion-text-reveal-delayed mt-2 text-sm text-slate-300">
+                        Bootstrapping Electron, SQLite, Ollama health checks, and the Python server
+                        <span className="motion-ellipsis" />
+                      </p>
+                    </div>
+                  </div>
+                </div>
               </div>
             ) : bootstrapError ? (
-              <div className="m-6 rounded-[2rem] border border-rose-400/20 bg-rose-500/10 p-6 text-sm text-rose-100 shadow-panel">
+              <div className="motion-panel m-6 rounded-[2rem] border border-rose-400/20 bg-rose-500/10 p-6 text-sm text-rose-100 shadow-panel">
                 {bootstrapError}
               </div>
             ) : (
               <>
                 {creatingWorkspace ? (
-                  <section className="border-b border-white/10 px-6 py-4">
-                    <div className="mx-auto flex max-w-[88rem] flex-wrap items-end gap-3 rounded-[1.75rem] border border-white/10 bg-slate-900/55 px-5 py-4 shadow-panel">
+                  <section className="motion-panel border-b border-white/10 px-6 py-4">
+                    <div className="motion-focus-ring mx-auto flex max-w-[88rem] flex-wrap items-end gap-3 rounded-[1.75rem] border border-white/10 bg-slate-900/55 px-5 py-4 shadow-panel">
                       <div className="min-w-[18rem] flex-1">
                         <label
                           className="sr-only"
@@ -745,7 +813,7 @@ export function ChatPage() {
                         </label>
                         <button
                           aria-label="Workspace folder"
-                          className="flex w-full items-center justify-between rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-left text-sm text-slate-100 transition hover:border-white/20 hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
+                          className="motion-interactive flex w-full items-center justify-between rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-left text-sm text-slate-100 transition hover:border-white/20 hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
                           id="chat-workspace-root"
                           onClick={() => {
                             void handlePickWorkspaceRoot();
@@ -761,7 +829,7 @@ export function ChatPage() {
                         </button>
                       </div>
                       <button
-                        className="rounded-2xl border border-white/10 px-4 py-3 text-sm font-medium text-slate-100 transition hover:border-white/20 hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
+                        className="motion-interactive rounded-2xl border border-white/10 px-4 py-3 text-sm font-medium text-slate-100 transition hover:border-white/20 hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
                         onClick={() => {
                           setWorkspaceDraft('');
                           setWorkspaceRootDraft(null);
@@ -772,7 +840,7 @@ export function ChatPage() {
                         Cancel
                       </button>
                       <button
-                        className="rounded-2xl bg-cyan-400 px-4 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-300"
+                        className="motion-interactive rounded-2xl bg-cyan-400 px-4 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-300"
                         disabled={!workspaceDraft.trim() || !workspaceRootDraft}
                         onClick={() => {
                           void handleCreateWorkspace();
@@ -811,7 +879,7 @@ export function ChatPage() {
                 />
 
                 {submissionError ? (
-                  <div className="mx-6 mb-3 rounded-2xl border border-rose-400/20 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
+                  <div className="motion-panel mx-6 mb-3 rounded-2xl border border-rose-400/20 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
                     {submissionError}
                   </div>
                 ) : null}
@@ -889,7 +957,7 @@ export function ChatPage() {
       <SettingsDrawer
         key={
           settings
-            ? `${settings.textInferenceBackend}-${settings.ollamaBaseUrl}-${settings.nvidiaBaseUrl}-${settings.defaultModel}-${settings.codingModel}-${settings.visionModel}-${settings.imageGenerationModel}-${settings.additionalModelsDirectory ?? 'none'}-${settings.videoGenerationModel}-${settings.pythonPort}-${settings.theme}-${String(settingsDrawerOpen)}`
+            ? `${settings.textInferenceBackend}-${settings.ollamaBaseUrl}-${settings.nvidiaBaseUrl}-${settings.defaultModel}-${settings.codingModel}-${settings.visionModel}-${settings.imageGenerationModel}-${settings.additionalModelsDirectory ?? 'none'}-${settings.videoGenerationModel}-${settings.pythonPort}-${String(settings.streamingMascotEnabled)}-${settings.theme}-${String(settingsDrawerOpen)}`
             : 'settings-empty'
         }
         capabilities={availableTools}
@@ -954,6 +1022,8 @@ export function ChatPage() {
         open={skillsDrawerOpen}
         skills={availableSkills}
       />
+
+      <StreamingMascot active={streaming && (settings?.streamingMascotEnabled ?? true)} />
     </div>
   );
 }

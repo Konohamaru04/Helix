@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useState } from 'react';
+import { Children, isValidElement, type ReactNode, useEffect, useState } from 'react';
 import type {
   AgentSession,
   AuditEventRecord,
@@ -15,6 +15,7 @@ import type {
 } from '@bridge/ipc/contracts';
 import { APP_DISPLAY_NAME } from '@bridge/branding';
 import { getImageGenerationModelOptions } from '@renderer/lib/image-generation-models';
+import { ThemedSelect, type ThemedSelectOption } from '@renderer/components/themed-select';
 
 interface SettingsDrawerProps {
   open: boolean;
@@ -42,26 +43,74 @@ interface SettingsDrawerProps {
 }
 
 function SelectShell(props: {
+  ariaLabel: string;
   value: string;
   onChange: (value: string) => void;
   children: ReactNode;
   disabled?: boolean;
 }) {
+  const options: ThemedSelectOption[] = Children.toArray(props.children)
+    .filter(isValidElement)
+    .map((child) => {
+      const optionProps = child.props as {
+        value?: unknown;
+        disabled?: boolean;
+        children?: ReactNode;
+      };
+
+      return {
+        value: getOptionValue(optionProps.value),
+        label: getOptionText(optionProps.children).trim(),
+        disabled: Boolean(optionProps.disabled)
+      };
+    });
+
   return (
-    <div className="relative">
-      <select
-        className="w-full appearance-none rounded-2xl border border-white/10 bg-slate-900 px-4 py-3 pr-11 text-sm text-slate-100 disabled:cursor-not-allowed disabled:border-white/5 disabled:bg-slate-950 disabled:text-slate-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
-        disabled={props.disabled}
-        onChange={(event) => props.onChange(event.target.value)}
-        value={props.value}
-      >
-        {props.children}
-      </select>
-      <span className="pointer-events-none absolute inset-y-0 right-4 flex items-center text-slate-400">
-        v
-      </span>
-    </div>
+    <ThemedSelect
+      ariaLabel={props.ariaLabel}
+      disabled={props.disabled}
+      onChange={props.onChange}
+      options={options}
+      value={props.value}
+    />
   );
+}
+
+function getOptionText(node: ReactNode): string {
+  if (node === null || node === undefined || typeof node === 'boolean') {
+    return '';
+  }
+
+  if (Array.isArray(node)) {
+    return node.map(getOptionText).join('');
+  }
+
+  if (isValidElement(node)) {
+    const props = node.props as { children?: ReactNode };
+    return getOptionText(props.children);
+  }
+
+  if (typeof node === 'string') {
+    return node;
+  }
+
+  if (typeof node === 'number') {
+    return String(node);
+  }
+
+  return '';
+}
+
+function getOptionValue(value: unknown): string {
+  if (typeof value === 'string') {
+    return value;
+  }
+
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+
+  return '';
 }
 
 function looksLikeLocalModelId(modelId: string): boolean {
@@ -184,7 +233,7 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
   }
 
   return (
-    <div className="fixed inset-0 z-20 bg-slate-950/50 backdrop-blur-sm animate-fade-in">
+    <div className="fixed inset-0 z-20 animate-fade-in bg-slate-950/50 backdrop-blur-sm">
       <button
         aria-label="Close settings"
         className="absolute inset-0 cursor-default"
@@ -192,7 +241,7 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
         type="button"
       />
       <div className="absolute inset-y-0 right-0 flex w-full max-w-xl justify-end">
-        <aside className="relative flex h-full w-full max-w-xl flex-col border-l border-white/10 bg-slate-950 px-6 py-5 shadow-2xl animate-slide-in-right">
+        <aside className="motion-drawer-right relative flex h-full w-full max-w-xl flex-col border-l border-white/10 bg-slate-950 px-6 py-5 shadow-2xl">
           <div className="flex items-start justify-between gap-4">
             <div>
               <p className="text-xs uppercase tracking-[0.3em] text-cyan-200/70">
@@ -203,7 +252,7 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
               </h2>
             </div>
             <button
-              className="rounded-full border border-white/10 px-3 py-1.5 text-xs font-medium text-slate-200 transition hover:border-white/20 hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
+              className="motion-interactive rounded-full border border-white/10 px-3 py-1.5 text-xs font-medium text-slate-200 transition hover:border-white/20 hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
               onClick={props.onClose}
               type="button"
             >
@@ -212,7 +261,7 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
           </div>
 
           <div className="mt-8 flex flex-1 flex-col gap-5 overflow-y-auto">
-            <section className="rounded-[1.75rem] border border-white/10 bg-slate-900/60 px-5 py-5">
+            <section className="motion-card rounded-[1.75rem] border border-white/10 bg-slate-900/60 px-5 py-5">
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <h3 className="text-sm font-semibold text-slate-100">
@@ -238,6 +287,7 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                     NVIDIA chat API.
                   </p>
                   <SelectShell
+                    ariaLabel="Text backend"
                     onChange={(value) =>
                       setDraft((current) =>
                         current
@@ -269,6 +319,7 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                     Used for normal chat and as the fallback when a specialized model is not set.
                   </p>
                   <SelectShell
+                    ariaLabel="General (base)"
                     onChange={(value) =>
                       setDraft((current) =>
                         current ? { ...current, defaultModel: value } : current
@@ -300,6 +351,7 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                     Used when the router detects code-generation or debugging intent.
                   </p>
                   <SelectShell
+                    ariaLabel="Coding"
                     onChange={(value) =>
                       setDraft((current) =>
                         current ? { ...current, codingModel: value } : current
@@ -327,6 +379,7 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                     Used when image attachments or vision-style prompts need a multimodal model.
                   </p>
                   <SelectShell
+                    ariaLabel="Vision"
                     disabled={draft.textInferenceBackend === 'nvidia'}
                     onChange={(value) =>
                       setDraft((current) =>
@@ -356,7 +409,7 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                   ) : null}
                 </label>
 
-                <div className="rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-4">
+                <div className="motion-card rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-4">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
                       <span className="block text-sm font-medium text-slate-200">
@@ -371,7 +424,7 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                     </div>
                     <div className="flex flex-wrap gap-2">
                       <button
-                        className="rounded-2xl border border-white/10 px-3 py-2 text-xs font-medium text-slate-100 transition hover:border-white/20 hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
+                        className="motion-interactive rounded-2xl border border-white/10 px-3 py-2 text-xs font-medium text-slate-100 transition hover:border-white/20 hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
                         onClick={() => {
                           void handlePickAdditionalModelsDirectory();
                         }}
@@ -380,7 +433,7 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                         Choose folder
                       </button>
                       <button
-                        className="rounded-2xl border border-white/10 px-3 py-2 text-xs font-medium text-slate-100 transition hover:border-white/20 hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
+                        className="motion-interactive rounded-2xl border border-white/10 px-3 py-2 text-xs font-medium text-slate-100 transition hover:border-white/20 hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
                         disabled={!draft.additionalModelsDirectory || catalogLoading}
                         onClick={() => {
                           void refreshLocalImageCatalog(draft.additionalModelsDirectory);
@@ -390,7 +443,7 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                         Refresh scan
                       </button>
                       <button
-                        className="rounded-2xl border border-white/10 px-3 py-2 text-xs font-medium text-slate-100 transition hover:border-white/20 hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
+                        className="motion-interactive rounded-2xl border border-white/10 px-3 py-2 text-xs font-medium text-slate-100 transition hover:border-white/20 hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
                         disabled={!draft.additionalModelsDirectory || catalogLoading}
                         onClick={() => {
                           void handleClearAdditionalModelsDirectory();
@@ -407,13 +460,14 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                   </div>
 
                   {catalogLoading ? (
-                    <p className="mt-3 text-xs text-cyan-200">
+                    <p className="motion-panel mt-3 text-xs text-cyan-200">
                       Scanning for compatible local image models...
+                      <span className="motion-ellipsis" />
                     </p>
                   ) : null}
 
                   {catalogError ? (
-                    <p className="mt-3 text-xs text-rose-200">
+                    <p className="motion-panel mt-3 text-xs text-rose-200">
                       {catalogError}
                     </p>
                   ) : null}
@@ -439,6 +493,7 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                     workflow, while unsupported video-oriented GGUF families remain disabled.
                   </p>
                   <SelectShell
+                    ariaLabel="Image Gen"
                     onChange={(value) =>
                       setDraft((current) =>
                         current ? { ...current, imageGenerationModel: value } : current
@@ -475,6 +530,7 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                     Disabled until video-generation jobs are implemented.
                   </p>
                   <SelectShell
+                    ariaLabel="Video Gen"
                     disabled
                     onChange={() => undefined}
                     value={draft.videoGenerationModel}
@@ -495,7 +551,7 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
               </div>
             </section>
 
-            <section className="rounded-[1.75rem] border border-white/10 bg-slate-900/60 px-5 py-5">
+            <section className="motion-card rounded-[1.75rem] border border-white/10 bg-slate-900/60 px-5 py-5">
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div>
                   <h3 className="text-sm font-semibold text-slate-100">
@@ -525,7 +581,7 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                 </div>
               </div>
 
-              <div className="mt-5 rounded-2xl border border-dashed border-white/10 bg-slate-950/70 px-4 py-3 text-xs text-slate-300">
+              <div className="motion-panel mt-5 rounded-2xl border border-dashed border-white/10 bg-slate-950/70 px-4 py-3 text-xs text-slate-300">
                 Plan mode:{' '}
                 <span className="font-medium text-slate-100">
                   {props.capabilityPlanState?.status ?? 'inactive'}
@@ -539,7 +595,7 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
 
                   return (
                     <div
-                      className="rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-4"
+                      className="motion-card rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-4"
                       key={capability.id}
                     >
                       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -567,7 +623,7 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
 
                         {permission ? (
                           <button
-                            className="rounded-2xl border border-rose-300/20 px-3 py-2 text-xs font-medium text-rose-100 transition hover:border-rose-300/30 hover:bg-rose-500/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-300"
+                            className="motion-interactive rounded-2xl border border-rose-300/20 px-3 py-2 text-xs font-medium text-rose-100 transition hover:border-rose-300/30 hover:bg-rose-500/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-300"
                             onClick={() => {
                               void props.onRevokeCapabilityPermission(capability.id);
                             }}
@@ -577,7 +633,7 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                           </button>
                         ) : (
                           <button
-                            className="rounded-2xl border border-cyan-400/20 bg-cyan-400/10 px-3 py-2 text-xs font-medium text-cyan-100 transition hover:border-cyan-300/30 hover:bg-cyan-400/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-300"
+                            className="motion-interactive rounded-2xl border border-cyan-400/20 bg-cyan-400/10 px-3 py-2 text-xs font-medium text-cyan-100 transition hover:border-cyan-300/30 hover:bg-cyan-400/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-300"
                             onClick={() => {
                               void props.onGrantCapabilityPermission(capability.id);
                             }}
@@ -592,14 +648,14 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                 })}
               </div>
 
-              <div className="mt-5 rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-4">
+              <div className="motion-card mt-5 rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-4">
                 <h4 className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-300">
                   Recent audit events
                 </h4>
                 <div className="mt-3 space-y-2 text-xs text-slate-300">
                   {props.capabilityAuditEvents.slice(0, 6).map((event) => (
                     <div
-                      className="rounded-xl border border-white/5 bg-slate-900/70 px-3 py-2"
+                      className="motion-panel rounded-xl border border-white/5 bg-slate-900/70 px-3 py-2"
                       key={event.id}
                     >
                       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -616,7 +672,7 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
               </div>
             </section>
 
-            <section className="rounded-[1.75rem] border border-white/10 bg-slate-900/60 px-5 py-5">
+            <section className="motion-card rounded-[1.75rem] border border-white/10 bg-slate-900/60 px-5 py-5">
               <div>
                 <h3 className="text-sm font-semibold text-slate-100">
                   Text backend connections
@@ -713,6 +769,7 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                 Theme
               </span>
               <SelectShell
+                ariaLabel="Theme"
                 onChange={(value) =>
                   setDraft((current) =>
                     current
@@ -730,10 +787,59 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                 <option value="dark">Dark</option>
               </SelectShell>
             </label>
+
+            <section className="motion-card rounded-[1.75rem] border border-white/10 bg-slate-900/60 px-5 py-5">
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div className="min-w-0 flex-1">
+                  <h3 className="text-sm font-semibold text-slate-100">
+                    Streaming mascot
+                  </h3>
+                  <p className="mt-2 text-sm leading-6 text-slate-400">
+                    Show the hammer mascot while assistant responses are streaming.
+                  </p>
+                </div>
+                <div className="flex shrink-0 items-center gap-3">
+                  <span
+                    className={`text-xs font-semibold uppercase tracking-[0.18em] ${
+                      draft.streamingMascotEnabled ? 'text-cyan-100' : 'text-slate-500'
+                    }`}
+                  >
+                    {draft.streamingMascotEnabled ? 'On' : 'Off'}
+                  </span>
+                  <button
+                    aria-checked={draft.streamingMascotEnabled}
+                    aria-label="Streaming mascot"
+                    className={`relative h-8 w-14 shrink-0 rounded-full border transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 ${
+                      draft.streamingMascotEnabled
+                        ? 'border-cyan-300/40 bg-cyan-400/25'
+                        : 'border-white/10 bg-slate-950'
+                    }`}
+                    onClick={() =>
+                      setDraft((current) =>
+                        current
+                          ? {
+                              ...current,
+                              streamingMascotEnabled: !current.streamingMascotEnabled
+                            }
+                          : current
+                      )
+                    }
+                    role="switch"
+                    type="button"
+                  >
+                    <span
+                      className={`absolute left-1 top-1 h-6 w-6 rounded-full bg-slate-100 shadow-sm transition-transform ${
+                        draft.streamingMascotEnabled ? 'translate-x-6' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
+                </div>
+              </div>
+            </section>
           </div>
 
           <button
-            className="mt-6 rounded-2xl bg-cyan-400 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-300"
+            className="motion-interactive mt-6 rounded-2xl bg-cyan-400 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-300"
             onClick={() => {
               void (async () => {
                 await props.onSave(draft);

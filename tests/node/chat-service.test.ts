@@ -424,11 +424,10 @@ describe('ChatService', () => {
         throw new Error('Expected the multimodal Ollama input to be captured.');
       }
 
-      const firstMessage = capturedInput.messages[0];
+      const userMessage = capturedInput.messages.find((message) => message.role === 'user');
       expect(capturedInput.model).toBe('qwen3-vl:8b');
-      expect(firstMessage?.role).toBe('user');
-      expect(firstMessage?.content).toContain('Who is in this image?');
-      expect(firstMessage?.images).toEqual([imageBytes.toString('base64')]);
+      expect(userMessage?.content).toContain('Who is in this image?');
+      expect(userMessage?.images).toEqual([imageBytes.toString('base64')]);
     } finally {
       harness.database.close();
     }
@@ -554,15 +553,6 @@ describe('ChatService', () => {
       }) => {
         completeCallCount += 1;
 
-        if (completeCallCount === 1) {
-          return Promise.resolve({
-            content: '',
-            doneReason: 'stop',
-            thinking: '',
-            toolCalls: []
-          });
-        }
-
         expect(
           input.messages.some(
             (message) =>
@@ -617,7 +607,7 @@ describe('ChatService', () => {
       const finalAssistant = harness.service.listMessages(accepted.conversation.id).at(-1);
 
       expect(streamCallCount).toBe(1);
-      expect(completeCallCount).toBe(2);
+      expect(completeCallCount).toBe(1);
       expect(finalAssistant?.content).toContain(
         'I inspected the workspace and can now continue with the README summary.'
       );
@@ -697,6 +687,9 @@ describe('ChatService', () => {
         expect(latestMessages.at(-1)?.status).toBe('completed');
       });
 
+      const capabilityPrompt = capturedMessages?.find(
+        (message) => message.role === 'system' && message.content.includes('Capability catalog')
+      );
       const latestUserMessage = capturedMessages
         ?.filter((message) => message.role === 'user')
         .at(-1);
@@ -706,9 +699,10 @@ describe('ChatService', () => {
       expect(latestUserMessage?.content).toContain('Reply with the selected workspace path.');
       expect(latestUserMessage?.content).toContain('# Workspace');
       expect(latestUserMessage?.content).toContain(`\`${workspaceRoot}\``);
-      expect(latestUserMessage?.content).toContain('# Available Tools');
-      expect(latestUserMessage?.content).toContain('`workspace-search`');
-      expect(latestUserMessage?.content).toContain('via `/grep`');
+      expect(capabilityPrompt?.content).toContain('Available tools');
+      expect(capabilityPrompt?.content).toContain('`workspace-search`');
+      expect(capabilityPrompt?.content).toContain('via `/grep`');
+      expect(capabilityPrompt?.content).toContain('Available skills');
     } finally {
       harness.database.close();
     }
@@ -770,8 +764,10 @@ describe('ChatService', () => {
         throw new Error('Expected multimodal Ollama input to be captured.');
       }
 
+      const userMessage = capturedInput.messages.find((message) => message.role === 'user');
+
       expect(capturedInput.model).toBe('qwen3-vl:8b');
-      expect(capturedInput.messages[0]?.images).toEqual([imageBytes.toString('base64')]);
+      expect(userMessage?.images).toEqual([imageBytes.toString('base64')]);
     } finally {
       harness.database.close();
     }
@@ -910,6 +906,73 @@ describe('ChatService', () => {
         })
       );
       expect(accepted.kind).toBe('generation');
+    } finally {
+      harness.database.close();
+    }
+  });
+
+  it('keeps code-delivery prompts with wallpaper requirements on the chat path instead of auto-starting image generation', async () => {
+    const directory = mkdtempSync(path.join(tmpdir(), 'ollama-desktop-auto-image-code-prompt-'));
+    tempDirectories.push(directory);
+    const startImageJob = vi.fn();
+    const streamChat = vi.fn(
+      (input: {
+        baseUrl: string;
+        model: string;
+        messages: Array<{
+          role: 'system' | 'user' | 'assistant';
+          content: string;
+          images?: string[];
+        }>;
+        onDelta: (delta: string) => void;
+      }) => {
+        input.onDelta('Implemented response on the normal chat path.');
+        return Promise.resolve({
+          content: 'Implemented response on the normal chat path.',
+          doneReason: 'stop',
+          thinking: '',
+          toolCalls: []
+        });
+      }
+    );
+    const harness = createChatServiceHarness({
+      directory,
+      loggerName: 'auto-image-code-prompt-test',
+      streamChat,
+      generationService: { startImageJob }
+    });
+
+    try {
+      const prompt = `Using HTML, CSS, and JavaScript, generate a browser OS with these features:
+
+At least 5 applications
+2 of the 5 applications must be functional 3D games
+One game must be a simple GTA clone
+The other 3D game can be anything
+Ability to change wallpaper
+One special feature of your choice, and document what it is and why it is special
+Everything must be contained in a single script/file
+Must run in Chrome browser`;
+
+      const accepted = await harness.service.submitPrompt(
+        {
+          prompt
+        },
+        () => undefined
+      );
+
+      expect(accepted.kind).toBe('chat');
+      expect(startImageJob).not.toHaveBeenCalled();
+
+      await vi.waitFor(() => {
+        expect(streamChat.mock.calls.length).toBeGreaterThan(0);
+      });
+
+      const messages = harness.service.listMessages(accepted.conversation.id);
+      const assistantMessage = messages.at(-1);
+
+      expect(assistantMessage?.routeTrace?.activeSkillId).toBe('builder');
+      expect(assistantMessage?.routeTrace?.activeToolId).toBeNull();
     } finally {
       harness.database.close();
     }
@@ -1287,7 +1350,7 @@ describe('ChatService', () => {
       await vi.waitFor(() => {
         expect(streamChat).toHaveBeenCalledTimes(1);
       });
-      expect(completeChat).toHaveBeenCalledTimes(1);
+      expect(completeChat).not.toHaveBeenCalled();
       await vi.waitFor(() => {
         const messages = harness.service.listMessages(accepted.conversation.id);
         expect(messages.at(-1)?.status).toBe('completed');
@@ -1567,6 +1630,104 @@ describe('ChatService', () => {
       expect(assistantMessage?.toolInvocations?.[0]?.toolId).toBe('calculator');
       expect(assistantMessage?.toolInvocations?.[0]?.status).toBe('completed');
       expect(streamChat).not.toHaveBeenCalled();
+      expect(completeChat).toHaveBeenCalledTimes(3);
+    } finally {
+      harness.database.close();
+    }
+  });
+
+  it('streams plan-mode and task snapshots after native tool calls mutate them', async () => {
+    const directory = mkdtempSync(path.join(tmpdir(), 'ollama-desktop-plan-stream-'));
+    tempDirectories.push(directory);
+    const streamEvents: ChatStreamEvent[] = [];
+    const completeChat = vi
+      .fn()
+      .mockResolvedValueOnce({
+        content: '',
+        doneReason: 'stop',
+        thinking: '',
+        toolCalls: [
+          {
+            type: 'function' as const,
+            function: {
+              name: 'enter-plan-mode',
+              arguments: {}
+            }
+          }
+        ]
+      })
+      .mockResolvedValueOnce({
+        content: '',
+        doneReason: 'stop',
+        thinking: '',
+        toolCalls: [
+          {
+            type: 'function' as const,
+            function: {
+              name: 'task-create',
+              arguments: {
+                title: 'Inspect routing flow',
+                details: 'Trace plan/task stream updates.'
+              }
+            }
+          }
+        ]
+      })
+      .mockResolvedValueOnce({
+        content: 'Plan is ready.',
+        doneReason: 'stop',
+        thinking: '',
+        toolCalls: []
+      });
+    const harness = createChatServiceHarness({
+      directory,
+      loggerName: 'chat-plan-stream-test',
+      models: ['glm-5:cloud'],
+      completeChat
+    });
+
+    try {
+      harness.capabilityService.grantPermission({
+        capabilityId: 'task-create',
+        scopeKind: 'global',
+        scopeId: null
+      });
+
+      const accepted = await harness.service.startChatTurn(
+        {
+          prompt: 'Use plan mode and create a task for inspecting routing before answering.'
+        },
+        (event) => {
+          streamEvents.push(event);
+        }
+      );
+
+      await vi.waitFor(() => {
+        const messages = harness.service.listMessages(accepted.conversation.id);
+        expect(messages.at(-1)?.status).toBe('completed');
+      });
+
+      expect(
+        streamEvents.some(
+          (event) =>
+            event.type === 'update' && event.capabilityPlanState?.status === 'active'
+        )
+      ).toBe(true);
+      expect(
+        streamEvents.some(
+          (event) =>
+            event.type === 'update' &&
+            event.capabilityTasks?.some((task) => task.title === 'Inspect routing flow')
+        )
+      ).toBe(true);
+      expect(
+        streamEvents.some(
+          (event) =>
+            event.type === 'complete' &&
+            event.capabilityPlanState?.status === 'active' &&
+            event.capabilityTasks?.some((task) => task.title === 'Inspect routing flow')
+        )
+      ).toBe(true);
       expect(completeChat).toHaveBeenCalledTimes(3);
     } finally {
       harness.database.close();
@@ -2055,127 +2216,85 @@ describe('ChatService', () => {
     }
   });
 
-  it('filters non-auto-routable tools out of model-assisted route analysis', async () => {
-    const directory = mkdtempSync(path.join(tmpdir(), 'ollama-desktop-route-analysis-'));
+  it('uses the main capability prompt instead of a separate analysis request before native repository turns', async () => {
+    const directory = mkdtempSync(path.join(tmpdir(), 'ollama-desktop-capability-catalog-native-'));
     tempDirectories.push(directory);
-    const completeChat = vi.fn().mockResolvedValue({
-      content:
-        '{"toolId":"edit","skillId":"builder","needsVision":false,"prefersCode":true,"useWorkspaceKnowledge":false,"imageMode":"none","confidence":0.91,"reason":"apply the fix directly"}',
-      doneReason: 'stop',
-      thinking: '',
-      toolCalls: []
-    });
+    const projectDirectory = path.join(directory, 'sample-project');
+    mkdirSync(path.join(projectDirectory, 'src'), { recursive: true });
+    writeFileSync(path.join(projectDirectory, 'README.md'), '# Sample Project\n', 'utf8');
+    writeFileSync(path.join(projectDirectory, 'src', 'index.ts'), 'export const ready = true;\n', 'utf8');
+    const completeChat = vi
+      .fn()
+      .mockResolvedValueOnce({
+        content: '',
+        doneReason: 'stop',
+        thinking: '',
+        toolCalls: [
+          {
+            type: 'function' as const,
+            function: {
+              name: 'workspace-lister',
+              arguments: {
+                path: '.'
+              }
+            }
+          }
+        ]
+      })
+      .mockResolvedValueOnce({
+        content: 'Repository summary complete.',
+        doneReason: 'stop',
+        thinking: '',
+        toolCalls: []
+      });
     const harness = createChatServiceHarness({
       directory,
-      loggerName: 'chat-route-analysis-test',
-      models: ['llama3.2:latest', 'qwen2.5-coder:latest'],
+      loggerName: 'chat-capability-catalog-native-test',
+      models: ['glm-5:cloud'],
       completeChat
     });
 
     try {
-      const result = await (
-        harness.service as unknown as {
-          resolveModelRouteAnalysis: (input: {
-            prompt: string;
-            requestedModel?: string | undefined;
-            attachments: [];
-            recentMessages: [];
-            workspaceHasKnowledge: boolean;
-            explicitSkillId: string | null;
-            explicitToolId: string | null;
-            settings: ReturnType<typeof harness.settingsService.get>;
-            backend: 'ollama' | 'nvidia';
-            baseUrl: string;
-            apiKey: string | null;
-            availableModels: string[];
-            backendReady: boolean;
-          }) => Promise<{
-            toolId: string | null;
-            skillId: string | null;
-          } | null>;
-        }
-      ).resolveModelRouteAnalysis({
-        prompt: 'Implement the fixes in the file itself.',
-        attachments: [],
-        recentMessages: [],
-        workspaceHasKnowledge: false,
-        explicitSkillId: null,
-        explicitToolId: null,
-        settings: harness.settingsService.get(),
-        backend: 'ollama',
-        baseUrl: 'http://127.0.0.1:11434',
-        apiKey: null,
-        availableModels: ['llama3.2:latest', 'qwen2.5-coder:latest'],
-        backendReady: true
+      const workspace = await harness.service.createWorkspace({
+        name: 'Sample Project',
+        rootPath: projectDirectory
       });
 
-      expect(result?.toolId).toBeNull();
-      expect(result?.skillId).toBe('builder');
-    } finally {
-      harness.database.close();
-    }
-  });
+      const accepted = await harness.service.startChatTurn(
+        {
+          prompt: 'Analyze this repository and create a summary of the implementation.',
+          workspaceId: workspace.id
+        },
+        () => undefined
+      );
 
-  it('tells model-assisted route analysis when a workspace folder is connected', async () => {
-    const directory = mkdtempSync(path.join(tmpdir(), 'ollama-desktop-route-analysis-workspace-'));
-    tempDirectories.push(directory);
-    const completeChat = vi.fn().mockResolvedValue({
-      content:
-        '{"toolId":null,"skillId":null,"needsVision":false,"prefersCode":false,"useWorkspaceKnowledge":false,"imageMode":"none","confidence":0.72,"reason":"inspect the workspace if needed"}',
-      doneReason: 'stop',
-      thinking: '',
-      toolCalls: []
-    });
-    const harness = createChatServiceHarness({
-      directory,
-      loggerName: 'chat-route-analysis-workspace-test',
-      models: ['llama3.2:latest'],
-      completeChat
-    });
-
-    try {
-      const result = await (
-        harness.service as unknown as {
-          resolveModelRouteAnalysis: (input: {
-            prompt: string;
-            requestedModel?: string | undefined;
-            attachments: [];
-            recentMessages: [];
-            workspaceHasKnowledge: boolean;
-            workspaceRootConnected?: boolean;
-            explicitSkillId: string | null;
-            explicitToolId: string | null;
-            settings: ReturnType<typeof harness.settingsService.get>;
-            backend: 'ollama' | 'nvidia';
-            baseUrl: string;
-            apiKey: string | null;
-            availableModels: string[];
-            backendReady: boolean;
-          }) => Promise<{
-            toolId: string | null;
-            skillId: string | null;
-          } | null>;
-        }
-      ).resolveModelRouteAnalysis({
-        prompt: 'Analyze this repository and create a summary of the implementation.',
-        attachments: [],
-        recentMessages: [],
-        workspaceHasKnowledge: false,
-        workspaceRootConnected: true,
-        explicitSkillId: null,
-        explicitToolId: null,
-        settings: harness.settingsService.get(),
-        backend: 'ollama',
-        baseUrl: 'http://127.0.0.1:11434',
-        apiKey: null,
-        availableModels: ['llama3.2:latest'],
-        backendReady: true
+      await vi.waitFor(() => {
+        const messages = harness.service.listMessages(accepted.conversation.id);
+        expect(messages.at(-1)?.status).toBe('completed');
       });
-      const classifierMessages = getMockMessages(completeChat.mock.calls[0]?.[0]);
-      const classifierPrompt = classifierMessages.at(-1)?.content ?? '';
 
-      expect(result?.toolId).toBeNull();
-      expect(classifierPrompt).toContain('Workspace folder connected: yes');
+      const firstToolLoopMessages = getMockMessages(completeChat.mock.calls[0]?.[0]);
+
+      expect(
+        firstToolLoopMessages.some(
+          (message) =>
+            message.role === 'system' && message.content.includes('Capability catalog')
+        )
+      ).toBe(true);
+      expect(
+        firstToolLoopMessages.some(
+          (message) =>
+            message.role === 'system' && message.content.includes('Available skills')
+        )
+      ).toBe(true);
+      expect(
+        firstToolLoopMessages.some(
+          (message) =>
+            message.role === 'system' &&
+            message.content.includes('Do not claim you lack access to internal file contents')
+        )
+      ).toBe(true);
+      expect(completeChat).toHaveBeenCalledTimes(2);
     } finally {
       harness.database.close();
     }
@@ -2200,13 +2319,6 @@ describe('ChatService', () => {
     const streamChat = vi.fn();
     const completeChat = vi
       .fn()
-      .mockResolvedValueOnce({
-        content:
-          '{"toolId":null,"skillId":null,"needsVision":false,"prefersCode":false,"useWorkspaceKnowledge":false,"imageMode":"none","confidence":0.81,"reason":"inspect the repository before summarizing"}',
-        doneReason: 'stop',
-        thinking: '',
-        toolCalls: []
-      })
       .mockResolvedValueOnce({
         content: '',
         doneReason: 'stop',
@@ -2274,7 +2386,7 @@ describe('ChatService', () => {
 
       const messages = harness.service.listMessages(accepted.conversation.id);
       const assistantMessage = messages.at(-1);
-      const toolLoopMessages = getMockMessages(completeChat.mock.calls[1]?.[0]);
+      const toolLoopMessages = getMockMessages(completeChat.mock.calls[0]?.[0]);
 
       expect(assistantMessage?.content).toBe(
         'This workspace is a small TypeScript project with a README and a src entrypoint that exports a greet helper.'
@@ -2290,19 +2402,20 @@ describe('ChatService', () => {
             message.content.includes('Do not claim you lack access to internal file contents')
         )
       ).toBe(true);
+      const firstCompleteRequest = completeChat.mock.calls[0]?.[0] as
+        | { numCtx?: number }
+        | undefined;
       const secondCompleteRequest = completeChat.mock.calls[1]?.[0] as
         | { numCtx?: number }
         | undefined;
-      const thirdCompleteRequest = completeChat.mock.calls[2]?.[0] as
-        | { numCtx?: number }
-        | undefined;
 
+      expect(firstCompleteRequest?.numCtx).toBeGreaterThan(0);
       expect(secondCompleteRequest?.numCtx).toBeGreaterThan(0);
-      expect(thirdCompleteRequest?.numCtx).toBeGreaterThanOrEqual(
-        secondCompleteRequest?.numCtx ?? 0
+      expect(secondCompleteRequest?.numCtx).toBeGreaterThanOrEqual(
+        firstCompleteRequest?.numCtx ?? 0
       );
       expect(streamChat).not.toHaveBeenCalled();
-      expect(completeChat).toHaveBeenCalledTimes(4);
+      expect(completeChat).toHaveBeenCalledTimes(3);
     } finally {
       harness.database.close();
     }
@@ -2332,13 +2445,6 @@ describe('ChatService', () => {
     const streamChat = vi.fn();
     const completeChat = vi
       .fn()
-      .mockResolvedValueOnce({
-        content:
-          '{"toolId":null,"skillId":null,"needsVision":false,"prefersCode":false,"useWorkspaceKnowledge":false,"imageMode":"none","confidence":0.84,"reason":"inspect the repository and save a grounded summary file"}',
-        doneReason: 'stop',
-        thinking: '',
-        toolCalls: []
-      })
       .mockResolvedValueOnce({
         content: '',
         doneReason: 'stop',
@@ -2463,7 +2569,7 @@ describe('ChatService', () => {
 
       const messages = harness.service.listMessages(accepted.conversation.id);
       const assistantMessage = messages.at(-1);
-      const toolLoopMessages = getMockMessages(completeChat.mock.calls[1]?.[0]);
+      const toolLoopMessages = getMockMessages(completeChat.mock.calls[0]?.[0]);
 
       expect(assistantMessage?.content).toBe(
         'Prepared a grounded repository summary after inspecting the connected workspace files.'
@@ -2484,7 +2590,7 @@ describe('ChatService', () => {
         )
       ).toBe(true);
       expect(streamChat).not.toHaveBeenCalled();
-      expect(completeChat).toHaveBeenCalledTimes(7);
+      expect(completeChat).toHaveBeenCalledTimes(6);
     } finally {
       harness.database.close();
     }
@@ -2499,13 +2605,6 @@ describe('ChatService', () => {
     const streamChat = vi.fn();
     const completeChat = vi
       .fn()
-      .mockResolvedValueOnce({
-        content:
-          '{"toolId":null,"skillId":null,"needsVision":false,"prefersCode":false,"useWorkspaceKnowledge":false,"imageMode":"none","confidence":0.82,"reason":"inspect the repository before summarizing"}',
-        doneReason: 'stop',
-        thinking: '',
-        toolCalls: []
-      })
       .mockResolvedValueOnce({
         content: '',
         doneReason: 'stop',
@@ -2555,20 +2654,16 @@ describe('ChatService', () => {
         expect(messages.at(-1)?.status).toBe('completed');
       });
 
-      expect(completeChat).toHaveBeenCalledTimes(3);
+      expect(completeChat).toHaveBeenCalledTimes(2);
       const firstCompleteRequest = completeChat.mock.calls[0]?.[0] as
         | { think?: boolean | 'low' | 'medium' | 'high' }
         | undefined;
       const secondCompleteRequest = completeChat.mock.calls[1]?.[0] as
         | { think?: boolean | 'low' | 'medium' | 'high' }
         | undefined;
-      const thirdCompleteRequest = completeChat.mock.calls[2]?.[0] as
-        | { think?: boolean | 'low' | 'medium' | 'high' }
-        | undefined;
 
-      expect(firstCompleteRequest?.think).toBeUndefined();
+      expect(firstCompleteRequest?.think).toBe(false);
       expect(secondCompleteRequest?.think).toBe(false);
-      expect(thirdCompleteRequest?.think).toBe(false);
       expect(streamChat).not.toHaveBeenCalled();
     } finally {
       harness.database.close();
@@ -2692,13 +2787,6 @@ describe('ChatService', () => {
     const completeChat = vi
       .fn()
       .mockResolvedValueOnce({
-        content:
-          '{"toolId":null,"skillId":"builder","needsVision":false,"prefersCode":true,"useWorkspaceKnowledge":true,"imageMode":"none","confidence":0.9,"reason":"implement feature in existing project"}',
-        doneReason: 'stop',
-        thinking: '',
-        toolCalls: []
-      })
-      .mockResolvedValueOnce({
         content: '',
         doneReason: 'stop',
         thinking: '',
@@ -2778,7 +2866,7 @@ describe('ChatService', () => {
         )
       ).toBe(true);
       expect(streamChat).not.toHaveBeenCalled();
-      expect(completeChat).toHaveBeenCalledTimes(3);
+      expect(completeChat).toHaveBeenCalledTimes(2);
     } finally {
       harness.database.close();
     }
@@ -2790,13 +2878,6 @@ describe('ChatService', () => {
     const streamChat = vi.fn();
     const completeChat = vi
       .fn()
-      .mockResolvedValueOnce({
-        content:
-          '{"toolId":null,"skillId":"builder","needsVision":false,"prefersCode":true,"useWorkspaceKnowledge":true,"imageMode":"none","confidence":0.9,"reason":"implement feature in existing project"}',
-        doneReason: 'stop',
-        thinking: '',
-        toolCalls: []
-      })
       .mockResolvedValueOnce({
         content: '',
         doneReason: 'stop',
@@ -2848,26 +2929,29 @@ describe('ChatService', () => {
         expect(messages.at(-1)?.status).toBe('completed');
       });
 
-      const firstNativeToolCallMessages = getMockMessages(completeChat.mock.calls[1]?.[0]);
+      const firstNativeToolCallMessages = getMockMessages(completeChat.mock.calls[0]?.[0]);
 
       expect(
         firstNativeToolCallMessages.some(
           (message) =>
-            message.role === 'system' && message.content.includes('Tool quick reference:')
+            message.role === 'system' &&
+            message.content.includes('Reading (always call before modifying):')
         )
       ).toBe(true);
       expect(
         firstNativeToolCallMessages.some(
           (message) =>
             message.role === 'system' &&
-            message.content.includes('`read({filePath})` / `file-reader({path})`')
+            message.content.includes('`read({filePath})`: read exact file contents.')
         )
       ).toBe(true);
       expect(
         firstNativeToolCallMessages.some(
           (message) =>
             message.role === 'system' &&
-            message.content.includes('`write({filePath|path, content})`')
+            message.content.includes(
+              '`write({filePath, content})`: create or fully overwrite a file. Content must be the complete new file, and `write` cannot infer content from a path-only call.'
+            )
         )
       ).toBe(true);
     } finally {
@@ -2983,13 +3067,6 @@ describe('ChatService', () => {
     const completeChat = vi
       .fn()
       .mockResolvedValueOnce({
-        content:
-          '{"toolId":null,"skillId":"builder","needsVision":false,"prefersCode":true,"useWorkspaceKnowledge":true,"imageMode":"none","confidence":0.9,"reason":"implement feature in existing project"}',
-        doneReason: 'stop',
-        thinking: '',
-        toolCalls: []
-      })
-      .mockResolvedValueOnce({
         content: 'I can handle this from the existing context.',
         doneReason: 'stop',
         thinking: '',
@@ -3048,7 +3125,7 @@ describe('ChatService', () => {
 
       const messages = harness.service.listMessages(accepted.conversation.id);
       const assistantMessage = messages.at(-1);
-      const retryMessages = getMockMessages(completeChat.mock.calls[2]?.[0]);
+      const retryMessages = getMockMessages(completeChat.mock.calls[1]?.[0]);
 
       expect(assistantMessage?.content).toBe(
         'I inspected the file and identified the current structure.'
@@ -3066,10 +3143,12 @@ describe('ChatService', () => {
       expect(
         retryMessages.some(
           (message) =>
-            message.role === 'system' && message.content.includes('Tool quick reference:')
+            message.role === 'system' &&
+            message.content.includes('Available tools') &&
+            message.content.includes('never plain-text commands')
         )
       ).toBe(true);
-      expect(completeChat).toHaveBeenCalledTimes(4);
+      expect(completeChat).toHaveBeenCalledTimes(3);
     } finally {
       harness.database.close();
     }
@@ -3081,13 +3160,6 @@ describe('ChatService', () => {
     const streamChat = vi.fn();
     const completeChat = vi
       .fn()
-      .mockResolvedValueOnce({
-        content:
-          '{"toolId":"file-reader","skillId":null,"needsVision":false,"prefersCode":false,"useWorkspaceKnowledge":false,"imageMode":"none","confidence":0.91,"reason":"inspect the file before fixing encoding"}',
-        doneReason: 'stop',
-        thinking: '',
-        toolCalls: []
-      })
       .mockResolvedValueOnce({
         content: '',
         doneReason: 'stop',
@@ -3202,7 +3274,7 @@ describe('ChatService', () => {
         '# Screenwriter - Repository Summary\n\n## Overview\n\nFixed unicode symbols.\n'
       );
       expect(streamChat).not.toHaveBeenCalled();
-      expect(completeChat).toHaveBeenCalledTimes(5);
+      expect(completeChat).toHaveBeenCalledTimes(4);
     } finally {
       harness.database.close();
     }
@@ -3214,13 +3286,6 @@ describe('ChatService', () => {
     const streamChat = vi.fn();
     const completeChat = vi
       .fn()
-      .mockResolvedValueOnce({
-        content:
-          '{"toolId":null,"skillId":"builder","needsVision":false,"prefersCode":true,"useWorkspaceKnowledge":true,"imageMode":"none","confidence":0.9,"reason":"fix file in existing project"}',
-        doneReason: 'stop',
-        thinking: '',
-        toolCalls: []
-      })
       .mockResolvedValueOnce({
         content: '',
         doneReason: 'stop',
@@ -3248,8 +3313,9 @@ describe('ChatService', () => {
               name: 'edit',
               arguments: {
                 filePath: 'screenwriter_summary.md',
-                search: '## Missing Heading',
-                replace: '## Overview'
+                startLine: 99,
+                endLine: 99,
+                newText: '## Overview'
               }
             }
           }
@@ -3346,7 +3412,7 @@ describe('ChatService', () => {
 
       const messages = harness.service.listMessages(accepted.conversation.id);
       const assistantMessage = messages.at(-1);
-      const recoveryMessages = getMockMessages(completeChat.mock.calls[4]?.[0]);
+      const recoveryMessages = getMockMessages(completeChat.mock.calls[3]?.[0]);
 
       expect(assistantMessage?.content).toBe(
         'Fixed the file after retrying with a corrected tool call and verified the result.'
@@ -3363,7 +3429,7 @@ describe('ChatService', () => {
         recoveryMessages.some(
           (message) =>
             message.role === 'system' &&
-            message.content.includes('The latest tool call failed and the task is not complete yet.')
+            message.content.includes('The latest tool call failed and the task is not complete.')
         )
       ).toBe(true);
       expect(
@@ -3372,7 +3438,7 @@ describe('ChatService', () => {
             message.role === 'system' && message.content.includes('Latest failure: `edit`')
         )
       ).toBe(true);
-      expect(completeChat).toHaveBeenCalledTimes(7);
+      expect(completeChat).toHaveBeenCalledTimes(6);
     } finally {
       harness.database.close();
     }
@@ -3548,13 +3614,6 @@ describe('ChatService', () => {
     const completeChat = vi
       .fn()
       .mockResolvedValueOnce({
-        content:
-          '{"toolId":null,"skillId":"builder","needsVision":false,"prefersCode":true,"useWorkspaceKnowledge":true,"imageMode":"none","confidence":0.9,"reason":"implement feature in existing project"}',
-        doneReason: 'stop',
-        thinking: '',
-        toolCalls: []
-      })
-      .mockResolvedValueOnce({
         content: '',
         doneReason: 'stop',
         thinking: '',
@@ -3582,7 +3641,7 @@ describe('ChatService', () => {
               arguments: {
                 filePath: 'index.html',
                 search: '<form id="login"></form>',
-                replace: '<form id="login"></form>\n<form id="signup"></form>'
+                replacement: '<form id="login"></form>\n<form id="signup"></form>'
               }
             }
           }
@@ -3652,7 +3711,7 @@ describe('ChatService', () => {
 
       const messages = harness.service.listMessages(accepted.conversation.id);
       const assistantMessage = messages.at(-1);
-      const verificationCallMessages = getMockMessages(completeChat.mock.calls[4]?.[0]);
+      const verificationCallMessages = getMockMessages(completeChat.mock.calls[3]?.[0]);
 
       expect(assistantMessage?.content).toBe(
         'Implemented sign-up support and verified the updated markup.'
@@ -3673,7 +3732,7 @@ describe('ChatService', () => {
         '<form id="signup"></form>'
       );
       expect(streamChat).not.toHaveBeenCalled();
-      expect(completeChat).toHaveBeenCalledTimes(6);
+      expect(completeChat).toHaveBeenCalledTimes(5);
     } finally {
       harness.database.close();
     }
@@ -3685,13 +3744,6 @@ describe('ChatService', () => {
     const streamChat = vi.fn();
     const completeChat = vi
       .fn()
-      .mockResolvedValueOnce({
-        content:
-          '{"toolId":"workspace-lister","skillId":"builder","needsVision":false,"prefersCode":true,"useWorkspaceKnowledge":true,"imageMode":"none","confidence":0.9,"reason":"implement feature in existing project"}',
-        doneReason: 'stop',
-        thinking: '',
-        toolCalls: []
-      })
       .mockResolvedValueOnce({
         content: '',
         doneReason: 'stop',
@@ -3752,7 +3804,7 @@ describe('ChatService', () => {
               arguments: {
                 filePath: 'index.html',
                 search: '<p class="signup-link">Sign up</p>',
-                replace:
+                replacement:
                   '<div class="auth-tabs"><button>Sign In</button><button>Sign Up</button></div>\n<p class="signup-link">Sign up</p>'
               }
             }
@@ -3771,7 +3823,7 @@ describe('ChatService', () => {
               arguments: {
                 filePath: 'script.js',
                 search: 'function handleLogin() {\n  return true;\n}\n',
-                replace:
+                replacement:
                   'function handleLogin() {\n  return true;\n}\n\nfunction handleSignup() {\n  return true;\n}\n'
               }
             }
@@ -3869,7 +3921,7 @@ describe('ChatService', () => {
       );
       expect(assistantMessage?.toolInvocations).toHaveLength(7);
       expect(streamChat).not.toHaveBeenCalled();
-      expect(completeChat).toHaveBeenCalledTimes(8);
+      expect(completeChat).toHaveBeenCalledTimes(7);
       expect(readFileSync(path.join(workspaceRoot, 'index.html'), 'utf8')).toContain(
         '<div class="auth-tabs"><button>Sign In</button><button>Sign Up</button></div>'
       );
@@ -3887,14 +3939,6 @@ describe('ChatService', () => {
     const streamChat = vi.fn();
     const completeChat = vi.fn();
     const scaffoldRoundCount = 13;
-
-    completeChat.mockResolvedValueOnce({
-      content:
-        '{"toolId":null,"skillId":"builder","needsVision":false,"prefersCode":true,"useWorkspaceKnowledge":true,"imageMode":"none","confidence":0.9,"reason":"create scaffold files in existing project"}',
-      doneReason: 'stop',
-      thinking: '',
-      toolCalls: []
-    });
 
     for (let index = 1; index <= scaffoldRoundCount; index += 1) {
       completeChat.mockResolvedValueOnce({
@@ -3978,7 +4022,7 @@ describe('ChatService', () => {
 
       expect(assistantMessage?.content).toBe('Created and verified the scaffold files.');
       expect(assistantMessage?.toolInvocations).toHaveLength(scaffoldRoundCount + 1);
-      expect(completeChat).toHaveBeenCalledTimes(scaffoldRoundCount + 3);
+      expect(completeChat).toHaveBeenCalledTimes(scaffoldRoundCount + 2);
       expect(streamChat).not.toHaveBeenCalled();
       expect(readFileSync(path.join(workspaceRoot, 'scaffold', 'file-1.txt'), 'utf8')).toBe(
         'scaffold file 1\n'
@@ -4036,8 +4080,7 @@ describe('ChatService', () => {
         }
       );
     const completeChat = vi.fn().mockResolvedValueOnce({
-      content:
-        '{"toolId":null,"skillId":"builder","needsVision":false,"prefersCode":true,"useWorkspaceKnowledge":true,"imageMode":"none","confidence":0.9,"reason":"implement feature in existing project"}',
+      content: '',
       doneReason: 'stop',
       thinking: '',
       toolCalls: []
@@ -4088,7 +4131,7 @@ describe('ChatService', () => {
       );
       expect(assistantMessage?.toolInvocations?.[0]?.toolId).toBe('read');
       expect(streamChat).toHaveBeenCalledTimes(2);
-      expect(completeChat).toHaveBeenCalledTimes(1);
+      expect(completeChat).not.toHaveBeenCalled();
     } finally {
       harness.database.close();
     }
@@ -4139,8 +4182,7 @@ describe('ChatService', () => {
         }
       );
     const completeChat = vi.fn().mockResolvedValueOnce({
-      content:
-        '{"toolId":null,"skillId":"builder","needsVision":false,"prefersCode":true,"useWorkspaceKnowledge":true,"imageMode":"none","confidence":0.9,"reason":"implement feature in existing project"}',
+      content: '',
       doneReason: 'stop',
       thinking: '',
       toolCalls: []
@@ -4202,7 +4244,7 @@ describe('ChatService', () => {
         )
       ).toBe(true);
       expect(streamChat).toHaveBeenCalledTimes(2);
-      expect(completeChat).toHaveBeenCalledTimes(1);
+      expect(completeChat).not.toHaveBeenCalled();
     } finally {
       harness.database.close();
     }
@@ -4263,8 +4305,7 @@ describe('ChatService', () => {
       });
     });
     const completeChat = vi.fn().mockResolvedValueOnce({
-      content:
-        '{"toolId":null,"skillId":"builder","needsVision":false,"prefersCode":true,"useWorkspaceKnowledge":true,"imageMode":"none","confidence":0.9,"reason":"create scaffold files in existing project"}',
+      content: '',
       doneReason: 'stop',
       thinking: '',
       toolCalls: []
@@ -4308,7 +4349,7 @@ describe('ChatService', () => {
       expect(assistantMessage?.content).toBe('Created and verified the local scaffold files.');
       expect(assistantMessage?.toolInvocations).toHaveLength(scaffoldRoundCount + 1);
       expect(streamChat).toHaveBeenCalledTimes(scaffoldRoundCount + 2);
-      expect(completeChat).toHaveBeenCalledTimes(1);
+      expect(completeChat).not.toHaveBeenCalled();
       expect(
         readFileSync(path.join(workspaceRoot, 'scaffold', `file-${scaffoldRoundCount}.txt`), 'utf8')
       ).toBe(`scaffold file ${scaffoldRoundCount}\n`);
@@ -4438,6 +4479,138 @@ describe('ChatService', () => {
       });
 
       expect(streamChat).toHaveBeenCalledTimes(1);
+    } finally {
+      harness.database.close();
+    }
+  });
+
+  it('recovers from a path-only write tool call by demanding full file content', async () => {
+    const directory = mkdtempSync(path.join(tmpdir(), 'ollama-desktop-write-recovery-'));
+    tempDirectories.push(directory);
+    const streamChat = vi.fn();
+    const completeChat = vi
+      .fn()
+      .mockResolvedValueOnce({
+        content: '',
+        doneReason: 'stop',
+        thinking: '',
+        toolCalls: [
+          {
+            type: 'function' as const,
+            function: {
+              name: 'write',
+              arguments: {
+                filePath: 'index.html'
+              }
+            }
+          }
+        ]
+      })
+      .mockResolvedValueOnce({
+        content: '',
+        doneReason: 'stop',
+        thinking: '',
+        toolCalls: [
+          {
+            type: 'function' as const,
+            function: {
+              name: 'write',
+              arguments: {
+                filePath: 'index.html',
+                content: '<!doctype html>\n<html><body><h1>Browser OS</h1></body></html>\n'
+              }
+            }
+          }
+        ]
+      })
+      .mockResolvedValueOnce({
+        content: '',
+        doneReason: 'stop',
+        thinking: '',
+        toolCalls: [
+          {
+            type: 'function' as const,
+            function: {
+              name: 'read',
+              arguments: {
+                filePath: 'index.html'
+              }
+            }
+          }
+        ]
+      })
+      .mockResolvedValueOnce({
+        content: 'Created index.html after retrying with a complete write payload and verified it.',
+        doneReason: 'stop',
+        thinking: '',
+        toolCalls: []
+      });
+    const harness = createChatServiceHarness({
+      directory,
+      loggerName: 'chat-write-tool-recovery-test',
+      models: ['glm-5:cloud', 'gemma4:31b-cloud'],
+      streamChat,
+      completeChat
+    });
+
+    try {
+      const workspaceRoot = path.join(directory, 'workspace-root');
+      const indexPath = path.join(workspaceRoot, 'index.html');
+      mkdirSync(workspaceRoot, { recursive: true });
+
+      const workspace = harness.repository.ensureDefaultWorkspace();
+      harness.repository.updateWorkspaceRoot(workspace.id, workspaceRoot);
+      harness.capabilityService.grantPermission({
+        capabilityId: 'write',
+        scopeKind: 'workspace',
+        scopeId: workspace.id
+      });
+
+      const accepted = await harness.service.startChatTurn(
+        {
+          prompt: 'Create index.html for a simple browser app shell and save it.',
+          workspaceId: workspace.id
+        },
+        () => undefined
+      );
+
+      await vi.waitFor(() => {
+        const messages = harness.service.listMessages(accepted.conversation.id);
+        expect(messages.at(-1)?.status).toBe('completed');
+      });
+
+      const messages = harness.service.listMessages(accepted.conversation.id);
+      const assistantMessage = messages.at(-1);
+      const recoveryMessages = getMockMessages(completeChat.mock.calls[1]?.[0]);
+
+      expect(assistantMessage?.content).toBe(
+        'Created index.html after retrying with a complete write payload and verified it.'
+      );
+      expect(
+        assistantMessage?.toolInvocations?.map(
+          (invocation) => `${invocation.toolId}:${invocation.status}`
+        )
+      ).toEqual(['write:failed', 'write:completed', 'read:completed']);
+      expect(readFileSync(indexPath, 'utf8')).toBe(
+        '<!doctype html>\n<html><body><h1>Browser OS</h1></body></html>\n'
+      );
+      expect(
+        recoveryMessages.some(
+          (message) =>
+            message.role === 'tool' &&
+            message.content.includes('Failed arguments: {"filePath":"index.html"}')
+        )
+      ).toBe(true);
+      expect(
+        recoveryMessages.some(
+          (message) =>
+            message.role === 'tool' &&
+            message.content.includes(
+              '`write` is a single-call file creation or overwrite tool. It cannot infer file contents from `filePath` alone.'
+            )
+        )
+      ).toBe(true);
+      expect(completeChat).toHaveBeenCalledTimes(4);
     } finally {
       harness.database.close();
     }

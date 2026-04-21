@@ -252,6 +252,11 @@ function createDeferred<T>() {
   };
 }
 
+async function chooseComboboxOption(label: string, optionName: string | RegExp) {
+  fireEvent.click(await screen.findByRole('combobox', { name: label }));
+  fireEvent.click(await screen.findByRole('option', { name: optionName }));
+}
+
 describe('ChatPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -461,7 +466,7 @@ describe('ChatPage', () => {
     expect(screen.getAllByText(conversation.title).length).toBeGreaterThanOrEqual(1);
   });
 
-  it('polls system status so VRAM usage stays live while local models load and unload', async () => {
+  it('polls system status while keeping the footer runtime pills minimal', async () => {
     const updatedStatus = {
       ...baseSystemStatus,
       ollama: {
@@ -520,7 +525,10 @@ describe('ChatPage', () => {
       await waitFor(() => {
         expect(mockApi.system.getStatus).toHaveBeenCalledTimes(2);
       });
-      expect(screen.getByText('2048 / 16384 MiB')).toBeInTheDocument();
+      expect(screen.getByText('3 model(s)')).toBeInTheDocument();
+      expect(screen.queryByText('Python')).not.toBeInTheDocument();
+      expect(screen.queryByText('VRAM')).not.toBeInTheDocument();
+      expect(screen.queryByText(/MiB/)).not.toBeInTheDocument();
     } finally {
       setIntervalSpy.mockRestore();
       clearIntervalSpy.mockRestore();
@@ -656,12 +664,9 @@ describe('ChatPage', () => {
   it('sends an explicit model override when the user switches out of Auto', async () => {
     render(<App />);
 
-    const modelSelect = await screen.findByLabelText('Model');
-    const textarea = screen.getByLabelText('Message prompt');
+    const textarea = await screen.findByLabelText('Message prompt');
 
-    fireEvent.change(modelSelect, {
-      target: { value: 'qwen2.5-coder:latest' }
-    });
+    await chooseComboboxOption('Model', 'qwen2.5-coder:latest');
     fireEvent.change(textarea, {
       target: { value: 'Build a login screen in HTML and CSS.' }
     });
@@ -681,9 +686,7 @@ describe('ChatPage', () => {
   it('updates the selected text backend from the header selector', async () => {
     render(<App />);
 
-    fireEvent.change(await screen.findByLabelText('Text backend'), {
-      target: { value: 'nvidia' }
-    });
+    await chooseComboboxOption('Text backend', 'NVIDIA');
 
     await waitFor(() => {
       expect(mockApi.settings.update).toHaveBeenCalledWith({
@@ -695,12 +698,9 @@ describe('ChatPage', () => {
   it('sends an explicit think mode when the user selects one', async () => {
     render(<App />);
 
-    const thinkModeSelect = await screen.findByLabelText('Think mode');
-    const textarea = screen.getByLabelText('Message prompt');
+    const textarea = await screen.findByLabelText('Message prompt');
 
-    fireEvent.change(thinkModeSelect, {
-      target: { value: 'medium' }
-    });
+    await chooseComboboxOption('Think mode', 'Think medium');
     fireEvent.change(textarea, {
       target: { value: 'Review this codebase.' }
     });

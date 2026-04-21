@@ -17,6 +17,7 @@ const settings = {
   additionalModelsDirectory: null,
   videoGenerationModel: '',
   pythonPort: 8765,
+  streamingMascotEnabled: true,
   theme: 'system' as const
 };
 
@@ -72,6 +73,14 @@ function createCapabilityProps() {
     onGrantCapabilityPermission: vi.fn().mockResolvedValue(undefined),
     onRevokeCapabilityPermission: vi.fn().mockResolvedValue(undefined)
   };
+}
+
+function chooseCombobox(index: number, optionName: string | RegExp) {
+  const combo = screen.getAllByRole('combobox')[index];
+
+  expect(combo).toBeDefined();
+  fireEvent.click(combo!);
+  fireEvent.click(screen.getByRole('option', { name: optionName }));
 }
 
 describe('SettingsDrawer', () => {
@@ -208,6 +217,8 @@ describe('SettingsDrawer', () => {
       />
     );
 
+    fireEvent.click(screen.getByRole('combobox', { name: /Image Gen/i }));
+
     expect(screen.getByRole('option', { name: 'zimageTurbo.gguf' })).toBeEnabled();
     expect(screen.getByRole('option', { name: 'Qwen-Image-Edit.gguf' })).toBeEnabled();
   });
@@ -231,17 +242,9 @@ describe('SettingsDrawer', () => {
       />
     );
 
-    const combos = screen.getAllByRole('combobox');
-
-    fireEvent.change(combos[1]!, {
-      target: { value: 'qwen2.5-coder:latest' }
-    });
-    fireEvent.change(combos[2]!, {
-      target: { value: 'llama3.2:latest' }
-    });
-    fireEvent.change(combos[3]!, {
-      target: { value: 'qwen3-vl:8b' }
-    });
+    chooseCombobox(1, 'qwen2.5-coder:latest');
+    chooseCombobox(2, 'llama3.2:latest');
+    chooseCombobox(3, 'qwen3-vl:8b');
     fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
 
     await waitFor(() => {
@@ -257,6 +260,52 @@ describe('SettingsDrawer', () => {
         additionalModelsDirectory: null,
         videoGenerationModel: '',
         pythonPort: 8765,
+        streamingMascotEnabled: true,
+        theme: 'system'
+      });
+    });
+  });
+
+  it('saves the streaming mascot switch state', async () => {
+    const capabilityProps = createCapabilityProps();
+    const onSave = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <SettingsDrawer
+        {...capabilityProps}
+        imageGenerationModelCatalog={builtinCatalog}
+        onClose={() => undefined}
+        onDiscoverImageModels={vi.fn().mockResolvedValue(builtinCatalog)}
+        onPickAdditionalModelsDirectory={vi.fn().mockResolvedValue(null)}
+        onSave={onSave}
+        nvidiaModels={['meta/llama-3.1-8b-instruct']}
+        ollamaModels={['llama3.2:latest', 'qwen2.5-coder:latest', 'qwen3-vl:8b']}
+        open
+        settings={settings}
+      />
+    );
+
+    const mascotSwitch = screen.getByRole('switch', { name: /Streaming mascot/i });
+
+    expect(mascotSwitch).toHaveAttribute('aria-checked', 'true');
+
+    fireEvent.click(mascotSwitch);
+    fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
+
+    await waitFor(() => {
+      expect(onSave).toHaveBeenCalledWith({
+        textInferenceBackend: 'ollama',
+        ollamaBaseUrl: 'http://127.0.0.1:11434',
+        nvidiaBaseUrl: 'https://integrate.api.nvidia.com/v1',
+        nvidiaApiKey: '',
+        defaultModel: 'llama3.2:latest',
+        codingModel: 'qwen2.5-coder:latest',
+        visionModel: 'qwen3-vl:8b',
+        imageGenerationModel: 'builtin:placeholder',
+        additionalModelsDirectory: null,
+        videoGenerationModel: '',
+        pythonPort: 8765,
+        streamingMascotEnabled: false,
         theme: 'system'
       });
     });
@@ -281,14 +330,8 @@ describe('SettingsDrawer', () => {
       />
     );
 
-    const combos = screen.getAllByRole('combobox');
-
-    fireEvent.change(combos[0]!, {
-      target: { value: 'nvidia' }
-    });
-    fireEvent.change(combos[1]!, {
-      target: { value: 'meta/llama-3.1-8b-instruct' }
-    });
+    chooseCombobox(0, 'NVIDIA');
+    chooseCombobox(1, 'meta/llama-3.1-8b-instruct');
     fireEvent.change(screen.getByPlaceholderText('nvapi-...'), {
       target: { value: 'nvapi-test-key' }
     });
@@ -310,6 +353,7 @@ describe('SettingsDrawer', () => {
         additionalModelsDirectory: null,
         videoGenerationModel: '',
         pythonPort: 8765,
+        streamingMascotEnabled: true,
         theme: 'system'
       });
     });

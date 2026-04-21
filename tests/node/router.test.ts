@@ -670,6 +670,40 @@ describe('ChatRouter', () => {
     expect(decision.reason).toBe('code-runner-tool-routing');
   });
 
+  it('keeps browser-app implementation prompts on builder routing instead of the code runner', () => {
+    const router = new ChatRouter(createLogger('router-builder-browser-os-test'));
+
+    const decision = router.decide(
+      {
+        prompt: `Using HTML, CSS, and JavaScript, generate a browser OS with these features:
+
+At least 5 applications
+2 of the 5 applications must be functional 3D games
+One game must be a simple GTA clone
+The other 3D game can be anything
+Ability to change wallpaper
+Everything must be contained in a single script/file
+Must run in Chrome browser`,
+        attachments: [],
+        recentMessages: [],
+        workspaceHasKnowledge: false,
+        explicitSkillId: null,
+        explicitToolId: null
+      },
+      {
+        ...defaultUserSettings,
+        codingModel: 'qwen2.5-coder:latest'
+      },
+      ['llama3.2:latest', 'qwen2.5-coder:latest']
+    );
+
+    expect(decision.activeSkillId).toBe('builder');
+    expect(decision.activeToolId).toBeNull();
+    expect(decision.strategy).toBe('skill-chat');
+    expect(decision.reason).toBe('auto-builder-skill');
+    expect(decision.selectedModel).toBe('qwen2.5-coder:latest');
+  });
+
   it('auto-activates reviewer skill for review-style prompts without forcing a tool', () => {
     const router = new ChatRouter(createLogger('router-review-skill-test'));
 

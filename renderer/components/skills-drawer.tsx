@@ -50,7 +50,7 @@ function StepBadge(props: { active: boolean; complete: boolean; label: string; s
   return (
     <div className="flex items-center gap-2">
       <span
-        className={`flex h-7 w-7 items-center justify-center rounded-full text-[11px] font-semibold ${
+        className={`motion-interactive flex h-7 w-7 items-center justify-center rounded-full text-[11px] font-semibold ${
           props.active
             ? 'bg-cyan-400 text-slate-950'
             : props.complete
@@ -77,7 +77,7 @@ function SkillCard(props: {
 
   return (
     <div
-      className={`rounded-2xl border px-4 py-3 ${
+      className={`motion-card rounded-2xl border px-4 py-3 ${
         props.selected
           ? 'border-cyan-300/30 bg-cyan-400/10'
           : 'border-white/10 bg-slate-950/45'
@@ -103,7 +103,7 @@ function SkillCard(props: {
         <div className="flex shrink-0 items-center gap-2">
           {!readOnly ? (
             <button
-              className="rounded-full border border-white/10 px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.16em] text-slate-200 transition hover:border-white/20 hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
+              className="motion-interactive rounded-full border border-white/10 px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.16em] text-slate-200 transition hover:border-white/20 hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
               onClick={props.onEdit}
               type="button"
             >
@@ -112,7 +112,7 @@ function SkillCard(props: {
           ) : null}
           {props.onDelete ? (
             <button
-              className="rounded-full border border-rose-400/20 px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.16em] text-rose-200 transition hover:bg-rose-400/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-400"
+              className="motion-interactive rounded-full border border-rose-400/20 px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.16em] text-rose-200 transition hover:bg-rose-400/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-400"
               onClick={props.onDelete}
               type="button"
             >
@@ -235,8 +235,8 @@ export function SkillsDrawer(props: SkillsDrawerProps) {
   }
 
   return (
-    <div className="pointer-events-none fixed inset-x-0 bottom-16 z-20 flex justify-center px-6 animate-fade-in">
-      <section className="pointer-events-auto flex max-h-[calc(78vh-2rem)] w-full max-w-6xl flex-col overflow-hidden rounded-[2rem] border border-white/10 bg-slate-950/95 shadow-2xl backdrop-blur animate-slide-in-up">
+    <div className="pointer-events-none fixed inset-x-0 bottom-16 z-20 flex animate-fade-in justify-center px-6">
+      <section className="motion-drawer-up pointer-events-auto flex max-h-[calc(78vh-2rem)] w-full max-w-6xl flex-col overflow-hidden rounded-[2rem] border border-white/10 bg-slate-950/95 shadow-2xl backdrop-blur">
         <div className="flex shrink-0 items-start justify-between gap-4 px-6 pt-5">
           <div>
             <p className="text-xs uppercase tracking-[0.3em] text-cyan-200/70">Skills</p>
@@ -248,7 +248,7 @@ export function SkillsDrawer(props: SkillsDrawerProps) {
           </div>
           <div className="flex items-center gap-2">
             <button
-              className="rounded-full border border-white/10 px-3 py-1.5 text-xs font-medium text-slate-200 transition hover:border-white/20 hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
+              className="motion-interactive rounded-full border border-white/10 px-3 py-1.5 text-xs font-medium text-slate-200 transition hover:border-white/20 hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
               onClick={beginCreateSkill}
               type="button"
             >
@@ -257,7 +257,7 @@ export function SkillsDrawer(props: SkillsDrawerProps) {
             {props.onClose ? (
               <button
                 aria-label="Close skills drawer"
-                className="rounded-full border border-white/10 px-3 py-1.5 text-xs font-medium text-slate-300 transition hover:border-white/20 hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
+                className="motion-interactive rounded-full border border-white/10 px-3 py-1.5 text-xs font-medium text-slate-300 transition hover:border-white/20 hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
                 onClick={props.onClose}
                 type="button"
               >
@@ -269,7 +269,7 @@ export function SkillsDrawer(props: SkillsDrawerProps) {
 
         <div className="mt-5 min-h-0 flex-1 overflow-y-auto px-6 pb-5">
           <div className="grid gap-5 lg:grid-cols-[1.15fr_0.85fr]">
-            <section className="min-h-0 space-y-4 rounded-[1.5rem] border border-white/10 bg-slate-900/60 px-4 py-4">
+            <section className="motion-card min-h-0 space-y-4 rounded-[1.5rem] border border-white/10 bg-slate-900/60 px-4 py-4">
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <h3 className="text-sm font-semibold text-slate-100">Available skills</h3>
@@ -285,7 +285,7 @@ export function SkillsDrawer(props: SkillsDrawerProps) {
                     User skills
                   </p>
                   {userSkills.length === 0 ? (
-                    <p className="rounded-2xl border border-dashed border-white/10 px-4 py-6 text-sm text-slate-400">
+                    <p className="motion-panel rounded-2xl border border-dashed border-white/10 px-4 py-6 text-sm text-slate-400">
                       No user skills yet. Use the wizard to add one to local storage.
                     </p>
                   ) : (
@@ -323,7 +323,7 @@ export function SkillsDrawer(props: SkillsDrawerProps) {
               </div>
             </section>
 
-            <section className="space-y-4 rounded-[1.5rem] border border-white/10 bg-slate-900/60 px-4 py-4">
+            <section className="motion-card space-y-4 rounded-[1.5rem] border border-white/10 bg-slate-900/60 px-4 py-4">
               <div>
                 <p className="text-xs uppercase tracking-[0.3em] text-cyan-200/70">
                   {editingExistingSkill ? 'Edit skill' : 'Create skill'}
@@ -355,7 +355,7 @@ export function SkillsDrawer(props: SkillsDrawerProps) {
               </div>
 
               {error ? (
-                <div className="rounded-2xl border border-rose-400/20 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
+                <div className="motion-panel rounded-2xl border border-rose-400/20 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
                   {error}
                 </div>
               ) : null}
@@ -378,7 +378,7 @@ export function SkillsDrawer(props: SkillsDrawerProps) {
                     />
                   </label>
 
-                  <div className="rounded-2xl border border-white/10 bg-slate-950/55 px-4 py-3">
+                  <div className="motion-panel rounded-2xl border border-white/10 bg-slate-950/55 px-4 py-3">
                     <p className="text-sm font-medium text-slate-200">
                       {editingExistingSkill ? 'Skill ID' : 'Generated skill ID'}
                     </p>
@@ -433,7 +433,7 @@ export function SkillsDrawer(props: SkillsDrawerProps) {
 
               {wizardStep === 3 ? (
                 <div className="space-y-4">
-                  <div className="rounded-2xl border border-white/10 bg-slate-950/55 px-4 py-4">
+                  <div className="motion-panel rounded-2xl border border-white/10 bg-slate-950/55 px-4 py-4">
                     <div className="flex flex-wrap items-center gap-2">
                       <p className="text-base font-semibold text-slate-100">{draft.title || 'Untitled skill'}</p>
                       <span className="rounded-full bg-emerald-400/15 px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.16em] text-emerald-200">
@@ -463,7 +463,7 @@ export function SkillsDrawer(props: SkillsDrawerProps) {
 
               <div className="flex items-center justify-between gap-3 border-t border-white/10 pt-4">
                 <button
-                  className="rounded-2xl border border-white/10 px-4 py-2 text-sm font-medium text-slate-200 transition hover:border-white/20 hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
+                  className="motion-interactive rounded-2xl border border-white/10 px-4 py-2 text-sm font-medium text-slate-200 transition hover:border-white/20 hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
                   disabled={wizardStep === 1 || saving}
                   onClick={() => setWizardStep((current) => Math.max(1, current - 1) as WizardStep)}
                   type="button"
@@ -472,7 +472,7 @@ export function SkillsDrawer(props: SkillsDrawerProps) {
                 </button>
                 <div className="flex items-center gap-2">
                   <button
-                    className="rounded-2xl border border-white/10 px-4 py-2 text-sm font-medium text-slate-200 transition hover:border-white/20 hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
+                    className="motion-interactive rounded-2xl border border-white/10 px-4 py-2 text-sm font-medium text-slate-200 transition hover:border-white/20 hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
                     disabled={saving}
                     onClick={beginCreateSkill}
                     type="button"
@@ -481,7 +481,7 @@ export function SkillsDrawer(props: SkillsDrawerProps) {
                   </button>
                   {wizardStep < 3 ? (
                     <button
-                      className="rounded-2xl bg-cyan-400 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-300"
+                      className="motion-interactive rounded-2xl bg-cyan-400 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-300"
                       disabled={saving || (wizardStep === 1 ? !basicsComplete : !promptComplete)}
                       onClick={() =>
                         setWizardStep((current) => Math.min(3, current + 1) as WizardStep)
@@ -492,7 +492,7 @@ export function SkillsDrawer(props: SkillsDrawerProps) {
                     </button>
                   ) : (
                     <button
-                      className="rounded-2xl bg-cyan-400 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-300"
+                      className="motion-interactive rounded-2xl bg-cyan-400 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-300"
                       disabled={saving || !basicsComplete || !promptComplete}
                       onClick={() => {
                         void handleSaveSkill();

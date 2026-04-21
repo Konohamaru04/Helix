@@ -413,6 +413,7 @@ export const userSettingsSchema = z.object({
   additionalModelsDirectory: z.string().min(1).nullable(),
   videoGenerationModel: z.string(),
   pythonPort: z.number().int().min(1024).max(65535),
+  streamingMascotEnabled: z.boolean(),
   theme: z.enum(['system', 'light', 'dark'])
 });
 
@@ -757,7 +758,9 @@ const chatStreamMessageSnapshotSchema = z.object({
   contextSourceCount: z.number().int().min(0).optional(),
   contextSources: z.array(contextSourceSchema).optional(),
   usage: messageUsageSchema.nullable().optional(),
-  routeTrace: routeTraceSchema.nullable().optional()
+  routeTrace: routeTraceSchema.nullable().optional(),
+  capabilityTasks: z.array(capabilityTaskSchema).optional(),
+  capabilityPlanState: planStateSchema.nullable().optional()
 });
 
 const chatStreamMessageMetadataSchema = chatStreamMessageSnapshotSchema.omit({

@@ -66,11 +66,11 @@ export function AttachmentCard(props: AttachmentCardProps) {
   }
 
   return (
-    <div className="overflow-hidden rounded-2xl border border-white/10 bg-slate-950/80">
+    <div className="motion-card motion-panel overflow-hidden rounded-2xl border border-white/10 bg-slate-950/80">
       {previewableImage ? (
         <button
           aria-label={`Open ${attachment.fileName}`}
-          className="block w-full overflow-hidden bg-slate-950 text-left transition hover:bg-slate-900/80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
+          className="motion-interactive block w-full overflow-hidden bg-slate-950 text-left transition hover:bg-slate-900/80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
           onClick={() => {
             void handleOpenPreview();
           }}
@@ -85,7 +85,7 @@ export function AttachmentCard(props: AttachmentCardProps) {
                 src={previewUrl}
               />
             ) : (
-              <div className="flex h-full w-full items-center justify-center px-4 text-center text-sm text-slate-500">
+              <div className="motion-loader-sweep flex h-full w-full items-center justify-center px-4 text-center text-sm text-slate-500">
                 {previewResolved ? 'Preview unavailable' : 'Loading preview...'}
               </div>
             )}
@@ -111,7 +111,7 @@ export function AttachmentCard(props: AttachmentCardProps) {
         {props.onRemove ? (
           <button
             aria-label={`Remove ${attachment.fileName}`}
-            className="rounded-full border border-white/10 px-2.5 py-1 text-xs font-medium text-slate-200 transition hover:border-white/20 hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
+            className="motion-interactive rounded-full border border-white/10 px-2.5 py-1 text-xs font-medium text-slate-200 transition hover:border-white/20 hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
             onClick={() => props.onRemove?.(attachment.id)}
             type="button"
           >

@@ -352,6 +352,9 @@ describe('MessageBubble', () => {
 
     fireEvent.contextMenu(screen.getByText('Hello from test'));
 
+    expect(screen.getByText('Hello from test').closest('article')).toHaveClass(
+      'user-message-bubble'
+    );
     expect(screen.getByRole('menu', { name: 'Message actions' })).toBeInTheDocument();
     expect(screen.getByRole('menuitem', { name: 'Edit & resend' })).toBeInTheDocument();
     expect(screen.getByRole('menuitem', { name: 'Pin' })).toBeInTheDocument();

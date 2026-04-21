@@ -1,4 +1,5 @@
 import type { Logger } from 'pino';
+import { Agent } from 'undici';
 import { parseJsonishRecord } from '@bridge/jsonish';
 import { ollamaStatusSchema, type OllamaStatus } from '@bridge/ipc/contracts';
 
@@ -46,8 +47,16 @@ export interface OllamaToolCall {
 
 const OLLAMA_CHAT_FETCH_MAX_ATTEMPTS = 2;
 const OLLAMA_CHAT_FETCH_RETRY_DELAY_MS = 750;
+const OLLAMA_CHAT_HEADERS_TIMEOUT_MS = 30 * 60 * 1000;
+const OLLAMA_CHAT_CONNECT_TIMEOUT_MS = 30 * 1000;
 const MIN_DYNAMIC_OLLAMA_NUM_CTX = 4_096;
 const MAX_FALLBACK_OLLAMA_NUM_CTX = 131_072;
+
+const ollamaChatDispatcher = new Agent({
+  connectTimeout: OLLAMA_CHAT_CONNECT_TIMEOUT_MS,
+  headersTimeout: OLLAMA_CHAT_HEADERS_TIMEOUT_MS,
+  bodyTimeout: 0
+});
 
 export interface OllamaToolDefinition {
   type: 'function';
@@ -609,7 +618,11 @@ export class OllamaClient {
           },
           'Ollama chat request'
         );
-        return await fetch(url, input.requestInit);
+        const requestInit = {
+          ...input.requestInit,
+          dispatcher: ollamaChatDispatcher
+        } as unknown as RequestInit & Record<string, unknown>;
+        return await fetch(url, requestInit as RequestInit);
       } catch (error) {
         lastError = error;
         const retryable = isRetryableFetchError(error);

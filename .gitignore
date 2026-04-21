@@ -76,3 +76,10 @@ latest*.yml
 *.lock.db
 coverage/
 .nyc_output/
+.graphify_detect.json
+bridge/graphify-out
+renderer/graphify-out
+graphify-out
+docs/benchmark-prompts.md
+docs/testing.md
+docs/testing.md

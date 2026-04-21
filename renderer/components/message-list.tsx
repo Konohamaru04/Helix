@@ -24,7 +24,7 @@ const EMPTY_STATE_TIPS = [
   {
     eyebrow: 'Workspace tip',
     title: 'Bind a folder to this workspace',
-    body: 'Connect a local project folder from the workspace chip menu so tools and imports stay scoped to the right files.'
+    body: 'Link a local project folder from the composer actions so tools and imports stay scoped to the right files.'
   },
   {
     eyebrow: 'Knowledge tip',
@@ -191,7 +191,7 @@ export function MessageList(props: MessageListProps) {
     props.pendingLabel ? (
       <div
         aria-live="polite"
-        className="rounded-[1.75rem] border border-cyan-300/15 bg-cyan-400/5 px-5 py-4 shadow-panel"
+        className="motion-loader-sweep motion-panel rounded-[1.75rem] border border-cyan-300/15 bg-cyan-400/5 px-5 py-4 shadow-panel"
         role="status"
       >
         <div className="flex items-start gap-3">
@@ -207,7 +207,12 @@ export function MessageList(props: MessageListProps) {
             <p className="mt-1 text-sm leading-6 text-cyan-100/70">
               {props.pendingHint ??
                 'The bridge is analyzing the request and choosing the best route before the reply starts.'}
+              <span className="motion-ellipsis" />
             </p>
+            <div
+              aria-hidden="true"
+              className="motion-loader-bars mt-3 w-64 max-w-full"
+            />
           </div>
         </div>
       </div>
@@ -229,33 +234,38 @@ export function MessageList(props: MessageListProps) {
             {pendingTurnIndicator}
           </div>
         ) : (
-          <div className="mx-auto flex h-full max-w-2xl flex-col items-center justify-center rounded-[2rem] border border-dashed border-white/10 bg-slate-900/40 px-10 py-14 text-center shadow-panel">
-            <p className="text-sm uppercase tracking-[0.3em] text-cyan-200/70">
+          <div className="motion-panel mx-auto flex h-full max-w-2xl flex-col items-center justify-center rounded-[2rem] border border-dashed border-white/10 bg-slate-900/40 px-10 py-14 text-center shadow-panel">
+            <p className="motion-text-reveal text-sm uppercase tracking-[0.3em] text-cyan-200/70">
               {emptyStateTip.eyebrow}
             </p>
-            <h2 className="mt-4 text-4xl font-semibold text-white">
+            <h2 className="motion-text-reveal-delayed mt-4 text-4xl font-semibold text-white">
               {emptyStateTip.title}
             </h2>
-            <p className="mt-4 max-w-xl text-base leading-7 text-slate-300">
+            <p className="motion-panel-delayed mt-4 max-w-xl text-base leading-7 text-slate-300">
               {emptyStateTip.body}
             </p>
           </div>
         )
       ) : (
         <div className="mx-auto flex w-full min-w-0 max-w-[88rem] flex-col gap-5">
-          {timelineItems.map((item) => {
+          {timelineItems.map((item, itemIndex) => {
             if (item.type === 'generation') {
               return (
-                <GenerationThreadItem
+                <div
+                  className="motion-message-assistant"
                   key={`generation-${item.job.id}`}
-                  job={item.job}
-                  {...(props.onCancelGenerationJob
-                    ? { onCancel: props.onCancelGenerationJob }
-                    : {})}
-                  {...(props.onRetryGenerationJob
-                    ? { onRetry: props.onRetryGenerationJob }
-                    : {})}
-                />
+                  style={{ animationDelay: `${Math.min(itemIndex, 8) * 35}ms` }}
+                >
+                  <GenerationThreadItem
+                    job={item.job}
+                    {...(props.onCancelGenerationJob
+                      ? { onCancel: props.onCancelGenerationJob }
+                      : {})}
+                    {...(props.onRetryGenerationJob
+                      ? { onRetry: props.onRetryGenerationJob }
+                      : {})}
+                  />
+                </div>
               );
             }
 
@@ -274,7 +284,8 @@ export function MessageList(props: MessageListProps) {
             return (
               <div
                 key={message.id}
-                className={message.role === 'user' ? 'max-w-[80%] self-end' : 'w-full self-start'}
+                className={`${message.role === 'user' ? 'max-w-[80%] self-end motion-message-user' : 'w-full self-start motion-message-assistant'}`}
+                style={{ animationDelay: `${Math.min(itemIndex, 8) * 35}ms` }}
               >
                 <MessageBubble
                   canEdit={canEdit}

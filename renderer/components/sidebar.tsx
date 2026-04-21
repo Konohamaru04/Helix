@@ -142,12 +142,12 @@ export function Sidebar(props: SidebarProps) {
   }
 
   return (
-    <aside className="flex h-full w-80 shrink-0 flex-col border-r border-white/10 bg-slate-950/80 backdrop-blur">
+    <aside className="motion-panel flex h-full w-80 shrink-0 flex-col border-r border-white/10 bg-slate-950/80 backdrop-blur">
       {props.overlayMode ? (
         <div className="flex items-center justify-end px-5 pt-3">
           <button
             aria-label="Close sidebar"
-            className="rounded-full border border-white/10 px-3 py-1.5 text-xs font-medium text-slate-200 transition hover:border-white/20 hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
+            className="motion-interactive rounded-full border border-white/10 px-3 py-1.5 text-xs font-medium text-slate-200 transition hover:border-white/20 hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
             onClick={props.onClose}
             type="button"
           >
@@ -156,10 +156,10 @@ export function Sidebar(props: SidebarProps) {
         </div>
       ) : null}
       <div className="border-b border-white/10 px-5 py-4">
-        <p className="text-xs uppercase tracking-[0.3em] text-cyan-200/70">
+        <p className="motion-text-reveal text-xs uppercase tracking-[0.3em] text-cyan-200/70">
           {APP_COMPANY_NAME}
         </p>
-        <h1 className="mt-2 text-2xl font-semibold text-white">{APP_DISPLAY_NAME}</h1>
+        <h1 className="motion-text-reveal-delayed motion-title-glint mt-2 text-2xl font-semibold">{APP_DISPLAY_NAME}</h1>
         <p className="mt-2 text-xs uppercase tracking-[0.25em] text-slate-500">
           Chats
         </p>
@@ -180,9 +180,9 @@ export function Sidebar(props: SidebarProps) {
               onContextMenu={(event) => openWorkspaceContextMenu(event, workspace)}
             >
               <button
-                className={`rounded-full px-3 py-1.5 text-xs font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 ${
+                className={`motion-interactive rounded-full px-3 py-1.5 text-xs font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 ${
                   workspace.id === props.activeWorkspaceId
-                    ? 'bg-cyan-400 pr-6 text-slate-950'
+                    ? 'motion-active-rail bg-cyan-400 pr-6 text-slate-950'
                     : 'border border-white/10 pr-6 text-slate-300 hover:border-white/20 hover:bg-white/5'
                 }`}
                 onClick={() => props.onSelectWorkspace(workspace.id)}
@@ -192,7 +192,7 @@ export function Sidebar(props: SidebarProps) {
               </button>
               <button
                 aria-label={`Delete workspace ${workspace.name}`}
-                className={`absolute right-1.5 flex h-4 w-4 items-center justify-center rounded-full text-[10px] leading-none transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-400 ${
+                className={`motion-interactive absolute right-1.5 flex h-4 w-4 items-center justify-center rounded-full text-[10px] leading-none transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-400 ${
                   workspace.id === props.activeWorkspaceId
                     ? 'text-slate-700 hover:bg-slate-950/20 hover:text-slate-900'
                     : 'text-slate-500 hover:bg-white/10 hover:text-slate-200'
@@ -211,7 +211,7 @@ export function Sidebar(props: SidebarProps) {
           ))}
         </div>
         <button
-          className="mt-2 rounded-full border border-white/10 px-3 py-1.5 text-xs font-medium text-slate-300 transition hover:border-white/20 hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
+          className="motion-interactive mt-2 rounded-full border border-white/10 px-3 py-1.5 text-xs font-medium text-slate-300 transition hover:border-white/20 hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
           onClick={props.onNewWorkspace}
           type="button"
         >
@@ -236,7 +236,7 @@ export function Sidebar(props: SidebarProps) {
           value={props.searchQuery}
         />
         <button
-          className="mt-2 w-full rounded-xl bg-cyan-400 px-3 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-300"
+          className="motion-interactive mt-2 w-full rounded-xl bg-cyan-400 px-3 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-300"
           onClick={props.onNewChat}
           type="button"
         >
@@ -252,7 +252,7 @@ export function Sidebar(props: SidebarProps) {
             </p>
             <div className="space-y-2">
               {props.searchResults.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-white/10 bg-slate-900/40 px-4 py-5 text-sm text-slate-400">
+                  <div className="motion-panel rounded-2xl border border-dashed border-white/10 bg-slate-900/40 px-4 py-5 text-sm text-slate-400">
                   No chats matched your search.
                 </div>
               ) : null}
@@ -269,9 +269,9 @@ export function Sidebar(props: SidebarProps) {
                     }
                   >
                     <button
-                      className={`w-full rounded-2xl border px-4 py-3 text-left transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 ${
+                      className={`motion-card w-full rounded-2xl border px-4 py-3 text-left transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 ${
                         active
-                          ? 'border-cyan-300/40 bg-cyan-400/10 text-white pr-8'
+                          ? 'motion-active-rail border-cyan-300/40 bg-cyan-400/10 pr-8 text-white'
                           : 'border-white/10 bg-slate-900/60 text-slate-300 hover:border-white/20 hover:bg-slate-900'
                       }`}
                       onClick={() => props.onSelectConversation(result.conversation.id)}
@@ -292,7 +292,7 @@ export function Sidebar(props: SidebarProps) {
                     {active && props.onDeleteConversation ? (
                       <button
                         aria-label="Delete chat"
-                        className="absolute right-2 top-3 flex h-5 w-5 items-center justify-center rounded-full text-xs text-rose-300 opacity-0 transition hover:bg-rose-500/20 hover:text-rose-100 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-400"
+                        className="motion-interactive absolute right-2 top-3 flex h-5 w-5 items-center justify-center rounded-full text-xs text-rose-300 opacity-0 transition hover:bg-rose-500/20 hover:text-rose-100 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-400"
                         onClick={(e) => {
                           e.stopPropagation();
                           props.onDeleteConversation?.(result.conversation.id);
@@ -327,9 +327,9 @@ export function Sidebar(props: SidebarProps) {
                         }
                       >
                         <button
-                          className={`w-full rounded-2xl border px-4 py-3 text-left transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 ${
+                          className={`motion-card w-full rounded-2xl border px-4 py-3 text-left transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 ${
                             active
-                              ? 'border-cyan-300/40 bg-cyan-400/10 text-white pr-8'
+                              ? 'motion-active-rail border-cyan-300/40 bg-cyan-400/10 pr-8 text-white'
                               : 'border-white/10 bg-slate-900/60 text-slate-300 hover:border-white/20 hover:bg-slate-900'
                           }`}
                           onClick={() => props.onSelectConversation(conversation.id)}
@@ -343,7 +343,7 @@ export function Sidebar(props: SidebarProps) {
                         {active && props.onDeleteConversation ? (
                           <button
                             aria-label="Delete chat"
-                            className="absolute right-2 top-3 flex h-5 w-5 items-center justify-center rounded-full text-xs text-rose-300 opacity-0 transition hover:bg-rose-500/20 hover:text-rose-100 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-400"
+                            className="motion-interactive absolute right-2 top-3 flex h-5 w-5 items-center justify-center rounded-full text-xs text-rose-300 opacity-0 transition hover:bg-rose-500/20 hover:text-rose-100 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-400"
                             onClick={(e) => {
                               e.stopPropagation();
                               props.onDeleteConversation?.(conversation.id);
@@ -372,7 +372,7 @@ export function Sidebar(props: SidebarProps) {
                 </p>
                 <div className="space-y-2">
                   {group.conversations.length === 0 ? (
-                    <div className="rounded-2xl border border-dashed border-white/10 bg-slate-900/40 px-4 py-5 text-sm text-slate-400">
+                    <div className="motion-panel rounded-2xl border border-dashed border-white/10 bg-slate-900/40 px-4 py-5 text-sm text-slate-400">
                       No chats in this workspace yet.
                     </div>
                   ) : null}
@@ -389,9 +389,9 @@ export function Sidebar(props: SidebarProps) {
                         }
                       >
                         <button
-                          className={`w-full rounded-2xl border px-4 py-3 text-left transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 ${
+                          className={`motion-card w-full rounded-2xl border px-4 py-3 text-left transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 ${
                             active
-                              ? 'border-cyan-300/40 bg-cyan-400/10 text-white pr-8'
+                              ? 'motion-active-rail border-cyan-300/40 bg-cyan-400/10 pr-8 text-white'
                               : 'border-white/10 bg-slate-900/60 text-slate-300 hover:border-white/20 hover:bg-slate-900'
                           }`}
                           onClick={() => props.onSelectConversation(conversation.id)}
@@ -405,7 +405,7 @@ export function Sidebar(props: SidebarProps) {
                         {active && props.onDeleteConversation ? (
                           <button
                             aria-label="Delete chat"
-                            className="absolute right-2 top-3 flex h-5 w-5 items-center justify-center rounded-full text-xs text-rose-300 opacity-0 transition hover:bg-rose-500/20 hover:text-rose-100 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-400"
+                            className="motion-interactive absolute right-2 top-3 flex h-5 w-5 items-center justify-center rounded-full text-xs text-rose-300 opacity-0 transition hover:bg-rose-500/20 hover:text-rose-100 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-400"
                             onClick={(e) => {
                               e.stopPropagation();
                               props.onDeleteConversation?.(conversation.id);
@@ -423,7 +423,7 @@ export function Sidebar(props: SidebarProps) {
             ))}
 
             {props.conversations.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-white/10 bg-slate-900/40 px-4 py-5 text-sm text-slate-400">
+              <div className="motion-panel rounded-2xl border border-dashed border-white/10 bg-slate-900/40 px-4 py-5 text-sm text-slate-400">
                 Your first chat will appear here once you send a message.
               </div>
             ) : null}

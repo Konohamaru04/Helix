@@ -20,6 +20,42 @@ interface MessageBubbleProps {
   onLoadArtifacts?: (messageId: string) => void;
 }
 
+function useActivityFrame(enabled: boolean) {
+  const [frame, setFrame] = useState(0);
+
+  useEffect(() => {
+    if (!enabled) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      setFrame((current) => (current + 1) % 4);
+    }, 360);
+
+    return () => window.clearInterval(intervalId);
+  }, [enabled]);
+
+  return frame;
+}
+
+function InlineActivityDots(props: { frame: number }) {
+  return (
+    <span
+      aria-hidden="true"
+      className="ml-3 inline-flex items-center gap-1 align-middle text-cyan-200"
+    >
+      {[0, 1, 2].map((index) => (
+        <span
+          className={`block h-1.5 w-1.5 rounded-full bg-current transition-all duration-150 ${
+            props.frame % 3 === index ? '-translate-y-1 opacity-100' : 'translate-y-0 opacity-35'
+          }`}
+          key={index}
+        />
+      ))}
+    </span>
+  );
+}
+
 function formatRouteStrategy(strategy: NonNullable<StoredMessage['routeTrace']>['strategy']) {
   switch (strategy) {
     case 'skill-chat':
@@ -148,7 +184,7 @@ function ExpandButton(props: {
     <button
       aria-expanded={props.open}
       aria-label={props.open ? props.collapseLabel : props.expandLabel}
-      className="flex w-full cursor-pointer items-center justify-between gap-3 rounded-lg border border-white/10 bg-slate-950/55 px-4 py-2 text-left transition hover:bg-slate-950/80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
+      className="motion-interactive flex w-full cursor-pointer items-center justify-between gap-3 rounded-lg border border-white/10 bg-slate-950/55 px-4 py-2 text-left transition hover:bg-slate-950/80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
       onClick={props.onClick}
       type="button"
     >
@@ -189,7 +225,7 @@ function ThinkingBlock(props: { content: string; defaultOpen?: boolean }) {
         title="Thinking"
       />
       {open ? (
-        <div className="whitespace-pre-wrap pb-2 pt-3 text-sm leading-7 text-slate-300">
+        <div className="motion-panel whitespace-pre-wrap pb-2 pt-3 text-sm leading-7 text-slate-300">
           {props.content}
         </div>
       ) : null}
@@ -227,7 +263,7 @@ function MetadataSection(props: {
         title={title}
         {...(summary === undefined ? {} : { secondaryText: summary })}
       />
-      {open ? <div className="mt-3">{props.children}</div> : null}
+      {open ? <div className="motion-panel mt-3">{props.children}</div> : null}
     </section>
   );
 }
@@ -239,11 +275,11 @@ function ToolInvocationCard(props: {
   const [open, setOpen] = useState(false);
 
   return (
-    <section className="rounded-lg border border-white/10 bg-white/[0.03]">
+    <section className="motion-card rounded-lg border border-white/10 bg-white/[0.03]">
       <button
         aria-expanded={open}
         aria-label={open ? `Collapse ${invocation.displayName} output` : `Expand ${invocation.displayName} output`}
-        className="flex w-full cursor-pointer flex-wrap items-center justify-between gap-2 px-3 py-2 text-left transition hover:bg-white/[0.03] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
+        className="motion-interactive flex w-full cursor-pointer flex-wrap items-center justify-between gap-2 px-3 py-2 text-left transition hover:bg-white/[0.03] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
         onClick={() => setOpen((current) => !current)}
         type="button"
       >
@@ -282,7 +318,7 @@ function ToolInvocationCard(props: {
         ) : null}
       </div>
       {open && invocation.outputText ? (
-        <div className="border-t border-white/5 px-3 py-3">
+        <div className="motion-panel border-t border-white/5 px-3 py-3">
           <MarkdownContent content={invocation.outputText} />
         </div>
       ) : null}
@@ -290,10 +326,16 @@ function ToolInvocationCard(props: {
   );
 }
 
-function StreamingAnswer(props: { content: string }) {
+function StreamingAnswer(props: { content: string; frame: number }) {
   return (
-    <div className="whitespace-pre-wrap break-words rounded-lg border border-white/10 bg-white/[0.02] px-4 py-3 text-sm leading-7 text-slate-200">
+    <div className="whitespace-pre-wrap break-words rounded-lg border border-cyan-300/15 bg-white/[0.02] px-4 py-3 text-sm leading-7 text-slate-200">
       {props.content}
+      <span
+        aria-hidden="true"
+        className={`ml-1 inline-block h-4 w-1.5 rounded-sm align-[-2px] transition-opacity duration-150 ${
+          props.frame % 2 === 0 ? 'bg-cyan-200 opacity-100' : 'bg-cyan-200 opacity-20'
+        }`}
+      />
     </div>
   );
 }
@@ -306,7 +348,7 @@ function LoadMoreArtifactsButton(props: {
   return (
     <div className="flex justify-center pt-1">
       <button
-        className="rounded-full border border-white/10 px-3 py-1.5 text-xs font-medium uppercase tracking-[0.16em] text-slate-200 transition hover:border-white/20 hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
+        className="motion-interactive rounded-full border border-white/10 px-3 py-1.5 text-xs font-medium uppercase tracking-[0.16em] text-slate-200 transition hover:border-white/20 hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
         onClick={props.onClick}
         type="button"
       >
@@ -317,7 +359,7 @@ function LoadMoreArtifactsButton(props: {
   );
 }
 
-function MessageBubbleComponent(props: MessageBubbleProps) {
+function MessageBubbleContent(props: MessageBubbleProps) {
   const { message } = props;
   const assistant = message.role === 'assistant';
   const parsedAssistantContent = assistant ? parseAssistantContent(message.content) : null;
@@ -331,6 +373,7 @@ function MessageBubbleComponent(props: MessageBubbleProps) {
     x: number;
     y: number;
   } | null>(null);
+  const activityFrame = useActivityFrame(message.status === 'streaming');
   const messageActionItems: ContextMenuItem[] = [
     ...(props.canEdit && props.onEdit
       ? [
@@ -360,12 +403,6 @@ function MessageBubbleComponent(props: MessageBubbleProps) {
         ]
       : [])
   ];
-
-  useEffect(() => {
-    setVisibleToolCount(ARTIFACT_PAGE_SIZE);
-    setVisibleSourceCount(ARTIFACT_PAGE_SIZE);
-    setContextMenuPosition(null);
-  }, [message.id]);
 
   function handleLoadTools(open: boolean) {
     if (open && activeToolCount > 0 && message.toolInvocations === undefined) {
@@ -409,11 +446,11 @@ function MessageBubbleComponent(props: MessageBubbleProps) {
   return (
     <>
       <article
-        className={`animate-fade-in-up min-w-0 overflow-hidden ${
+        className={`motion-card animate-fade-in-up min-w-0 overflow-hidden ${
           assistant
             ? 'text-slate-100'
             : message.role === 'user'
-              ? 'rounded-[1.75rem] border border-orange-300/20 bg-orange-500/10 px-5 py-4 shadow-panel text-orange-50'
+              ? 'user-message-bubble rounded-[1.75rem] border px-5 py-4 shadow-panel'
               : 'rounded-[1.75rem] border border-white/10 bg-slate-950/90 px-5 py-4 shadow-panel text-slate-200'
         }`}
         onContextMenu={handleContextMenu}
@@ -436,7 +473,7 @@ function MessageBubbleComponent(props: MessageBubbleProps) {
             ) : null}
             {props.canPin && props.onTogglePin ? (
               <button
-                className="rounded-full border border-white/10 px-2.5 py-1 text-[11px] font-medium uppercase tracking-[0.16em] text-slate-200 transition hover:border-white/20 hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
+                className="motion-interactive rounded-full border border-white/10 px-2.5 py-1 text-[11px] font-medium uppercase tracking-[0.16em] text-slate-200 transition hover:border-white/20 hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
                 onClick={() => props.onTogglePin?.(message, !message.pinned)}
                 type="button"
               >
@@ -445,7 +482,7 @@ function MessageBubbleComponent(props: MessageBubbleProps) {
             ) : null}
             {props.canEdit && props.onEdit ? (
               <button
-                className="rounded-full border border-white/10 px-2.5 py-1 text-[11px] font-medium uppercase tracking-[0.16em] text-slate-200 transition hover:border-white/20 hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
+                className="motion-interactive rounded-full border border-white/10 px-2.5 py-1 text-[11px] font-medium uppercase tracking-[0.16em] text-slate-200 transition hover:border-white/20 hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-400"
                 onClick={() => props.onEdit?.(message)}
                 type="button"
               >
@@ -454,7 +491,7 @@ function MessageBubbleComponent(props: MessageBubbleProps) {
             ) : null}
             {props.canRegenerate && props.onRegenerate ? (
               <button
-                className="rounded-full border border-white/10 px-2.5 py-1 text-[11px] font-medium uppercase tracking-[0.16em] text-slate-200 transition hover:border-white/20 hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
+                className="motion-interactive rounded-full border border-white/10 px-2.5 py-1 text-[11px] font-medium uppercase tracking-[0.16em] text-slate-200 transition hover:border-white/20 hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-400"
                 onClick={() => props.onRegenerate?.(message)}
                 type="button"
               >
@@ -486,18 +523,24 @@ function MessageBubbleComponent(props: MessageBubbleProps) {
 
               {assistantAnswer ? (
                 message.status === 'streaming' ? (
-                  <StreamingAnswer content={assistantAnswer} />
+                  <StreamingAnswer
+                    content={assistantAnswer}
+                    frame={activityFrame}
+                  />
                 ) : (
                   <MarkdownContent content={assistantAnswer} />
                 )
               ) : message.status === 'streaming' ? (
-                <div className="rounded-lg border border-dashed border-white/10 px-4 py-3 text-sm text-slate-400">
-                  {activeToolCount > 0
-                    ? `Working through ${activeToolCount} tool step${activeToolCount === 1 ? '' : 's'}...`
-                    : 'Thinking...'}
+                <div className="motion-loader-sweep rounded-lg border border-dashed border-white/10 px-4 py-3 text-sm text-slate-400">
+                  <span>
+                    {activeToolCount > 0
+                      ? `Working through ${activeToolCount} tool step${activeToolCount === 1 ? '' : 's'}...`
+                      : 'Thinking...'}
+                  </span>
+                  <InlineActivityDots frame={activityFrame} />
                 </div>
               ) : message.status === 'completed' ? (
-                <div className="rounded-lg border border-dashed border-white/10 px-4 py-3 text-sm text-slate-400">
+                <div className="motion-panel rounded-lg border border-dashed border-white/10 px-4 py-3 text-sm text-slate-400">
                   No visible answer was returned for this turn.
                 </div>
               ) : null}
@@ -547,7 +590,7 @@ function MessageBubbleComponent(props: MessageBubbleProps) {
                       {visibleContextSources.map((source) => (
                         <div
                           key={source.id}
-                          className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2"
+                          className="motion-card rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2"
                         >
                           <div className="flex flex-wrap items-center gap-2">
                             <p className="text-sm font-medium text-slate-100">{source.label}</p>
@@ -616,7 +659,14 @@ function MessageBubbleComponent(props: MessageBubbleProps) {
 
         <div className="shrink-0 text-right text-xs text-slate-500">
           <p>{formatTimestamp(message.createdAt)}</p>
-          <p className="mt-1 capitalize">{message.status}</p>
+          <p
+            className="mt-1 capitalize"
+            data-mascot-target={message.status === 'streaming' ? 'streaming-message' : undefined}
+          >
+            {message.status === 'streaming'
+              ? `Streaming${'.'.repeat((activityFrame % 3) + 1)}`
+              : message.status}
+          </p>
         </div>
       </div>
       </article>
@@ -630,6 +680,15 @@ function MessageBubbleComponent(props: MessageBubbleProps) {
         />
       ) : null}
     </>
+  );
+}
+
+function MessageBubbleComponent(props: MessageBubbleProps) {
+  return (
+    <MessageBubbleContent
+      key={props.message.id}
+      {...props}
+    />
   );
 }
 

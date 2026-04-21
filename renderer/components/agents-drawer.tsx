@@ -75,7 +75,7 @@ function SessionCard(props: {
     <button
       aria-label={`Open agent ${props.session.title}`}
       aria-pressed={props.selected}
-      className={`w-full rounded-2xl border px-4 py-3 text-left transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 ${
+      className={`motion-card w-full rounded-2xl border px-4 py-3 text-left transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 ${
         props.selected
           ? 'border-cyan-300/30 bg-cyan-400/10'
           : 'border-white/10 bg-slate-950/45 hover:border-white/20 hover:bg-white/5'
@@ -160,8 +160,8 @@ export function AgentsDrawer(props: AgentsDrawerProps) {
   const runningCount = props.agents.filter((session) => session.status === 'running').length;
 
   return (
-    <div className="pointer-events-none fixed inset-x-0 bottom-16 z-20 flex justify-center px-6 animate-fade-in">
-      <section className="pointer-events-auto flex max-h-[calc(76vh-2rem)] w-full max-w-6xl flex-col overflow-hidden rounded-[2rem] border border-white/10 bg-slate-950/95 shadow-2xl backdrop-blur animate-slide-in-up">
+    <div className="pointer-events-none fixed inset-x-0 bottom-16 z-20 flex animate-fade-in justify-center px-6">
+      <section className="motion-drawer-up pointer-events-auto flex max-h-[calc(76vh-2rem)] w-full max-w-6xl flex-col overflow-hidden rounded-[2rem] border border-white/10 bg-slate-950/95 shadow-2xl backdrop-blur">
         <div className="flex shrink-0 items-start justify-between gap-4 px-6 pt-5">
           <div>
             <p className="text-xs uppercase tracking-[0.3em] text-cyan-200/70">Agents</p>
@@ -185,7 +185,7 @@ export function AgentsDrawer(props: AgentsDrawerProps) {
           {props.onClose ? (
             <button
               aria-label="Close agents drawer"
-              className="mt-1 shrink-0 rounded-full border border-white/10 px-3 py-1.5 text-xs font-medium text-slate-300 transition hover:border-white/20 hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
+              className="motion-interactive mt-1 shrink-0 rounded-full border border-white/10 px-3 py-1.5 text-xs font-medium text-slate-300 transition hover:border-white/20 hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
               onClick={props.onClose}
               type="button"
             >
@@ -196,14 +196,14 @@ export function AgentsDrawer(props: AgentsDrawerProps) {
 
         <div className="mt-5 min-h-0 flex-1 overflow-y-auto px-6 pb-5">
           <div className="grid gap-5 lg:grid-cols-[0.95fr_1.05fr]">
-            <section className="space-y-3 rounded-[1.5rem] border border-white/10 bg-slate-900/60 px-4 py-4">
+            <section className="motion-card space-y-3 rounded-[1.5rem] border border-white/10 bg-slate-900/60 px-4 py-4">
               <div className="flex items-center justify-between gap-3">
                 <h3 className="text-sm font-semibold text-slate-100">Sessions</h3>
                 <span className="text-xs text-slate-400">{sortedAgents.length}</span>
               </div>
 
               {sortedAgents.length === 0 ? (
-                <p className="rounded-2xl border border-dashed border-white/10 px-4 py-6 text-sm text-slate-400">
+                <p className="motion-panel rounded-2xl border border-dashed border-white/10 px-4 py-6 text-sm text-slate-400">
                   No agent sessions yet. Agent runs created by the tool surface will appear here.
                 </p>
               ) : (
@@ -221,7 +221,7 @@ export function AgentsDrawer(props: AgentsDrawerProps) {
               )}
             </section>
 
-            <section className="space-y-4 rounded-[1.5rem] border border-white/10 bg-slate-900/60 px-4 py-4">
+            <section className="motion-card space-y-4 rounded-[1.5rem] border border-white/10 bg-slate-900/60 px-4 py-4">
               {selectedSession ? (
                 <>
                   <div>
@@ -255,7 +255,7 @@ export function AgentsDrawer(props: AgentsDrawerProps) {
                   </div>
 
                   {selectedSession.systemPrompt ? (
-                    <div className="rounded-2xl border border-white/10 bg-slate-950/55 px-4 py-3">
+                    <div className="motion-panel rounded-2xl border border-white/10 bg-slate-950/55 px-4 py-3">
                       <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-slate-400">
                         System prompt
                       </p>
@@ -275,7 +275,7 @@ export function AgentsDrawer(props: AgentsDrawerProps) {
                     </div>
 
                     {selectedSession.messages.length === 0 ? (
-                      <p className="rounded-2xl border border-dashed border-white/10 px-4 py-6 text-sm text-slate-400">
+                      <p className="motion-panel rounded-2xl border border-dashed border-white/10 px-4 py-6 text-sm text-slate-400">
                         This session has no messages yet.
                       </p>
                     ) : (
@@ -283,7 +283,7 @@ export function AgentsDrawer(props: AgentsDrawerProps) {
                         {selectedSession.messages.map((message) => (
                           <article
                             key={message.id}
-                            className="rounded-2xl border border-white/10 bg-slate-950/50 px-4 py-3"
+                            className="motion-panel rounded-2xl border border-white/10 bg-slate-950/50 px-4 py-3"
                           >
                             <div className="flex items-center justify-between gap-3">
                               <span
@@ -305,7 +305,7 @@ export function AgentsDrawer(props: AgentsDrawerProps) {
                   </div>
                 </>
               ) : (
-                <p className="rounded-2xl border border-dashed border-white/10 px-4 py-6 text-sm text-slate-400">
+                <p className="motion-panel rounded-2xl border border-dashed border-white/10 px-4 py-6 text-sm text-slate-400">
                   Select an agent session to inspect its transcript.
                 </p>
               )}

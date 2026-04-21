@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type {
   ContextSource,
   MessageAttachment,
+  SkillDefinition,
   StoredMessage,
   ToolDefinition
 } from '@bridge/ipc/contracts';
@@ -45,23 +46,48 @@ function formatAvailableToolLine(tool: ToolDefinition): string {
   return `- \`${tool.id}\`${commandPart}: ${tool.description.trim()}`;
 }
 
+function formatAvailableSkillLine(skill: SkillDefinition): string {
+  return `- \`${skill.id}\` (${skill.title.trim()}): ${skill.description.trim()}`;
+}
+
+function buildCapabilitySystemPrompt(input: {
+  availableTools: ToolDefinition[];
+  availableSkills: SkillDefinition[];
+}): string | null {
+  if (input.availableTools.length === 0 && input.availableSkills.length === 0) {
+    return null;
+  }
+
+  const lines = [
+    'Capability catalog:',
+    '- Choose the most relevant tool and skill behavior for the user request.',
+    '- If another system message already activates a specific skill, follow that active skill prompt over this catalog.',
+    '- If no skill is already active, internally adopt the single best matching skill behavior from the skills listed below.',
+    '- Use tools when they materially improve correctness, grounding, or workspace inspection.',
+    '- Do not mention this internal selection process unless the user asks.',
+    '',
+    'Available tools:',
+    ...(input.availableTools.length > 0
+      ? input.availableTools.map((tool) => formatAvailableToolLine(tool))
+      : ['_No available tools_']),
+    '',
+    'Available skills:',
+    ...(input.availableSkills.length > 0
+      ? input.availableSkills.map((skill) => formatAvailableSkillLine(skill))
+      : ['_No available skills_'])
+  ];
+
+  return lines.join('\n');
+}
+
 function buildStructuredLatestUserPrompt(input: {
   prompt: string;
   workspaceRootPath: string | null;
-  availableTools: ToolDefinition[];
 }): string {
   const lines = ['# Prompt', input.prompt.trim() || '_No prompt provided_', ''];
 
   if (input.workspaceRootPath?.trim()) {
     lines.push('# Workspace', `\`${input.workspaceRootPath.trim()}\``, '');
-  }
-
-  lines.push('# Available Tools');
-
-  if (input.availableTools.length === 0) {
-    lines.push('_No available tools_');
-  } else {
-    lines.push(...input.availableTools.map((tool) => formatAvailableToolLine(tool)));
   }
 
   return lines.join('\n');
@@ -142,6 +168,7 @@ export function buildConversationContext(input: {
   skillPrompt: string | null;
   planContextPrompt?: string | null;
   availableTools?: ToolDefinition[];
+  availableSkills?: SkillDefinition[];
   latestUserPromptOverride?: string | null;
   memorySummary?: string | null;
   summarizedMessageIds?: string[];
@@ -178,8 +205,21 @@ export function buildConversationContext(input: {
   const availableTools = (input.availableTools ?? []).filter(
     (tool) => tool.availability === 'available'
   );
+  const availableSkills = input.availableSkills ?? [];
   const sources = [...pinnedSources, ...dedupedRetrievedSources];
   const systemMessages: ContextChatMessage[] = [];
+  const capabilitySystemPrompt = buildCapabilitySystemPrompt({
+    availableTools,
+    availableSkills
+  });
+
+  if (capabilitySystemPrompt) {
+    systemMessages.push({
+      role: 'system',
+      content: capabilitySystemPrompt,
+      imageAttachments: []
+    });
+  }
 
   if (input.workspacePrompt?.trim()) {
     systemMessages.push({
@@ -253,8 +293,7 @@ export function buildConversationContext(input: {
         message.role === 'user' && message.id === latestUserMessageId
           ? buildStructuredLatestUserPrompt({
               prompt: latestUserPrompt ?? message.content,
-              workspaceRootPath: input.workspaceRootPath ?? null,
-              availableTools
+              workspaceRootPath: input.workspaceRootPath ?? null
             })
           : message.content
     })
@@ -305,6 +344,7 @@ export function buildRecentTurnContext(
     workspaceRootPath: null,
     skillPrompt: null,
     availableTools: [],
+    availableSkills: [],
     latestUserPromptOverride: null,
     memorySummary: null,
     summarizedMessageIds: [],

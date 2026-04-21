@@ -6,6 +6,8 @@ import {
   app,
   BrowserWindow,
   dialog,
+  Menu,
+  type MenuItemConstructorOptions,
   shell
 } from 'electron';
 import { createDesktopAppContext, type DesktopAppContext } from '@bridge/app-context';
@@ -54,6 +56,34 @@ function getIconPath() {
 
 function getSplashScreenPath() {
   return path.join(getRuntimeRootPath(), 'Assets/splash/index.html');
+}
+
+function attachTextContextMenu(window: BrowserWindow) {
+  window.webContents.on('context-menu', (_event, params) => {
+    const selectedText = params.selectionText.trim();
+    const template: MenuItemConstructorOptions[] = [];
+
+    if (params.isEditable) {
+      template.push(
+        { role: 'undo', enabled: params.editFlags.canUndo },
+        { role: 'redo', enabled: params.editFlags.canRedo },
+        { type: 'separator' },
+        { role: 'cut', enabled: params.editFlags.canCut },
+        { role: 'copy', enabled: params.editFlags.canCopy },
+        { role: 'paste', enabled: params.editFlags.canPaste },
+        { type: 'separator' },
+        { role: 'selectAll', enabled: params.editFlags.canSelectAll }
+      );
+    } else if (selectedText.length > 0) {
+      template.push({ role: 'copy', enabled: params.editFlags.canCopy });
+    }
+
+    if (template.length === 0) {
+      return;
+    }
+
+    Menu.buildFromTemplate(template).popup({ window });
+  });
 }
 
 function getStartupLogger() {
@@ -186,6 +216,7 @@ async function createMainWindow() {
   });
 
   mainWindow = window;
+  attachTextContextMenu(window);
 
   window.on('closed', () => {
     if (mainWindow === window) {

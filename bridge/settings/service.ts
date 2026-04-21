@@ -19,6 +19,7 @@ export const defaultUserSettings: UserSettings = {
   additionalModelsDirectory: null,
   videoGenerationModel: '',
   pythonPort: 8765,
+  streamingMascotEnabled: true,
   theme: 'system'
 };
 

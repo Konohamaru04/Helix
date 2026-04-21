@@ -100,11 +100,11 @@ export function GenerationJobCard(props: GenerationJobCardProps) {
   }
 
   return (
-    <article className="overflow-hidden rounded-[1.5rem] border border-white/10 bg-slate-900/80 shadow-panel">
+    <article className="motion-card motion-panel overflow-hidden rounded-[1.5rem] border border-white/10 bg-slate-900/80 shadow-panel">
       {previewable ? (
         <button
           aria-label="Open generated image"
-          className="m-4 mb-0 block max-w-3xl overflow-hidden rounded-[1.25rem] border border-white/10 bg-slate-950 text-left transition hover:border-cyan-300/30 hover:bg-slate-950/90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
+          className="motion-interactive m-4 mb-0 block max-w-3xl overflow-hidden rounded-[1.25rem] border border-white/10 bg-slate-950 text-left transition hover:border-cyan-300/30 hover:bg-slate-950/90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
           onClick={() => {
             void handleOpenImage();
           }}
@@ -118,14 +118,14 @@ export function GenerationJobCard(props: GenerationJobCardProps) {
             {previewUrl ? (
               <img
                 alt={props.job.prompt}
-                className={`w-full object-contain ${
+                className={`motion-panel w-full object-contain ${
                   props.compact ? 'max-h-56' : 'max-h-[26rem]'
                 }`}
                 loading="lazy"
                 src={previewUrl}
               />
             ) : (
-              <div className="flex h-full w-full items-center justify-center px-4 text-center text-sm text-slate-500">
+              <div className="motion-loader-sweep flex h-full w-full items-center justify-center px-4 text-center text-sm text-slate-500">
                 {previewResolved ? 'Preview unavailable' : 'Loading preview...'}
               </div>
             )}
@@ -161,7 +161,7 @@ export function GenerationJobCard(props: GenerationJobCardProps) {
         <div className="space-y-2">
           <div className="h-2 overflow-hidden rounded-full bg-slate-800">
             <div
-              className={`h-full rounded-full ${
+              className={`motion-progress-bar h-full rounded-full ${
                 props.job.status === 'failed'
                   ? 'bg-rose-300'
                   : props.job.status === 'cancelled'
@@ -207,7 +207,7 @@ export function GenerationJobCard(props: GenerationJobCardProps) {
           <div className="flex flex-wrap gap-3">
             {canCancel && props.onCancel ? (
               <button
-                className="rounded-xl border border-rose-300/20 px-3 py-2 text-xs font-medium text-rose-100 transition hover:border-rose-300/30 hover:bg-rose-500/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-300"
+                className="motion-interactive rounded-xl border border-rose-300/20 px-3 py-2 text-xs font-medium text-rose-100 transition hover:border-rose-300/30 hover:bg-rose-500/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-300"
                 onClick={() => props.onCancel?.(props.job.id)}
                 type="button"
               >
@@ -216,7 +216,7 @@ export function GenerationJobCard(props: GenerationJobCardProps) {
             ) : null}
             {canRetry && props.onRetry ? (
               <button
-                className="rounded-xl border border-cyan-300/20 px-3 py-2 text-xs font-medium text-cyan-100 transition hover:border-cyan-300/30 hover:bg-cyan-500/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-300"
+                className="motion-interactive rounded-xl border border-cyan-300/20 px-3 py-2 text-xs font-medium text-cyan-100 transition hover:border-cyan-300/30 hover:bg-cyan-500/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300"
                 onClick={() => props.onRetry?.(props.job.id)}
                 type="button"
               >

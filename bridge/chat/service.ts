@@ -11,6 +11,7 @@ import type { TurnMetadataService } from '@bridge/chat/turn-metadata';
 import { buildConversationContext } from '@bridge/context';
 import type {
   CancelChatTurnInput,
+  CapabilityTask,
   ChatStartAccepted,
   ContextSource,
   ConversationExportPayload,
@@ -27,6 +28,7 @@ import type {
   MessageAttachment,
   MessageUsage,
   OllamaThinkMode,
+  PlanState,
   RegenerateResponseInput,
   RouteTrace,
   SkillDefinition,
@@ -67,9 +69,7 @@ import type { RagService } from '@bridge/rag';
 import type { GenerationRepository } from '@bridge/generation/repository';
 import type { GenerationService } from '@bridge/generation/service';
 import {
-  isTrustedModelRouteAnalysis,
   type ChatRouter,
-  type ModelRouteAnalysis,
   type RouteDecision,
   type RouteInput
 } from '@bridge/router';
@@ -106,8 +106,10 @@ const PROMPT_AUTHORING_VERB_PATTERN =
   /\b(write|rewrite|create|generate|make|craft|draft|refine|improve|optimi[sz]e|adapt|convert|turn|suggest|give)\b/i;
 const IMAGE_RESTORE_PATTERN =
   /\b(?:back to (?:the )?original|change (?:it|them|this) back|restore(?: (?:it|them|this))?|revert(?: (?:it|them|this))?|undo(?: (?:the )?edit)?|same as before|as before|like before|original (?:look|clothing|clothes|outfit|style)|previous (?:look|clothing|clothes|outfit|style))\b/i;
-const ROUTE_ANALYSIS_RECENT_MESSAGE_LIMIT = 4;
-const ROUTE_ANALYSIS_MESSAGE_CHAR_LIMIT = 280;
+const CODE_IMPLEMENTATION_STACK_PATTERN =
+  /\b(?:html|css|javascript|typescript|react|vue|svelte|node(?:\.js)?|three(?:\.js)?|webgl|canvas)\b/i;
+const CODE_IMPLEMENTATION_RUNTIME_PATTERN =
+  /\b(?:single file|single script|one file|must run|run in chrome|run in (?:the )?browser|chrome browser|browser app|web app|webpage|website)\b/i;
 const MAX_LOGGED_TEXT_CHARS = 4_000;
 const DEFAULT_MAX_NATIVE_TOOL_CALL_ROUNDS = Number.MAX_SAFE_INTEGER;
 const MAX_LOCAL_NATIVE_TOOL_CALL_ROUNDS = Number.MAX_SAFE_INTEGER;
@@ -143,13 +145,13 @@ const NATIVE_TOOL_LOOP_SYSTEM_PROMPT = `You MUST invoke tools using the native f
 Work efficiently:
 - Read a file before modifying it — never assume its current contents.
 - For small, targeted changes use edit({filePath, startLine, endLine, newText}) — read the file first to get exact line numbers.
-- For changes that touch most of a file, use write({filePath, content}) with the complete new file contents.
+- For changes that touch most of a file, use write({filePath, content}) with the complete new file contents in the same call. Never call write with only a path.
 - Batch independent tool calls in one response instead of one call per turn.
 - When the task is done, stop calling tools and answer the user directly with a concise summary of what changed and why.`;
 const CODING_NATIVE_TOOL_LOOP_SYSTEM_PROMPT = `For coding tasks in the connected workspace, follow an implement-verify loop. Always use tool_calls objects — never plain-text commands:
 - Before modifying, read the target file and any direct callers or imports that the change will affect.
 - For small, targeted changes use edit({filePath, startLine, endLine, newText}) — read the file first to get exact line numbers.
-- For changes that restructure or touch most of a file, use write({filePath, content}) with the complete new file contents.
+- For changes that restructure or touch most of a file, use write({filePath, content}) with the complete new file contents in the same call. Never call write with only a path.
 - For larger scaffolds, batch several related edits or writes in the same response instead of one file per round.
 - After modifying, re-read every changed section to confirm correctness before proceeding.
 - Run the most relevant bounded validation command (typecheck, lint, or targeted test) before stopping.
@@ -240,26 +242,23 @@ const NATIVE_TOOL_LOOP_ESCALATION_TOOL_IDS = new Set([
   'task-stop',
   'todo-write'
 ]);
+const CAPABILITY_SURFACE_TOOL_IDS = new Set([
+  'enter-plan-mode',
+  'exit-plan-mode',
+  'task-create',
+  'task-update',
+  'task-stop',
+  'todo-write'
+]);
 const NATIVE_TOOL_CALLING_PATTERN =
   /\b(read|open|list|show|search|find|grep|glob|fetch|download|task|tasks|schedule|cron|worktree|definition|references|diagnostics|calculate|compute|powershell|command|tool|tools|agent|subagent|team|todo|checklist|milestone|notebook|resource|mcp|clarify|skill)\b|plan mode|https?:\/\/|[A-Za-z]:\\|\.{1,2}[\\/]/i;
 const NATIVE_FILE_MUTATION_PATTERN =
   /\b(write|save|create|update|modify|change|fix|rewrite|correct|repair)\b[\s\S]{0,64}(?:\b(file|folder|directory|document|notebook|markdown|json|yaml|yml|toml|txt|ts|tsx|js|jsx|py|sql|css|html|md|readme)\b|(?:[A-Za-z]:\\|\.{0,2}[\\/]|\/)?[A-Za-z0-9_.-]+\.(?:md|json|yaml|yml|toml|txt|ts|tsx|js|jsx|py|sql|css|html))\b/i;
-const ROUTE_ANALYSIS_SYSTEM_PROMPT = `You are the routing classifier for a local-first desktop AI application.
-Decide the best internal handling path for the latest user turn.
-Never answer the user request itself.
-Return only minified JSON with this exact shape:
-{"toolId":string|null,"skillId":string|null,"needsVision":boolean,"prefersCode":boolean,"useWorkspaceKnowledge":boolean,"imageMode":"none"|"text-to-image"|"image-to-image"|"prompt-authoring","confidence":number,"reason":string}
-Rules:
-- Set toolId only when one listed tool is the best action.
-- Set skillId only when one listed skill is the best chat behavior.
-- Set imageMode="text-to-image" only when the app should generate a new image now.
-- Set imageMode="image-to-image" only when the app should edit or transform an image now using attached or recent image context.
-- Set imageMode="prompt-authoring" when the user wants a prompt for another image model or wants prompt-writing help instead of generating the image now.
-- If the user is describing or analyzing an image, set needsVision=true and imageMode="none".
-- If unsure, keep toolId and skillId null, imageMode="none", and lower confidence.
-- Never invent tool or skill ids.`;
-
 type NativeToolWorkflowMode = 'default' | 'coding';
+type CapabilitySurfaceSnapshot = {
+  capabilityTasks: CapabilityTask[];
+  capabilityPlanState: PlanState | null;
+};
 type OllamaThinkValue = boolean | 'low' | 'medium' | 'high';
 
 function estimateTokens(value: string): number {
@@ -294,8 +293,25 @@ function looksLikeImageAnalysisPrompt(prompt: string): boolean {
   return IMAGE_ANALYSIS_PATTERN.test(prompt);
 }
 
+function looksLikeCodeImplementationPrompt(prompt: string): boolean {
+  return (
+    /(?:using|with)\s+(?:html|css|javascript|typescript|react|vue|svelte|node(?:\.js)?|three(?:\.js)?|webgl|canvas)\b/i.test(
+      prompt
+    ) ||
+    /\bhtml\b[\s,/+&-]+\bcss\b|\bcss\b[\s,/+&-]+\bjavascript\b|\bhtml\b[\s,/+&-]+\bjavascript\b/i.test(
+      prompt
+    ) ||
+    (CODE_IMPLEMENTATION_STACK_PATTERN.test(prompt) &&
+      CODE_IMPLEMENTATION_RUNTIME_PATTERN.test(prompt))
+  );
+}
+
 function looksLikeTextToImagePrompt(prompt: string): boolean {
-  return IMAGE_GENERATION_PATTERN.test(prompt) && IMAGE_OBJECT_PATTERN.test(prompt);
+  return (
+    IMAGE_GENERATION_PATTERN.test(prompt) &&
+    IMAGE_OBJECT_PATTERN.test(prompt) &&
+    !looksLikeCodeImplementationPrompt(prompt)
+  );
 }
 
 function looksLikeImageEditPrompt(prompt: string): boolean {
@@ -323,6 +339,19 @@ function looksLikeRepositoryAnalysisPrompt(prompt: string): boolean {
       prompt
     ) &&
     /\b(repo|repository|codebase|project|implementation|architecture)\b/i.test(prompt)
+  );
+}
+
+function looksLikeCodingTaskPrompt(prompt: string): boolean {
+  return /\b(implement|build|create|add|update|fix|debug|refactor|rewrite|repair|support|extend|scaffold|wire(?:\s+up)?|modify|change)\b/i.test(
+    prompt
+  );
+}
+
+function looksLikeWorkspaceInspectionPrompt(prompt: string): boolean {
+  return (
+    /\b(list|show|open|read|inspect|browse|search|find|grep|glob|tree)\b/i.test(prompt) &&
+    /\b(file|files|folder|folders|directory|directories|workspace)\b/i.test(prompt)
   );
 }
 
@@ -386,16 +415,6 @@ function mergeDistinctImageAttachments(
 
 function buildRestoreImageEditPrompt(prompt: string): string {
   return `${prompt}\n\nEditing guidance: use the first reference image as the current image to edit and use any additional reference images as the earlier original look to restore.`;
-}
-
-function clipRouteAnalysisText(value: string, maxLength: number): string {
-  const normalized = value.replace(/\s+/g, ' ').trim();
-
-  if (normalized.length <= maxLength) {
-    return normalized;
-  }
-
-  return `${normalized.slice(0, Math.max(0, maxLength - 3))}...`;
 }
 
 function clipLoggedText(
@@ -551,7 +570,7 @@ function buildNativeToolReferencePrompt(toolDefinitions: OllamaToolDefinition[])
   const writing: string[] = [];
   if (availableTools.has('write')) {
     writing.push(
-      '- `write({filePath, content})` or `write({path, content})`: create or fully overwrite a file. Content must be the complete new file.'
+      '- `write({filePath, content})`: create or fully overwrite a file. Content must be the complete new file, and `write` cannot infer content from a path-only call.'
     );
   }
   if (availableTools.has('edit')) {
@@ -689,6 +708,21 @@ function buildNativeToolReferencePrompt(toolDefinitions: OllamaToolDefinition[])
   return heading + '\n\n' + sections.join('\n\n');
 }
 
+function buildNativeSkillReferencePrompt(skills: SkillDefinition[]): string {
+  if (skills.length === 0) {
+    return 'Available skills:\n- _No available skills_';
+  }
+
+  return [
+    'Available skills:',
+    '- If another system message already activates a specific skill, follow that active skill prompt over this catalog.',
+    '- Otherwise, internally adopt the single best matching skill behavior for this turn.',
+    ...skills.map(
+      (skill) => `- \`${skill.id}\` (${skill.title}): ${skill.description}`
+    )
+  ].join('\n');
+}
+
 function findLatestUnrecoveredToolFailure(toolInvocations: ToolInvocation[]): ToolInvocation | null {
   let latestFailureIndex = -1;
 
@@ -723,6 +757,7 @@ function isEnvironmentBlockedToolFailure(invocation: ToolInvocation): boolean {
 
 function buildToolFailureRecoveryHint(invocation: ToolInvocation): string[] {
   const errorMessage = invocation.errorMessage ?? '';
+  const inputSummary = invocation.inputSummary ?? '';
 
   switch (invocation.toolId) {
     case 'edit':
@@ -730,11 +765,30 @@ function buildToolFailureRecoveryHint(invocation: ToolInvocation): string[] {
         '- Read the file first to get exact line numbers, then retry with `{ filePath, startLine, endLine, newText }`.',
         '- If most of the file needs to change, switch to `write` with the full replacement content.'
       ];
-    case 'write':
+    case 'write': {
+      const hasFilePath = /"(?:filePath|path)"\s*:/.test(inputSummary);
+      const hasContent = /"content"\s*:/.test(inputSummary);
+
+      if (hasFilePath && !hasContent) {
+        return [
+          '- `write` is a single-call file creation or overwrite tool. It cannot infer file contents from `filePath` alone.',
+          '- Retry with one JSON object that includes both `filePath` and full `content`, for example `{ "filePath": "index.html", "content": "<!doctype html>..." }`.',
+          '- If you only need to change an existing file, read it first and then use `edit` for the targeted patch.'
+        ];
+      }
+
+      if (!hasFilePath && hasContent) {
+        return [
+          '- Retry with both `filePath` and full `content` in the same `write` call.',
+          '- If the target path is uncertain, use `workspace-search`, `glob`, or `workspace-lister` first.'
+        ];
+      }
+
       return [
-        '- Call `write` with JSON arguments containing `filePath` or `path` plus full `content`.',
+        '- Call `write` with JSON arguments containing both `filePath` and full `content` in the same call.',
         '- If the target path is uncertain, use `workspace-search`, `glob`, or `workspace-lister` first.'
       ];
+    }
     case 'read':
     case 'file-reader':
       return [
@@ -824,157 +878,11 @@ function mergeContextSources(...collections: ReadonlyArray<ContextSource[]>): Co
   return merged;
 }
 
-function isGeneralPurposeRoutingModel(model: string): boolean {
-  return !/(vl|vision|llava|coder|code)/i.test(model);
-}
-
 function isCloudHostedModel(model: string): boolean {
   return /(?:^|[:/.-])cloud(?:$|[:/.-])|(?:^|[:/.-][A-Za-z0-9]+)-cloud(?:$|[:/.-])/i.test(
     model.trim()
   );
 }
-
-function pickRouteAnalysisModel(
-  availableModels: string[],
-  settings: UserSettings,
-  requestedModel?: string
-): string | null {
-  const normalizedAvailableModels = Array.from(
-    new Set(availableModels.map((model) => model.trim()).filter(Boolean))
-  );
-  const normalizedRequestedModel = requestedModel?.trim();
-  const preferredRequestedModel =
-    normalizedRequestedModel && isGeneralPurposeRoutingModel(normalizedRequestedModel)
-      ? normalizedRequestedModel
-      : undefined;
-  const candidates = [
-    preferredRequestedModel,
-    settings.defaultModel.trim() || undefined,
-    normalizedAvailableModels.find((model) => isGeneralPurposeRoutingModel(model)),
-    normalizedRequestedModel,
-    normalizedAvailableModels[0]
-  ];
-
-  for (const candidate of candidates) {
-    if (candidate && normalizedAvailableModels.includes(candidate)) {
-      return candidate;
-    }
-  }
-
-  return null;
-}
-
-function extractJsonObject(value: string): string | null {
-  const start = value.indexOf('{');
-  const end = value.lastIndexOf('}');
-
-  if (start === -1 || end === -1 || end <= start) {
-    return null;
-  }
-
-  return value.slice(start, end + 1);
-}
-
-function parseModelRouteAnalysis(
-  value: string,
-  allowedToolIds: Set<string>,
-  allowedSkillIds: Set<string>
-): ModelRouteAnalysis | null {
-  const jsonCandidate = extractJsonObject(value);
-
-  if (!jsonCandidate) {
-    return null;
-  }
-
-  try {
-    const parsed = JSON.parse(jsonCandidate) as Record<string, unknown>;
-    const rawToolId =
-      typeof parsed.toolId === 'string' && allowedToolIds.has(parsed.toolId.trim())
-        ? parsed.toolId.trim()
-        : null;
-    const rawSkillId =
-      typeof parsed.skillId === 'string' && allowedSkillIds.has(parsed.skillId.trim())
-        ? parsed.skillId.trim()
-        : null;
-    const rawNeedsVision = typeof parsed.needsVision === 'boolean' ? parsed.needsVision : false;
-    const rawPrefersCode = typeof parsed.prefersCode === 'boolean' ? parsed.prefersCode : false;
-    const rawUseWorkspaceKnowledge =
-      typeof parsed.useWorkspaceKnowledge === 'boolean'
-        ? parsed.useWorkspaceKnowledge
-        : false;
-    const rawImageMode =
-      parsed.imageMode === 'none' ||
-      parsed.imageMode === 'text-to-image' ||
-      parsed.imageMode === 'image-to-image' ||
-      parsed.imageMode === 'prompt-authoring'
-        ? parsed.imageMode
-        : 'none';
-    const rawConfidence =
-      typeof parsed.confidence === 'number' && Number.isFinite(parsed.confidence)
-        ? Math.max(0, Math.min(1, parsed.confidence))
-        : 0;
-    const rawReason =
-      typeof parsed.reason === 'string' && parsed.reason.trim().length > 0
-        ? clipRouteAnalysisText(parsed.reason, 160)
-        : 'classifier-response';
-
-    return {
-      toolId: rawToolId,
-      skillId: rawSkillId,
-      needsVision: rawNeedsVision,
-      prefersCode: rawPrefersCode,
-      useWorkspaceKnowledge: rawUseWorkspaceKnowledge,
-      imageMode: rawImageMode,
-      confidence: rawConfidence,
-      reason: rawReason
-    };
-  } catch {
-    return null;
-  }
-}
-
-function buildRouteAnalysisPrompt(input: {
-  prompt: string;
-  attachments: MessageAttachment[];
-  workspaceHasKnowledge: boolean;
-  workspaceRootConnected: boolean;
-  recentMessages: StoredMessage[];
-  availableToolLines: string[];
-  availableSkillLines: string[];
-}): string {
-  const recentContext =
-    input.recentMessages.length === 0
-      ? '- None'
-      : input.recentMessages
-          .slice(-ROUTE_ANALYSIS_RECENT_MESSAGE_LIMIT)
-          .map((message) => {
-            const routeSummary = message.routeTrace
-              ? ` | route=${message.routeTrace.strategy}:${message.routeTrace.reason}`
-              : '';
-
-            return `- ${message.role}: ${clipRouteAnalysisText(message.content, ROUTE_ANALYSIS_MESSAGE_CHAR_LIMIT)}${routeSummary}`;
-          })
-          .join('\n');
-
-  return [
-    'Available tools:',
-    input.availableToolLines.join('\n'),
-    '',
-    'Available skills:',
-    input.availableSkillLines.join('\n'),
-    '',
-    `Workspace folder connected: ${input.workspaceRootConnected ? 'yes' : 'no'}`,
-    `Workspace has imported knowledge: ${input.workspaceHasKnowledge ? 'yes' : 'no'}`,
-    `Current turn has image attachments: ${input.attachments.some(isImageAttachment) ? 'yes' : 'no'}`,
-    '',
-    'Recent conversation:',
-    recentContext,
-    '',
-    'Latest user prompt:',
-    clipRouteAnalysisText(input.prompt, 600)
-  ].join('\n');
-}
-
 function sanitizeExportPayload(payload: ConversationExportPayload): ConversationExportPayload {
   return conversationExportPayloadSchema.parse({
     conversation: payload.conversation,
@@ -2102,8 +2010,6 @@ export class ChatService {
       throw new Error(`Conversation ${request.conversationId} was not found.`);
     }
 
-    const settings = this.settingsService.get();
-    const activeTextBackend = await this.getActiveTextBackendStatus(settings);
     const directives = this.parsePromptDirectives(request.prompt);
     this.logger.info(
       {
@@ -2120,32 +2026,11 @@ export class ChatService {
       },
       'Received user prompt'
     );
-    const recentMessages = this.listMessages(conversation.id);
-    const workspaceHasKnowledge = Boolean(
-      conversation.workspaceId && this.ragService.hasWorkspaceKnowledge(conversation.workspaceId)
-    );
-    const modelAnalysis = await this.resolveModelRouteAnalysis({
-      prompt: directives.cleanedPrompt,
-      requestedModel: request.model,
-      attachments: request.attachments ?? [],
-      recentMessages,
-      workspaceHasKnowledge,
-      explicitSkillId: directives.explicitSkillId,
-      explicitToolId: directives.explicitToolId,
-      settings,
-      backend: activeTextBackend.backend,
-      baseUrl: activeTextBackend.baseUrl,
-      apiKey: activeTextBackend.apiKey,
-      availableModels: activeTextBackend.models.map((model) => model.name),
-      backendReady: activeTextBackend.ready
-    });
-
     const automaticGenerationPlan = await this.resolveAutomaticGenerationPlan({
       prompt: request.prompt,
       requestedModel: request.model,
       attachments: request.attachments ?? [],
-      conversationId: conversation.id,
-      modelAnalysis
+      conversationId: conversation.id
     });
 
     if (automaticGenerationPlan) {
@@ -2159,21 +2044,26 @@ export class ChatService {
         mode: automaticGenerationPlan.mode,
         referenceImages: automaticGenerationPlan.referenceImages
       });
+      const startedGenerationJob = (
+        typeof startedJob === 'object' && startedJob !== null && 'job' in startedJob
+          ? startedJob.job
+          : startedJob
+      ) as GenerationJob;
       const touchedConversation = this.repository.touchConversation(conversation.id);
       const accepted = chatStartAcceptedSchema.parse({
         kind: 'generation',
         requestId: randomUUID(),
         conversation: touchedConversation,
-        job: startedJob.job,
-        model: startedJob.job.model
+        job: startedGenerationJob,
+        model: startedGenerationJob.model
       });
 
       this.logger.info(
         {
           conversationId: touchedConversation.id,
-          jobId: startedJob.job.id,
-          mode: startedJob.job.mode,
-          model: startedJob.job.model,
+          jobId: startedGenerationJob.id,
+          mode: startedGenerationJob.mode,
+          model: startedGenerationJob.model,
           reason: automaticGenerationPlan.reason,
           referenceImageCount: automaticGenerationPlan.referenceImages.length
         },
@@ -2191,8 +2081,7 @@ export class ChatService {
           conversationId: conversation.id
         },
         conversation,
-        emitEvent,
-        modelAnalysis
+        emitEvent
       ))
     });
   }
@@ -2220,8 +2109,7 @@ export class ChatService {
   private async startChatTurnInternal(
     request: ChatTurnRequest,
     conversation: NonNullable<ReturnType<ChatRepository['getConversation']>>,
-    emitEvent: (event: ChatStreamEvent) => void,
-    modelAnalysis?: ModelRouteAnalysis | null
+    emitEvent: (event: ChatStreamEvent) => void
   ): Promise<ChatTurnAccepted> {
     const parsedRequest = chatTurnRequestSchema.parse(request);
 
@@ -2238,8 +2126,7 @@ export class ChatService {
       attachments: parsedRequest.attachments ?? [],
       conversationId: conversation.id,
       workspaceId: conversation.workspaceId,
-      importedKnowledge,
-      modelAnalysis
+      importedKnowledge
     });
     const correlationId = randomUUID();
     const userMessage = this.repository.createMessage({
@@ -2532,131 +2419,11 @@ export class ChatService {
     });
   }
 
-  private async resolveModelRouteAnalysis(input: {
-    prompt: string;
-    requestedModel?: string | undefined;
-    attachments: MessageAttachment[];
-    recentMessages: StoredMessage[];
-    workspaceHasKnowledge: boolean;
-    workspaceRootConnected?: boolean;
-    explicitSkillId: string | null;
-    explicitToolId: string | null;
-    settings: UserSettings;
-    backend: TextInferenceBackend;
-    baseUrl: string;
-    apiKey: string | null;
-    availableModels: string[];
-    backendReady: boolean;
-  }): Promise<ModelRouteAnalysis | null> {
-    if (input.explicitSkillId || input.explicitToolId || !input.backendReady) {
-      return null;
-    }
-
-    const routeAnalysisModel = pickRouteAnalysisModel(
-      input.availableModels,
-      input.settings,
-      input.requestedModel
-    );
-
-    if (!routeAnalysisModel) {
-      return null;
-    }
-
-    const availableTools = this.toolDispatcher
-      .listDefinitions()
-      .filter(
-        (tool) =>
-          tool.autoRoutable &&
-          tool.availability === 'available' &&
-          ((input.workspaceRootConnected ?? false) ||
-            !this.toolDispatcher.requiresWorkspaceRoot(tool.id))
-      );
-    const availableSkills = this.skillRegistry.list();
-
-    try {
-      const completion = await this.completeTextChat({
-        backend: input.backend,
-        baseUrl: input.baseUrl,
-        apiKey: input.apiKey,
-        model: routeAnalysisModel,
-        messages: [
-          {
-            role: 'system',
-            content: ROUTE_ANALYSIS_SYSTEM_PROMPT
-          },
-          {
-            role: 'user',
-            content: buildRouteAnalysisPrompt({
-              prompt: input.prompt,
-              attachments: input.attachments,
-              workspaceHasKnowledge: input.workspaceHasKnowledge,
-              workspaceRootConnected: input.workspaceRootConnected ?? false,
-              recentMessages: input.recentMessages,
-              availableToolLines: availableTools.map(
-                (tool) => `- ${tool.id}: ${tool.description}`
-              ),
-              availableSkillLines: availableSkills.map(
-                (skill) => `- ${skill.id}: ${skill.description}`
-              )
-            })
-          }
-        ]
-      });
-      const analysis = parseModelRouteAnalysis(
-        completion.content,
-        new Set(availableTools.map((tool) => tool.id)),
-        new Set(availableSkills.map((skill) => skill.id))
-      );
-
-      if (!analysis) {
-        this.logger.warn(
-          {
-            classifierModel: routeAnalysisModel,
-            prompt: clipRouteAnalysisText(input.prompt, 120),
-            rawResponse: clipRouteAnalysisText(completion.content, 240)
-          },
-          'Unable to parse model-assisted route analysis; falling back to heuristics'
-        );
-
-        return null;
-      }
-
-      this.logger.info(
-        {
-          classifierModel: routeAnalysisModel,
-          confidence: analysis.confidence,
-          toolId: analysis.toolId,
-          skillId: analysis.skillId,
-          imageMode: analysis.imageMode,
-          needsVision: analysis.needsVision,
-          prefersCode: analysis.prefersCode,
-          useWorkspaceKnowledge: analysis.useWorkspaceKnowledge,
-          classifierReason: analysis.reason
-        },
-        'Resolved model-assisted route analysis'
-      );
-
-      return analysis;
-    } catch (error) {
-      this.logger.warn(
-        {
-          classifierModel: routeAnalysisModel,
-          prompt: clipRouteAnalysisText(input.prompt, 120),
-          error: error instanceof Error ? error.message : String(error)
-        },
-        'Model-assisted route analysis failed; falling back to heuristics'
-      );
-
-      return null;
-    }
-  }
-
   private async resolveAutomaticGenerationPlan(input: {
     prompt: string;
     requestedModel?: string | undefined;
     attachments: MessageAttachment[];
     conversationId: string;
-    modelAnalysis?: ModelRouteAnalysis | null;
   }): Promise<AutomaticGenerationPlan | null> {
     if (!this.generationRepository || !this.generationService) {
       return null;
@@ -2675,14 +2442,8 @@ export class ChatService {
     }
 
     const cleanedPrompt = directives.cleanedPrompt;
-    const trustedModelAnalysis = isTrustedModelRouteAnalysis(input.modelAnalysis)
-      ? input.modelAnalysis
-      : null;
 
-    if (
-      looksLikeImagePromptAuthoringRequest(cleanedPrompt) ||
-      trustedModelAnalysis?.imageMode === 'prompt-authoring'
-    ) {
+    if (looksLikeImagePromptAuthoringRequest(cleanedPrompt)) {
       return null;
     }
 
@@ -2691,15 +2452,9 @@ export class ChatService {
 
     if (currentReferenceImages.length > 0) {
       const explicitImageEdit =
-        trustedModelAnalysis?.imageMode === 'image-to-image' ||
-        (trustedModelAnalysis === null &&
-          (looksLikeImageEditPrompt(cleanedPrompt) || looksLikeTextToImagePrompt(cleanedPrompt)));
+        looksLikeImageEditPrompt(cleanedPrompt) || looksLikeTextToImagePrompt(cleanedPrompt);
 
-      if (
-        trustedModelAnalysis?.imageMode === 'none' ||
-        looksLikeImageAnalysisPrompt(cleanedPrompt) ||
-        !explicitImageEdit
-      ) {
+      if (looksLikeImageAnalysisPrompt(cleanedPrompt) || !explicitImageEdit) {
         return null;
       }
 
@@ -2767,8 +2522,7 @@ export class ChatService {
     if (
       canUsePriorImageContext &&
       !looksLikeImageAnalysisPrompt(cleanedPrompt) &&
-      (trustedModelAnalysis?.imageMode === 'image-to-image' ||
-        (trustedModelAnalysis === null && looksLikeImageFollowUpPrompt(cleanedPrompt)))
+      looksLikeImageFollowUpPrompt(cleanedPrompt)
     ) {
       const baseReferenceImages =
         latestGenerationReferenceImages.length > 0
@@ -2805,17 +2559,11 @@ export class ChatService {
       }
     }
 
-    if (
-      trustedModelAnalysis?.imageMode === 'text-to-image' ||
-      (trustedModelAnalysis === null && looksLikeTextToImagePrompt(cleanedPrompt))
-    ) {
+    if (looksLikeTextToImagePrompt(cleanedPrompt)) {
       return {
         prompt: cleanedPrompt,
         mode: 'text-to-image',
-        reason:
-          trustedModelAnalysis?.imageMode === 'text-to-image'
-            ? 'model-text-to-image-auto-generation'
-            : 'text-to-image-auto-generation',
+        reason: 'text-to-image-auto-generation',
         referenceImages: []
       };
     }
@@ -2832,7 +2580,6 @@ export class ChatService {
     workspaceId: string | null;
     importedKnowledge: ImportWorkspaceKnowledgeResult | null;
     excludeMessageIds?: string[];
-    modelAnalysis?: ModelRouteAnalysis | null | undefined;
   }): Promise<ResolvedTurnPlan> {
     const directives = this.parsePromptDirectives(input.prompt);
     const settings = this.settingsService.get();
@@ -2846,24 +2593,6 @@ export class ChatService {
       Boolean(input.workspaceId && this.ragService.hasWorkspaceKnowledge(input.workspaceId)) ||
       Boolean(input.importedKnowledge && input.importedKnowledge.documents.length > 0);
     const workspaceRootConnected = Boolean(workspace?.rootPath);
-    const modelAnalysis =
-      input.modelAnalysis ??
-      (await this.resolveModelRouteAnalysis({
-        prompt: directives.cleanedPrompt,
-        requestedModel: input.requestedModel,
-        attachments: input.attachments,
-        recentMessages,
-        workspaceHasKnowledge,
-        workspaceRootConnected,
-        explicitSkillId: directives.explicitSkillId,
-        explicitToolId: directives.explicitToolId,
-        settings,
-        backend: activeTextBackend.backend,
-        baseUrl: activeTextBackend.baseUrl,
-        apiKey: activeTextBackend.apiKey,
-        availableModels: activeTextBackend.models.map((model) => model.name),
-        backendReady: activeTextBackend.ready
-      }));
 
     if (
       activeTextBackend.backend === 'nvidia' &&
@@ -2882,8 +2611,7 @@ export class ChatService {
       workspaceHasKnowledge,
       workspaceRootConnected,
       explicitSkillId: directives.explicitSkillId,
-      explicitToolId: directives.explicitToolId,
-      modelAnalysis
+      explicitToolId: directives.explicitToolId
     };
     if (!activeTextBackend.ready) {
       throw new Error(
@@ -2962,17 +2690,18 @@ export class ChatService {
         0,
         CLOUD_SESSION_TOKEN_LIMIT - priorConversationTokens
       );
-      const cappedWindow = Math.min(
-        CLOUD_NUM_CTX_LIMIT,
-        Math.max(basePromptBudget, sessionRemainingTokens)
+      const cappedWindow = Math.max(
+        1,
+        Math.min(CLOUD_NUM_CTX_LIMIT, sessionRemainingTokens)
       );
+      const cappedBasePromptBudget = Math.min(basePromptBudget, cappedWindow);
       const appliedHeadroom = Math.max(
         0,
-        Math.min(targetHeadroom, Math.max(cappedWindow - basePromptBudget, 0))
+        Math.min(targetHeadroom, Math.max(cappedWindow - cappedBasePromptBudget, 0))
       );
 
       return {
-        numCtx: Math.min(CLOUD_NUM_CTX_LIMIT, basePromptBudget + appliedHeadroom),
+        numCtx: Math.max(1, Math.min(CLOUD_NUM_CTX_LIMIT, cappedBasePromptBudget + appliedHeadroom)),
         mode: 'cloud',
         priorConversationTokens,
         sessionRemainingTokens,
@@ -3153,7 +2882,8 @@ export class ChatService {
         routeTrace,
         toolInvocationCount: result.toolInvocations.length,
         contextSourceCount: result.contextSources.length,
-        usage
+        usage,
+        capabilitySnapshot: this.getCapabilitySurfaceSnapshot(workspace?.id ?? null)
       });
 
       this.logger.info(
@@ -3328,6 +3058,7 @@ export class ChatService {
       availableTools: this.toolDispatcher
         .listDefinitions()
         .filter((tool) => tool.availability === 'available'),
+      availableSkills: this.skillRegistry.list(),
       latestUserPromptOverride: input.routePlan.cleanedPrompt,
       memorySummary: memoryContext.summaryText,
       summarizedMessageIds: memoryContext.summarizedMessageIds,
@@ -3530,6 +3261,7 @@ export class ChatService {
           messages: ollamaMessages,
           think: input.routePlan.thinkMode,
           toolDefinitions: nativeToolDefinitions,
+          availableSkills: this.skillRegistry.list(),
           workspaceRootPath: workspace?.rootPath ?? null,
           workspaceId: workspace?.id ?? null,
           conversationId: accepted.conversation.id,
@@ -3543,7 +3275,8 @@ export class ChatService {
           onProgress: ({
             content: nativeToolContent,
             toolInvocations: nativeToolInvocations,
-            contextSources: nativeToolContextSources
+            contextSources: nativeToolContextSources,
+            capabilitySnapshot
           }) => {
             content = nativeToolContent;
             toolInvocations = [...initialToolInvocations, ...nativeToolInvocations];
@@ -3558,7 +3291,8 @@ export class ChatService {
               model: accepted.model,
               routeTrace,
               toolInvocations,
-              contextSources: mergeContextSources(context.sources, toolContextSources)
+              contextSources: mergeContextSources(context.sources, toolContextSources),
+              ...(capabilitySnapshot === undefined ? {} : { capabilitySnapshot })
             });
           },
           signal: activeTurn.abortController.signal
@@ -3585,6 +3319,7 @@ export class ChatService {
           assistantMessageId: accepted.assistantMessage.id,
           requestId: accepted.requestId,
           emitEvent: input.emitEvent,
+          workspaceId: workspace?.id ?? null,
           content,
           doneReason: nativeToolResult.doneReason,
           model: accepted.model,
@@ -3670,15 +3405,16 @@ export class ChatService {
         conversationId: accepted.conversation.id,
         assistantMessageId: accepted.assistantMessage.id,
         requestId: accepted.requestId,
-          emitEvent: input.emitEvent,
-          content,
-          doneReason: inlineToolRecovery.doneReason,
-          model: accepted.model,
-          routeTrace,
-          toolInvocations,
-          contextSources: finalContextSources,
-          usage: finalUsage
-        });
+        emitEvent: input.emitEvent,
+        workspaceId: workspace?.id ?? null,
+        content,
+        doneReason: inlineToolRecovery.doneReason,
+        model: accepted.model,
+        routeTrace,
+        toolInvocations,
+        contextSources: finalContextSources,
+        usage: finalUsage
+      });
 
       this.logger.info(
         {
@@ -3719,6 +3455,7 @@ export class ChatService {
           assistantMessageId: accepted.assistantMessage.id,
           requestId: accepted.requestId,
           emitEvent: input.emitEvent,
+          workspaceId: workspace?.id ?? null,
           content,
           doneReason: 'cancelled',
           model: accepted.model,
@@ -3975,11 +3712,30 @@ export class ChatService {
       return false;
     }
 
+    if (input.workspaceRootPath === null && looksLikeWorkspaceInspectionPrompt(input.prompt)) {
+      return false;
+    }
+
     return (
       NATIVE_TOOL_CALLING_PATTERN.test(input.prompt) ||
       looksLikeNativeFileMutationPrompt(input.prompt) ||
+      (input.workspaceRootPath !== null && looksLikeCodingTaskPrompt(input.prompt)) ||
       (input.workspaceRootPath !== null && looksLikeRepositoryAnalysisPrompt(input.prompt)) ||
       NATIVE_TOOL_LOOP_SKILL_IDS.has(input.routeDecision.activeSkillId ?? '')
+    );
+  }
+
+  private getCapabilitySurfaceSnapshot(workspaceId: string | null): CapabilitySurfaceSnapshot {
+    const planContext = this.toolDispatcher.getPlanContext(workspaceId);
+    return {
+      capabilityTasks: planContext.tasks,
+      capabilityPlanState: planContext.planState
+    };
+  }
+
+  private didCapabilitySurfaceChange(toolInvocations: ToolInvocation[]): boolean {
+    return toolInvocations.some((invocation) =>
+      CAPABILITY_SURFACE_TOOL_IDS.has(invocation.toolId)
     );
   }
 
@@ -3996,6 +3752,7 @@ export class ChatService {
     contextSourceCount?: number;
     contextSources?: ContextSource[];
     usage?: MessageUsage | null;
+    capabilitySnapshot?: CapabilitySurfaceSnapshot;
   }): void {
     input.emitEvent({
       type: 'update',
@@ -4019,7 +3776,13 @@ export class ChatService {
               input.contextSourceCount ?? input.contextSources?.length ?? 0
           }),
       ...(input.contextSources === undefined ? {} : { contextSources: input.contextSources }),
-      ...(input.usage === undefined ? {} : { usage: input.usage })
+      ...(input.usage === undefined ? {} : { usage: input.usage }),
+      ...(input.capabilitySnapshot === undefined
+        ? {}
+        : {
+            capabilityTasks: input.capabilitySnapshot.capabilityTasks,
+            capabilityPlanState: input.capabilitySnapshot.capabilityPlanState
+          })
     });
   }
 
@@ -4036,6 +3799,7 @@ export class ChatService {
     contextSourceCount?: number;
     contextSources?: ContextSource[];
     usage?: MessageUsage | null;
+    capabilitySnapshot?: CapabilitySurfaceSnapshot;
   }): void {
     input.emitEvent({
       type: 'complete',
@@ -4059,7 +3823,13 @@ export class ChatService {
               input.contextSourceCount ?? input.contextSources?.length ?? 0
           }),
       ...(input.contextSources === undefined ? {} : { contextSources: input.contextSources }),
-      ...(input.usage === undefined ? {} : { usage: input.usage })
+      ...(input.usage === undefined ? {} : { usage: input.usage }),
+      ...(input.capabilitySnapshot === undefined
+        ? {}
+        : {
+            capabilityTasks: input.capabilitySnapshot.capabilityTasks,
+            capabilityPlanState: input.capabilitySnapshot.capabilityPlanState
+          })
     });
   }
 
@@ -4077,6 +3847,7 @@ export class ChatService {
     contextSourceCount?: number;
     contextSources?: ContextSource[];
     usage?: MessageUsage | null;
+    capabilitySnapshot?: CapabilitySurfaceSnapshot;
   }): void {
     const eventInput = {
       ...input,
@@ -4127,7 +3898,10 @@ export class ChatService {
         status: input.status,
         toolInvocationCount: eventInput.toolInvocationCount,
         contextSourceCount: eventInput.contextSourceCount,
-        ...(input.model === undefined ? {} : { model: input.model })
+        ...(input.model === undefined ? {} : { model: input.model }),
+        ...(input.capabilitySnapshot === undefined
+          ? {}
+          : { capabilitySnapshot: input.capabilitySnapshot })
       });
     } catch (error) {
       this.logger.warn(
@@ -4197,6 +3971,7 @@ export class ChatService {
     assistantMessageId: string;
     requestId: string;
     emitEvent: (event: ChatStreamEvent) => void;
+    workspaceId: string | null;
     content: string;
     doneReason: string | null;
     model?: string | null;
@@ -4207,6 +3982,7 @@ export class ChatService {
   }): void {
     const toolInvocationCount = input.toolInvocations.length;
     const contextSourceCount = input.contextSources.length;
+    const capabilitySnapshot = this.getCapabilitySurfaceSnapshot(input.workspaceId);
 
     try {
       this.repository.updateMessage(input.assistantMessageId, {
@@ -4245,7 +4021,8 @@ export class ChatService {
         routeTrace: input.routeTrace,
         toolInvocationCount,
         contextSourceCount,
-        usage: input.usage
+        usage: input.usage,
+        capabilitySnapshot
       });
       return;
     } catch (error) {
@@ -4270,7 +4047,8 @@ export class ChatService {
         doneReason: input.doneReason,
         toolInvocationCount,
         contextSourceCount,
-        ...(input.model === undefined ? {} : { model: input.model })
+        ...(input.model === undefined ? {} : { model: input.model }),
+        capabilitySnapshot
       });
     } catch (error) {
       this.logger.warn(
@@ -4291,7 +4069,8 @@ export class ChatService {
   }): NativeToolWorkflowMode {
     return input.workspaceRootPath !== null &&
       (['builder', 'debugger'].includes(input.routeDecision.activeSkillId ?? '') ||
-        looksLikeNativeFileMutationPrompt(input.prompt))
+        looksLikeNativeFileMutationPrompt(input.prompt) ||
+        looksLikeCodingTaskPrompt(input.prompt))
       ? 'coding'
       : 'default';
   }
@@ -4371,12 +4150,14 @@ export class ChatService {
     workflowMode: NativeToolWorkflowMode,
     includeRepositoryAnalysisGuidance: boolean,
     toolDefinitions: OllamaToolDefinition[],
+    availableSkills: SkillDefinition[],
     planContext?: { planState: import('@bridge/ipc/contracts').PlanState | null; tasks: import('@bridge/ipc/contracts').CapabilityTask[] }
   ): OllamaChatMessage[] {
     const firstNonSystemIndex = messages.findIndex((message) => message.role !== 'system');
     const guidanceParts = [
       NATIVE_TOOL_LOOP_SYSTEM_PROMPT,
-      buildNativeToolReferencePrompt(toolDefinitions)
+      buildNativeToolReferencePrompt(toolDefinitions),
+      buildNativeSkillReferencePrompt(availableSkills)
     ];
 
     // Conditionally inject plan mode guidance only when relevant
@@ -4440,6 +4221,7 @@ export class ChatService {
     priorConversationTokenTotal: number;
     workflowMode: NativeToolWorkflowMode;
     includeRepositoryAnalysisGuidance: boolean;
+    availableSkills: SkillDefinition[];
     maxRounds: number;
     hardMaxRounds: number;
     roundExtension: number;
@@ -4447,6 +4229,7 @@ export class ChatService {
       content: string;
       toolInvocations: ToolInvocation[];
       contextSources: ContextSource[];
+      capabilitySnapshot?: CapabilitySurfaceSnapshot;
     }) => void) | undefined;
     signal?: AbortSignal;
   }): Promise<{
@@ -4460,6 +4243,7 @@ export class ChatService {
       input.workflowMode,
       input.includeRepositoryAnalysisGuidance,
       input.toolDefinitions,
+      input.availableSkills,
       this.toolDispatcher.getPlanContext(input.workspaceId)
     );
     const toolInvocations: ToolInvocation[] = [];
@@ -4552,7 +4336,9 @@ export class ChatService {
         });
       }
 
-      if (completion.toolCalls.length === 0) {
+      const completionToolCalls = completion.toolCalls ?? [];
+
+      if (completionToolCalls.length === 0) {
         const unrecoveredFailure = findLatestUnrecoveredToolFailure(toolInvocations);
 
         if (
@@ -4670,11 +4456,11 @@ export class ChatService {
           role: 'assistant',
           content: completion.content,
           ...(completion.thinking ? { thinking: completion.thinking } : {}),
-          tool_calls: completion.toolCalls
+          tool_calls: completionToolCalls
         }
       ];
 
-      for (const toolCall of completion.toolCalls) {
+      for (const toolCall of completionToolCalls) {
         const toolResponse = await this.executeNativeToolCall({
           toolCall,
           workspaceRootPath: input.workspaceRootPath,
@@ -4687,7 +4473,10 @@ export class ChatService {
         input.onProgress?.({
           content: visibleContent,
           toolInvocations: [...toolInvocations],
-          contextSources: [...contextSources]
+          contextSources: [...contextSources],
+          ...(this.didCapabilitySurfaceChange(toolResponse.toolInvocations)
+            ? { capabilitySnapshot: this.getCapabilitySurfaceSnapshot(input.workspaceId) }
+            : {})
         });
         messages.push({
           role: 'tool',
@@ -4767,6 +4556,9 @@ export class ChatService {
       return {
         content: [
           `Tool execution failed for ${toolId}: ${message}`,
+          ...(clipLoggedText(failedInvocation.inputSummary, 600)
+            ? [`Failed arguments: ${clipLoggedText(failedInvocation.inputSummary, 600)}`]
+            : []),
           'Recovery hint:',
           ...buildToolFailureRecoveryHint(failedInvocation)
         ].join('\n'),

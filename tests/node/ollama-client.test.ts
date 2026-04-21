@@ -47,6 +47,7 @@ describe('OllamaClient', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
     const [, requestInit] = fetchMock.mock.calls[0] as [URL, RequestInit];
+    expect((requestInit as RequestInit & { dispatcher?: unknown }).dispatcher).toBeDefined();
     expect(typeof requestInit.body).toBe('string');
     const requestBody = requestInit.body as string;
     const body = JSON.parse(requestBody) as {
@@ -109,6 +110,7 @@ describe('OllamaClient', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
     const [, requestInit] = fetchMock.mock.calls[0] as [URL, RequestInit];
+    expect((requestInit as RequestInit & { dispatcher?: unknown }).dispatcher).toBeDefined();
     expect(typeof requestInit.body).toBe('string');
     const requestBody = requestInit.body as string;
     const body = JSON.parse(requestBody) as {

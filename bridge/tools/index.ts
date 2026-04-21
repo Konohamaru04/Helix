@@ -1193,10 +1193,10 @@ export class ToolDispatcher {
           function: {
             name: 'write',
             description:
-              'Create or overwrite a text file inside the allowed workspace boundary. Pass JSON with filePath or path plus content.',
+              'Create or overwrite a text file inside the allowed workspace boundary. Always pass one JSON object with filePath and the complete file content in the same call. Do not call write with only a path.',
             parameters: {
               type: 'object',
-              required: ['content'],
+              required: ['filePath', 'content'],
               properties: {
                 filePath: {
                   type: 'string',
@@ -1204,7 +1204,7 @@ export class ToolDispatcher {
                 },
                 path: {
                   type: 'string',
-                  description: 'Alias for filePath.'
+                  description: 'Legacy alias for filePath. Prefer filePath.'
                 },
                 content: {
                   type: 'string',

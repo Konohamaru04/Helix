@@ -121,6 +121,15 @@ describe('buildConversationContext', () => {
           autoRoutable: true
         }
       ],
+      availableSkills: [
+        {
+          id: 'builder',
+          title: 'Builder Mode',
+          description: 'Implement features and changes concretely.',
+          prompt: 'You are in Builder Mode.',
+          source: 'builtin'
+        }
+      ],
       latestUserPromptOverride: 'Question with attachment',
       memorySummary: '- User asked for architecture.\n- Assistant emphasized preload.',
       summarizedMessageIds: ['10000000-0000-4000-8000-000000000006'],
@@ -128,16 +137,19 @@ describe('buildConversationContext', () => {
       maxMessages: 10
     });
 
-    expect(result.messages[0]?.content).toContain('Workspace prompt');
-    expect(result.messages[1]?.content).toContain('Active skill prompt');
-    expect(result.messages[2]?.content).toContain('Pinned memory');
-    expect(result.messages[3]?.content).toContain('[Source 2]');
-    expect(result.messages[4]?.content).toContain('Summarized conversation memory');
+    expect(result.messages[0]?.content).toContain('Capability catalog');
+    expect(result.messages[0]?.content).toContain('Available tools');
+    expect(result.messages[0]?.content).toContain('`workspace-search` via `/workspace-search`');
+    expect(result.messages[0]?.content).toContain('Available skills');
+    expect(result.messages[0]?.content).toContain('`builder` (Builder Mode)');
+    expect(result.messages[1]?.content).toContain('Workspace prompt');
+    expect(result.messages[2]?.content).toContain('Active skill prompt');
+    expect(result.messages[3]?.content).toContain('Pinned memory');
+    expect(result.messages[4]?.content).toContain('[Source 2]');
+    expect(result.messages[5]?.content).toContain('Summarized conversation memory');
     expect(result.messages.at(-1)?.content).toContain('# Prompt');
     expect(result.messages.at(-1)?.content).toContain('# Workspace');
     expect(result.messages.at(-1)?.content).toContain('`E:\\OllamaDesktop`');
-    expect(result.messages.at(-1)?.content).toContain('# Available Tools');
-    expect(result.messages.at(-1)?.content).toContain('`workspace-search` via `/workspace-search`');
     expect(result.messages.at(-1)?.imageAttachments).toHaveLength(1);
     expect(result.sources).toHaveLength(2);
     expect(result.sources[0]?.kind).toBe('pinned_message');

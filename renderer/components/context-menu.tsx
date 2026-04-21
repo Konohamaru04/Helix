@@ -99,7 +99,7 @@ export function ContextMenu(props: ContextMenuProps) {
     <div
       ref={menuRef}
       aria-label={props.label}
-      className="fixed z-40 min-w-44 rounded-2xl border border-white/10 bg-slate-950/95 p-2 shadow-panel backdrop-blur"
+      className="motion-menu-pop fixed z-40 min-w-44 rounded-2xl border border-white/10 bg-slate-950/95 p-2 shadow-panel backdrop-blur"
       onContextMenu={handleMenuContext}
       role="menu"
       style={{
@@ -110,7 +110,7 @@ export function ContextMenu(props: ContextMenuProps) {
       {props.items.map((item) => (
         <button
           aria-disabled={item.disabled ? true : undefined}
-          className={`flex w-full items-center rounded-xl px-3 py-2 text-left text-sm transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 ${
+          className={`motion-interactive flex w-full items-center rounded-xl px-3 py-2 text-left text-sm transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 ${
             item.danger
               ? 'text-rose-200 hover:bg-rose-500/10 focus-visible:outline-rose-400'
               : 'text-slate-100 hover:bg-white/5 focus-visible:outline-cyan-400'
