@@ -11,7 +11,6 @@ export default defineConfig({
     alias: {
       '@bridge': path.resolve(rootDir, 'bridge'),
       '@renderer': path.resolve(rootDir, 'renderer'),
-      '@tui': path.resolve(rootDir, 'tui')
     }
   },
   test: {
