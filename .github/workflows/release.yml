@@ -17,7 +17,7 @@ concurrency:
 jobs:
   build-and-release:
     name: Build + upload Helix.v1.0.Windows.7z
-    runs-on: [self-hosted, windows, helix-builder]
+    runs-on: [self-hosted, windows]
     timeout-minutes: 120
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
