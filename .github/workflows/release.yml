@@ -1,9 +1,10 @@
 name: Release (self-hosted Windows)
 
 # Runs on the designated Windows build machine. Requires a GitHub Actions
-# self-hosted runner registered to this repo with labels [self-hosted, windows, helix-builder].
+# self-hosted runner registered to this repo with labels [self-hosted, windows].
 # The runner must have: Node.js 22+, npm, 7-Zip at C:\Program Files\7-Zip\7z.exe,
-# and gh CLI authenticated (or rely on GITHUB_TOKEN injected below).
+# gh CLI on PATH, and a pre-staged python_embeded runtime at the path given by
+# HELIX_PYTHON_EMBEDED_SRC (default: E:\build-assets\python_embeded).
 
 on:
   push:
@@ -21,6 +22,7 @@ jobs:
     timeout-minutes: 120
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      HELIX_PYTHON_EMBEDED_SRC: E:\build-assets\python_embeded
 
     steps:
       - name: Checkout
@@ -29,9 +31,26 @@ jobs:
           fetch-depth: 0
           clean: true
 
+      - name: Link python_embeded runtime
+        shell: powershell
+        run: |
+          $src = $env:HELIX_PYTHON_EMBEDED_SRC
+          if (-not (Test-Path $src)) {
+            throw "python_embeded source not found at $src. Stage the runtime there on the build machine."
+          }
+          $dest = Join-Path $env:GITHUB_WORKSPACE 'python_embeded'
+          if (Test-Path $dest) {
+            cmd /c rmdir /Q "$dest" 2>$null
+            if (Test-Path $dest) { Remove-Item -LiteralPath $dest -Recurse -Force }
+          }
+          cmd /c mklink /J "$dest" "$src" | Out-Null
+          if (-not (Test-Path (Join-Path $dest 'python.exe'))) {
+            throw "Junction created but python.exe missing inside $dest"
+          }
+
       - name: Install dependencies
         shell: powershell
-        run: npm ci
+        run: npm install --no-audit --no-fund
 
       - name: Build, package, compress, upload
         shell: powershell
