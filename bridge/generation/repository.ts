@@ -16,19 +16,21 @@ interface GenerationJobRow {
   id: string;
   workspace_id: string | null;
   conversation_id: string | null;
-  kind: 'image';
-  mode: 'text-to-image' | 'image-to-image';
-  workflow_profile: 'default' | 'qwen-image-edit-2511';
-  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+  kind: GenerationJob['kind'];
+  mode: GenerationJob['mode'];
+  workflow_profile: GenerationJob['workflowProfile'];
+  status: GenerationJob['status'];
   prompt: string;
   negative_prompt: string | null;
   model: string;
-  backend: 'placeholder' | 'diffusers' | 'comfyui';
+  backend: GenerationJob['backend'];
   width: number;
   height: number;
   steps: number;
   guidance_scale: number;
   seed: number | null;
+  frame_count: number | null;
+  frame_rate: number | null;
   progress: number;
   stage: string | null;
   error_message: string | null;
@@ -52,7 +54,7 @@ interface GenerationReferenceImageRow {
 interface GenerationArtifactRow {
   id: string;
   job_id: string;
-  kind: 'image';
+  kind: GenerationArtifact['kind'];
   file_path: string;
   preview_path: string | null;
   mime_type: string;
@@ -65,19 +67,21 @@ export interface UpsertGenerationJobInput {
   id: string;
   workspaceId: string | null;
   conversationId: string | null;
-  kind: 'image';
-  mode: 'text-to-image' | 'image-to-image';
-  workflowProfile: 'default' | 'qwen-image-edit-2511';
-  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+  kind: GenerationJob['kind'];
+  mode: GenerationJob['mode'];
+  workflowProfile: GenerationJob['workflowProfile'];
+  status: GenerationJob['status'];
   prompt: string;
   negativePrompt: string | null;
   model: string;
-  backend: 'placeholder' | 'diffusers' | 'comfyui';
+  backend: GenerationJob['backend'];
   width: number;
   height: number;
   steps: number;
   guidanceScale: number;
   seed: number | null;
+  frameCount?: number | null;
+  frameRate?: number | null;
   progress: number;
   stage: string | null;
   errorMessage: string | null;
@@ -156,6 +160,8 @@ export class GenerationRepository {
           steps,
           guidance_scale,
           seed,
+          frame_count,
+          frame_rate,
           progress,
           stage,
           error_message,
@@ -193,6 +199,8 @@ export class GenerationRepository {
           steps,
           guidance_scale,
           seed,
+          frame_count,
+          frame_rate,
           progress,
           stage,
           error_message,
@@ -237,6 +245,8 @@ export class GenerationRepository {
           steps,
           guidance_scale,
           seed,
+          frame_count,
+          frame_rate,
           progress,
           stage,
           error_message,
@@ -245,7 +255,7 @@ export class GenerationRepository {
           started_at,
           completed_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           workspace_id = excluded.workspace_id,
           conversation_id = excluded.conversation_id,
@@ -262,6 +272,8 @@ export class GenerationRepository {
           steps = excluded.steps,
           guidance_scale = excluded.guidance_scale,
           seed = excluded.seed,
+          frame_count = excluded.frame_count,
+          frame_rate = excluded.frame_rate,
           progress = excluded.progress,
           stage = excluded.stage,
           error_message = excluded.error_message,
@@ -286,6 +298,8 @@ export class GenerationRepository {
         input.steps,
         input.guidanceScale,
         input.seed,
+        input.frameCount ?? null,
+        input.frameRate ?? null,
         input.progress,
         input.stage,
         input.errorMessage,
@@ -388,6 +402,8 @@ export class GenerationRepository {
         steps: row.steps,
         guidanceScale: row.guidance_scale,
         seed: row.seed,
+        frameCount: row.frame_count,
+        frameRate: row.frame_rate,
         progress: row.progress,
         stage: row.stage,
         errorMessage: row.error_message,

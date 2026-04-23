@@ -2,6 +2,7 @@ import type { MessageAttachment } from '@bridge/ipc/contracts';
 import { getDesktopApi, hasDesktopApi } from '@renderer/lib/api';
 
 const IMAGE_EXTENSION_PATTERN = /\.(avif|bmp|gif|jpe?g|png|svg|webp)$/i;
+const VIDEO_EXTENSION_PATTERN = /\.mp4$/i;
 const previewUrlCache = new Map<string, string>();
 const previewPromiseCache = new Map<string, Promise<string | null>>();
 
@@ -24,6 +25,21 @@ export function isPreviewableImagePath(
   return (
     mimeType?.startsWith('image/') === true ||
     IMAGE_EXTENSION_PATTERN.test(label ?? filePath)
+  );
+}
+
+export function isPreviewableVideoPath(
+  filePath: string | null,
+  mimeType?: string | null,
+  label?: string | null
+): boolean {
+  if (!filePath) {
+    return false;
+  }
+
+  return (
+    mimeType?.startsWith('video/') === true ||
+    VIDEO_EXTENSION_PATTERN.test(label ?? filePath)
   );
 }
 

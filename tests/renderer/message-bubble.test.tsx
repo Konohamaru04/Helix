@@ -24,6 +24,7 @@ describe('MessageBubble', () => {
       },
       generation: {
         startImage: vi.fn(),
+        startVideo: vi.fn(),
         listImageModels: vi.fn(),
         listJobs: vi.fn(),
         cancelJob: vi.fn(),

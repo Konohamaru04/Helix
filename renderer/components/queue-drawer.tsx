@@ -31,8 +31,8 @@ export function QueueDrawer(props: QueueDrawerProps) {
             <p className="text-xs uppercase tracking-[0.3em] text-cyan-200/70">Queue</p>
             <h2 className="mt-2 text-2xl font-semibold text-white">Execution status</h2>
             <p className="mt-3 text-sm leading-7 text-slate-300">
-              Pending chat requests: {props.pendingRequestCount}. Image generation stays inline in
-              the chat transcript; this drawer is the global queue and recovery view.
+              Pending chat requests: {props.pendingRequestCount}. Image and video generation stay
+              inline in the chat transcript; this drawer is the global queue and recovery view.
             </p>
           </div>
           {props.onClose ? (
@@ -51,12 +51,12 @@ export function QueueDrawer(props: QueueDrawerProps) {
           <div className="grid gap-5 lg:grid-cols-[1.2fr_1fr]">
             <section className="motion-card space-y-3 rounded-[1.5rem] border border-white/10 bg-slate-900/60 px-4 py-4">
               <div className="flex items-center justify-between gap-3">
-                <h3 className="text-sm font-semibold text-slate-100">Active image jobs</h3>
+                <h3 className="text-sm font-semibold text-slate-100">Active generation jobs</h3>
                 <span className="text-xs text-slate-400">{queuedJobs.length}</span>
               </div>
               {queuedJobs.length === 0 ? (
                 <p className="motion-panel rounded-2xl border border-dashed border-white/10 px-4 py-6 text-sm text-slate-400">
-                  No active image jobs right now.
+                  No active generation jobs right now.
                 </p>
               ) : (
                 <div className="grid gap-3 md:grid-cols-2">
@@ -84,7 +84,7 @@ export function QueueDrawer(props: QueueDrawerProps) {
                 </div>
                 {completedJobs.length === 0 ? (
                   <p className="motion-panel rounded-2xl border border-dashed border-white/10 px-4 py-6 text-sm text-slate-400">
-                    Completed images will appear here.
+                    Completed image and video jobs will appear here.
                   </p>
                 ) : (
                   <div className="grid gap-3 sm:grid-cols-2">

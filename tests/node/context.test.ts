@@ -137,11 +137,14 @@ describe('buildConversationContext', () => {
       maxMessages: 10
     });
 
+    expect(result.messages[0]?.content).toContain('You are Helix, created by Abstergo.');
     expect(result.messages[0]?.content).toContain('Capability catalog');
     expect(result.messages[0]?.content).toContain('Available tools');
-    expect(result.messages[0]?.content).toContain('`workspace-search` via `/workspace-search`');
+    expect(result.messages[0]?.content).toContain('`workspace-search`');
+    expect(result.messages[0]?.content).toContain('Command `/workspace-search`');
     expect(result.messages[0]?.content).toContain('Available skills');
-    expect(result.messages[0]?.content).toContain('`builder` (Builder Mode)');
+    expect(result.messages[0]?.content).toContain('`builder`');
+    expect(result.messages[0]?.content).toContain('Builder Mode.');
     expect(result.messages[1]?.content).toContain('Workspace prompt');
     expect(result.messages[2]?.content).toContain('Active skill prompt');
     expect(result.messages[3]?.content).toContain('Pinned memory');

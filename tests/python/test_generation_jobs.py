@@ -227,3 +227,83 @@ def test_second_image_job_waits_for_the_single_gpu_execution_slot(
     assert first_completed["status"] == "completed"
     assert second_completed["status"] == "completed"
     assert second_started.is_set()
+
+
+def test_wan_video_job_completes_and_persists_a_video_artifact(
+    tmp_path: Path, monkeypatch
+) -> None:
+    output_path = tmp_path / "wan-video.mp4"
+    start_image = tmp_path / "start.png"
+    start_image.write_bytes(b"png")
+
+    with TestClient(app) as client:
+        model_manager = client.app.state.model_manager
+
+        def fake_generate_video(request, progress_callback, is_cancelled):
+            progress_callback(0.2, "Preparing embedded Wan 2.2 workflow")
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_bytes(b"fake-video")
+            return {
+                "file_path": str(output_path),
+                "preview_path": None,
+                "mime_type": "video/mp4",
+                "width": request.width,
+                "height": request.height,
+            }
+
+        monkeypatch.setattr(model_manager, "generate_video", fake_generate_video)
+
+        response = client.post(
+            "/jobs/videos",
+            json={
+                "id": "70000000-0000-4000-8000-000000000101",
+                "prompt": "Add a slow camera orbit",
+                "negative_prompt": "static frame",
+                "model": str(tmp_path / "DasiwaWAN22I2V14BSynthseduction_q8High.gguf"),
+                "backend": "comfyui",
+                "mode": "image-to-video",
+                "workflow_profile": "wan-image-to-video",
+                "width": 528,
+                "height": 704,
+                "steps": 8,
+                "guidance_scale": 1,
+                "seed": 321,
+                "output_path": str(output_path),
+                "reference_images": [
+                    {
+                        "id": "90000000-0000-4000-8000-000000000101",
+                        "file_name": "start.png",
+                        "file_path": str(start_image),
+                        "mime_type": "image/png",
+                        "size_bytes": 3,
+                        "extracted_text": None,
+                        "created_at": "2026-04-23T00:00:00.000Z",
+                    }
+                ],
+                "frame_count": 81,
+                "frame_rate": 16,
+                "high_noise_model": str(
+                    tmp_path / "DasiwaWAN22I2V14BSynthseduction_q8High.gguf"
+                ),
+                "low_noise_model": str(
+                    tmp_path / "DasiwaWAN22I2V14BSynthseduction_q8Low.gguf"
+                ),
+            },
+        )
+
+        assert response.status_code == 200
+        started_job = response.json()
+        assert started_job["kind"] == "video"
+        assert started_job["mode"] == "image-to-video"
+
+        completed_job = _wait_for_terminal_job(client, started_job["id"])
+
+    assert completed_job["status"] == "completed"
+    assert completed_job["frame_count"] == 81
+    assert completed_job["frame_rate"] == 16.0
+    assert completed_job["artifacts"]
+    artifact = completed_job["artifacts"][0]
+    assert artifact["kind"] == "video"
+    assert artifact["mime_type"] == "video/mp4"
+    assert artifact["file_path"] == str(output_path)
+    assert output_path.exists()

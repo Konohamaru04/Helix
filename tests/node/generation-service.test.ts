@@ -74,6 +74,7 @@ function createGenerationHarness() {
   const generationRepository = new GenerationRepository(database);
   const pythonManager = {
     startImageJob: vi.fn(),
+    startVideoJob: vi.fn(),
     getGenerationJob: vi.fn(),
     listGenerationJobs: vi.fn(),
     cancelGenerationJob: vi.fn(),
@@ -502,6 +503,106 @@ describe('GenerationService', () => {
     harness.database.close();
   });
 
+  it('starts Wan image-to-video jobs with derived high-noise and low-noise checkpoints', async () => {
+    const harness = createGenerationHarness();
+    const localModelsDirectory = path.join(harness.directory, 'local-models');
+    const highNoiseModelPath = path.join(
+      localModelsDirectory,
+      'diffusion_models',
+      'DasiwaWAN22I2V14BSynthseduction_q8High.gguf'
+    );
+    const lowNoiseModelPath = path.join(
+      localModelsDirectory,
+      'diffusion_models',
+      'DasiwaWAN22I2V14BSynthseduction_q8Low.gguf'
+    );
+
+    mkdirSync(path.dirname(highNoiseModelPath), { recursive: true });
+    writeFileSync(highNoiseModelPath, 'wan-high');
+    writeFileSync(lowNoiseModelPath, 'wan-low');
+    harness.settingsService.update({
+      additionalModelsDirectory: localModelsDirectory,
+      videoGenerationModel: highNoiseModelPath,
+      videoGenerationHighNoiseModel: highNoiseModelPath,
+      videoGenerationLowNoiseModel: lowNoiseModelPath
+    });
+
+    harness.pythonManager.startVideoJob.mockImplementation(
+      (input: {
+        id: string;
+        model: string;
+        highNoiseModel: string;
+        lowNoiseModel: string;
+        frameCount: number;
+        frameRate: number;
+        referenceImages: typeof referenceImage[];
+      }) =>
+        Promise.resolve({
+          id: input.id,
+          kind: 'video',
+          mode: 'image-to-video',
+          workflow_profile: 'wan-image-to-video',
+          status: 'running',
+          prompt: 'Add a gentle camera orbit',
+          negative_prompt: 'static frame',
+          model: input.model,
+          backend: 'comfyui',
+          width: 528,
+          height: 704,
+          steps: 8,
+          guidance_scale: 1,
+          seed: 11,
+          frame_count: input.frameCount,
+          frame_rate: input.frameRate,
+          progress: 0.12,
+          stage: 'Preparing embedded Wan 2.2 workflow',
+          error_message: null,
+          created_at: '2026-04-23T00:00:00.000Z',
+          updated_at: '2026-04-23T00:00:00.000Z',
+          started_at: '2026-04-23T00:00:00.000Z',
+          completed_at: null,
+          reference_images: input.referenceImages.map((attachment) => ({
+            id: attachment.id,
+            file_name: attachment.fileName,
+            file_path: attachment.filePath,
+            mime_type: attachment.mimeType,
+            size_bytes: attachment.sizeBytes,
+            extracted_text: attachment.extractedText,
+            created_at: attachment.createdAt
+          })),
+          artifacts: []
+        })
+    );
+    harness.pythonManager.listGenerationJobs.mockResolvedValue([]);
+
+    const result = await harness.service.startVideoJob({
+      conversationId: harness.conversation.id,
+      prompt: 'Add a gentle camera orbit',
+      referenceImages: [referenceImage]
+    });
+
+    expect(result.job.kind).toBe('video');
+    expect(result.job.mode).toBe('image-to-video');
+    expect(result.job.workflowProfile).toBe('wan-image-to-video');
+    expect(result.job.frameCount).toBe(81);
+    expect(result.job.frameRate).toBe(16);
+    expect(harness.pythonManager.startVideoJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: highNoiseModelPath,
+        highNoiseModel: highNoiseModelPath,
+        lowNoiseModel: lowNoiseModelPath,
+        frameCount: 81,
+        frameRate: 16,
+        referenceImages: [referenceImage],
+        backend: 'comfyui',
+        mode: 'image-to-video',
+        workflowProfile: 'wan-image-to-video'
+      })
+    );
+
+    harness.database.close();
+  });
+
   it('retries failed jobs by cloning the original request into a new queued job', async () => {
     const harness = createGenerationHarness();
     const failedJob = harness.generationRepository.upsertJob({
@@ -596,6 +697,137 @@ describe('GenerationService', () => {
             sizeBytes: referenceImage.sizeBytes,
             extractedText: referenceImage.extractedText,
             createdAt: referenceImage.createdAt
+          })
+        ]
+      })
+    );
+    expect(retryRequest?.referenceImages[0]?.id).not.toBe(referenceImage.id);
+
+    harness.database.close();
+  });
+
+  it('retries failed video jobs by cloning the original Wan request into a new queued job', async () => {
+    const harness = createGenerationHarness();
+    const localModelsDirectory = path.join(harness.directory, 'local-models');
+    const highNoiseModelPath = path.join(
+      localModelsDirectory,
+      'diffusion_models',
+      'DasiwaWAN22I2V14BSynthseduction_q8High.gguf'
+    );
+    const lowNoiseModelPath = path.join(
+      localModelsDirectory,
+      'diffusion_models',
+      'DasiwaWAN22I2V14BSynthseduction_q8Low.gguf'
+    );
+
+    mkdirSync(path.dirname(highNoiseModelPath), { recursive: true });
+    writeFileSync(highNoiseModelPath, 'wan-high');
+    writeFileSync(lowNoiseModelPath, 'wan-low');
+    harness.settingsService.update({
+      additionalModelsDirectory: localModelsDirectory,
+      videoGenerationModel: highNoiseModelPath,
+      videoGenerationHighNoiseModel: highNoiseModelPath,
+      videoGenerationLowNoiseModel: lowNoiseModelPath
+    });
+
+    const failedJob = harness.generationRepository.upsertJob({
+      id: '70000000-0000-4000-8000-000000000030',
+      workspaceId: harness.defaultWorkspace.id,
+      conversationId: harness.conversation.id,
+      kind: 'video',
+      mode: 'image-to-video',
+      workflowProfile: 'wan-image-to-video',
+      status: 'failed',
+      prompt: 'Animate this portrait',
+      negativePrompt: 'static frame',
+      model: highNoiseModelPath,
+      backend: 'comfyui',
+      width: 528,
+      height: 704,
+      steps: 8,
+      guidanceScale: 1,
+      seed: 19,
+      frameCount: 81,
+      frameRate: 16,
+      progress: 0.25,
+      stage: 'Failed',
+      errorMessage: 'Worker offline',
+      createdAt: '2026-04-23T00:00:00.000Z',
+      updatedAt: '2026-04-23T00:00:01.000Z',
+      startedAt: '2026-04-23T00:00:00.000Z',
+      completedAt: '2026-04-23T00:00:01.000Z',
+      referenceImages: [referenceImage]
+    });
+
+    harness.pythonManager.startVideoJob.mockImplementation(
+      (input: { id: string; referenceImages: typeof referenceImage[] }) =>
+        Promise.resolve({
+          id: input.id,
+          kind: 'video',
+          mode: 'image-to-video',
+          workflow_profile: 'wan-image-to-video',
+          status: 'queued',
+          prompt: failedJob.prompt,
+          negative_prompt: failedJob.negativePrompt,
+          model: failedJob.model,
+          backend: failedJob.backend,
+          width: failedJob.width,
+          height: failedJob.height,
+          steps: failedJob.steps,
+          guidance_scale: failedJob.guidanceScale,
+          seed: failedJob.seed,
+          frame_count: failedJob.frameCount,
+          frame_rate: failedJob.frameRate,
+          progress: 0,
+          stage: 'Queued',
+          error_message: null,
+          created_at: '2026-04-23T00:00:02.000Z',
+          updated_at: '2026-04-23T00:00:02.000Z',
+          started_at: null,
+          completed_at: null,
+          reference_images: input.referenceImages.map((attachment) => ({
+            id: attachment.id,
+            file_name: attachment.fileName,
+            file_path: attachment.filePath,
+            mime_type: attachment.mimeType,
+            size_bytes: attachment.sizeBytes,
+            extracted_text: attachment.extractedText,
+            created_at: attachment.createdAt
+          })),
+          artifacts: []
+        })
+    );
+
+    const retriedResult = await harness.service.retryJob({ jobId: failedJob.id });
+    const retryRequest = harness.pythonManager.startVideoJob.mock.calls[0]?.[0] as
+      | {
+          prompt: string;
+          negativePrompt: string | null;
+          model: string;
+          highNoiseModel: string;
+          lowNoiseModel: string;
+          frameCount: number;
+          frameRate: number;
+          referenceImages: typeof referenceImage[];
+        }
+      | undefined;
+
+    expect(retriedResult.job.id).not.toBe(failedJob.id);
+    expect(retriedResult.job.kind).toBe('video');
+    expect(retriedResult.job.status).toBe('queued');
+    expect(retryRequest).toEqual(
+      expect.objectContaining({
+        prompt: failedJob.prompt,
+        negativePrompt: failedJob.negativePrompt,
+        model: highNoiseModelPath,
+        highNoiseModel: highNoiseModelPath,
+        lowNoiseModel: lowNoiseModelPath,
+        frameCount: 81,
+        frameRate: 16,
+        referenceImages: [
+          expect.objectContaining({
+            fileName: referenceImage.fileName,
+            filePath: referenceImage.filePath
           })
         ]
       })

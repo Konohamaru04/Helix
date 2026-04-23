@@ -49,7 +49,7 @@ const EMPTY_STATE_TIPS = [
   {
     eyebrow: 'Queue tip',
     title: 'Track long-running work from Queue',
-    body: 'Image jobs stream inline in chat and stay recoverable from the global queue drawer if you need to retry or inspect them.'
+    body: 'Image and video jobs stream inline in chat and stay recoverable from the global queue drawer if you need to retry or inspect them.'
   },
   {
     eyebrow: 'Trace tip',

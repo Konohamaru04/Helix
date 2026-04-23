@@ -113,7 +113,7 @@ export class DesktopAppContext {
       this.settingsService,
       this.pythonManager,
       this.logger.child({ scope: 'generation' }),
-      path.join(options.userDataPath, 'generated', 'images')
+      path.join(options.userDataPath, 'generated')
     );
     this.chatService = new ChatService(
       this.repository,

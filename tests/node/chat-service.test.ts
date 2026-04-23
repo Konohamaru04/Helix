@@ -699,9 +699,10 @@ describe('ChatService', () => {
       expect(latestUserMessage?.content).toContain('Reply with the selected workspace path.');
       expect(latestUserMessage?.content).toContain('# Workspace');
       expect(latestUserMessage?.content).toContain(`\`${workspaceRoot}\``);
+      expect(capabilityPrompt?.content).toContain('You are Helix, created by Abstergo.');
       expect(capabilityPrompt?.content).toContain('Available tools');
       expect(capabilityPrompt?.content).toContain('`workspace-search`');
-      expect(capabilityPrompt?.content).toContain('via `/grep`');
+      expect(capabilityPrompt?.content).toContain('Command `/grep`');
       expect(capabilityPrompt?.content).toContain('Available skills');
     } finally {
       harness.database.close();
@@ -2026,12 +2027,14 @@ Must run in Chrome browser`;
       (input: {
         think?: boolean | 'low' | 'medium' | 'high';
         onDelta: (delta: string) => void;
+        onThinkingDelta?: (delta: string) => void;
       }) => {
+        input.onThinkingDelta?.('Reasoning about the concise answer.');
         input.onDelta('Thinking-enabled reply.');
         return Promise.resolve({
           content: 'Thinking-enabled reply.',
           doneReason: 'stop',
-          thinking: '',
+          thinking: 'Reasoning about the concise answer.',
           toolCalls: []
         });
       }
@@ -2059,6 +2062,11 @@ Must run in Chrome browser`;
 
       expect(streamChat).toHaveBeenCalledTimes(1);
       expect(streamChat.mock.calls[0]?.[0]?.think).toBe('high');
+      expect(
+        harness.service.listMessages(accepted.conversation.id).at(-1)?.content
+      ).toBe(
+        '<think>\nReasoning about the concise answer.\n</think>\n\nThinking-enabled reply.'
+      );
     } finally {
       harness.database.close();
     }
@@ -4044,13 +4052,15 @@ Must run in Chrome browser`;
       .mockImplementationOnce(
         (input: {
           onDelta: (delta: string) => void;
+          onThinkingDelta?: (delta: string) => void;
         }) => {
+          input.onThinkingDelta?.('Planning the read step.');
           input.onDelta('Inspecting the existing page before editing.');
 
           return Promise.resolve({
             content: 'Inspecting the existing page before editing.',
             doneReason: 'stop',
-            thinking: '',
+            thinking: 'Planning the read step.',
             toolCalls: [
               {
                 type: 'function' as const,
@@ -4068,13 +4078,15 @@ Must run in Chrome browser`;
       .mockImplementationOnce(
         (input: {
           onDelta: (delta: string) => void;
+          onThinkingDelta?: (delta: string) => void;
         }) => {
+          input.onThinkingDelta?.('Summarizing the verified result.');
           input.onDelta('Implemented sign-up support and verified the result.');
 
           return Promise.resolve({
             content: 'Implemented sign-up support and verified the result.',
             doneReason: 'stop',
-            thinking: '',
+            thinking: 'Summarizing the verified result.',
             toolCalls: []
           });
         }
@@ -4117,7 +4129,8 @@ Must run in Chrome browser`;
       });
 
       const messages = harness.service.listMessages(accepted.conversation.id);
-      const assistantMessage = messages.at(-1);
+      const assistantMessages = messages.filter((message) => message.role === 'assistant');
+      const assistantMessage = assistantMessages.at(-1);
 
       expect(
         streamEvents.some(
@@ -4126,8 +4139,17 @@ Must run in Chrome browser`;
             event.content.includes('Inspecting the existing page before editing.')
         )
       ).toBe(true);
+      expect(
+        streamEvents.some((event) => event.type === 'message-created')
+      ).toBe(true);
+      expect(assistantMessages).toHaveLength(2);
+      expect(assistantMessages[0]?.content).toContain('<think>');
+      expect(assistantMessages[0]?.content).toContain('Planning the read step.');
+      expect(assistantMessages[0]?.content).toContain(
+        'Inspecting the existing page before editing.'
+      );
       expect(assistantMessage?.content).toBe(
-        'Implemented sign-up support and verified the result.'
+        '<think>\nSummarizing the verified result.\n</think>\n\nImplemented sign-up support and verified the result.'
       );
       expect(assistantMessage?.toolInvocations?.[0]?.toolId).toBe('read');
       expect(streamChat).toHaveBeenCalledTimes(2);

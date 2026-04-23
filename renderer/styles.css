@@ -1451,3 +1451,43 @@ textarea {
     display: none !important;
   }
 }
+
+.video-scrubber {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  outline: none;
+}
+
+.video-scrubber::-webkit-slider-runnable-track {
+  height: 100%;
+  background: transparent;
+  border: none;
+}
+
+.video-scrubber::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 9999px;
+  background: rgb(103 232 249);
+  border: 2px solid rgb(8 47 73);
+  margin-top: -4px;
+  cursor: pointer;
+  box-shadow: 0 0 0 0 rgba(34, 211, 238, 0);
+  opacity: 0;
+  transition: opacity 150ms ease, box-shadow 150ms ease, transform 150ms ease;
+}
+
+.group\/video:hover .video-scrubber::-webkit-slider-thumb,
+.video-scrubber:focus::-webkit-slider-thumb,
+.video-scrubber:active::-webkit-slider-thumb {
+  opacity: 1;
+}
+
+.video-scrubber:hover::-webkit-slider-thumb {
+  transform: scale(1.1);
+  box-shadow: 0 0 0 4px rgba(34, 211, 238, 0.25);
+}
+

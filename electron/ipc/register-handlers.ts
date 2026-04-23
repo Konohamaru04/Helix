@@ -33,6 +33,8 @@ import {
   imageGenerationModelCatalogSchema,
   imageGenerationRequestSchema,
   imageGenerationStartResultSchema,
+  videoGenerationRequestSchema,
+  videoGenerationStartResultSchema,
   importConversationResultSchema,
   importWorkspaceKnowledgeResultSchema,
   knowledgeDocumentSchema,
@@ -124,12 +126,14 @@ export function registerIpcHandlers(context: DesktopAppContext): void {
     const body =
       job.status === 'completed'
         ? `${promptPreview}\nSaved to your local generation library.`
-        : `${promptPreview}\n${job.errorMessage ?? 'Image generation failed.'}`;
+        : `${promptPreview}\n${job.errorMessage ?? `${job.kind === 'video' ? 'Video' : 'Image'} generation failed.`}`;
 
     try {
       new Notification({
         title:
-          job.status === 'completed' ? 'Image generation complete' : 'Image generation failed',
+          job.status === 'completed'
+            ? `${job.kind === 'video' ? 'Video' : 'Image'} generation complete`
+            : `${job.kind === 'video' ? 'Video' : 'Image'} generation failed`,
         body
       }).show();
     } catch (error) {
@@ -196,6 +200,14 @@ export function registerIpcHandlers(context: DesktopAppContext): void {
     imageGenerationStartResultSchema.parse(
       await context.generationService.startImageJob(
         imageGenerationRequestSchema.parse(payload)
+      )
+    )
+  );
+
+  ipcMain.handle(IpcChannels.generationStartVideo, async (_event, payload) =>
+    videoGenerationStartResultSchema.parse(
+      await context.generationService.startVideoJob(
+        videoGenerationRequestSchema.parse(payload)
       )
     )
   );

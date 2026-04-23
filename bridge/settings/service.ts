@@ -18,6 +18,8 @@ export const defaultUserSettings: UserSettings = {
   imageGenerationModel: 'builtin:placeholder',
   additionalModelsDirectory: null,
   videoGenerationModel: '',
+  videoGenerationHighNoiseModel: '',
+  videoGenerationLowNoiseModel: '',
   pythonPort: 8765,
   streamingMascotEnabled: true,
   theme: 'system'

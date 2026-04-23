@@ -93,6 +93,8 @@ const generationJob = {
   steps: 4,
   guidanceScale: 1,
   seed: 7,
+  frameCount: null,
+  frameRate: null,
   progress: 0.1,
   stage: 'Loading image model',
   errorMessage: null,
@@ -115,7 +117,10 @@ const baseSettings = {
   imageGenerationModel: 'builtin:placeholder',
   additionalModelsDirectory: null,
   videoGenerationModel: '',
+  videoGenerationHighNoiseModel: '',
+  videoGenerationLowNoiseModel: '',
   pythonPort: 8765,
+  streamingMascotEnabled: true,
   theme: 'system' as const
 };
 
@@ -186,6 +191,7 @@ const mockApi = {
   },
   generation: {
     startImage: vi.fn().mockResolvedValue({ job: undefined, conversation: undefined }),
+    startVideo: vi.fn().mockResolvedValue({ job: undefined, conversation: undefined }),
     listImageModels: vi.fn(),
     listJobs: vi.fn(),
     cancelJob: vi.fn(),
@@ -318,6 +324,19 @@ describe('ChatPage', () => {
           supportReason: null,
           baseModelId: null,
           path: 'E:/LocalModels/diffusion_models/Qwen-Image-Edit-2511-Q8_0.gguf'
+        },
+        {
+          id: 'E:/LocalModels/diffusion_models/DasiwaWAN22I2V14BSynthseduction_q8High.gguf',
+          label: 'DasiwaWAN22I2V14BSynthseduction_q8High.gguf',
+          description: 'Local Wan 2.2 high-noise image-to-video checkpoint.',
+          backend: 'comfyui',
+          source: 'local-gguf',
+          loadStrategy: 'comfyui-workflow',
+          family: 'wan-video',
+          supported: false,
+          supportReason: 'Wan GGUF checkpoints are reserved for image-to-video jobs, not Image Gen.',
+          baseModelId: null,
+          path: 'E:/LocalModels/diffusion_models/DasiwaWAN22I2V14BSynthseduction_q8High.gguf'
         }
       ],
       warnings: []
@@ -1068,6 +1087,76 @@ describe('ChatPage', () => {
     });
 
     expect(mockApi.generation.startImage).not.toHaveBeenCalled();
+  });
+
+  it('queues Wan image-to-video jobs with a single starting image', async () => {
+    const videoJob = {
+      ...generationJob,
+      id: '80000000-0000-4000-8000-000000000030',
+      kind: 'video' as const,
+      mode: 'image-to-video' as const,
+      workflowProfile: 'wan-image-to-video' as const,
+      prompt: 'Add a gentle camera orbit and hair movement',
+      model: 'E:/LocalModels/diffusion_models/DasiwaWAN22I2V14BSynthseduction_q8High.gguf',
+      width: 528,
+      height: 704,
+      steps: 8,
+      guidanceScale: 1,
+      frameCount: 81,
+      frameRate: 16,
+      stage: 'Queued'
+    };
+
+    mockApi.settings.get.mockResolvedValue({
+      ...baseSettings,
+      videoGenerationModel:
+        'E:/LocalModels/diffusion_models/DasiwaWAN22I2V14BSynthseduction_q8High.gguf',
+      videoGenerationHighNoiseModel:
+        'E:/LocalModels/diffusion_models/DasiwaWAN22I2V14BSynthseduction_q8High.gguf',
+      videoGenerationLowNoiseModel:
+        'E:/LocalModels/diffusion_models/DasiwaWAN22I2V14BSynthseduction_q8Low.gguf',
+      additionalModelsDirectory: 'E:/LocalModels'
+    });
+    mockApi.chat.listConversations.mockResolvedValue([conversation]);
+    mockApi.chat.getConversationMessages.mockResolvedValue([]);
+    mockApi.chat.pickAttachments.mockResolvedValue([imageAttachment]);
+    mockApi.generation.startVideo.mockResolvedValue({
+      job: videoJob,
+      conversation: undefined
+    });
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Open add menu' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Attach files' }));
+    await screen.findByText('reference.png');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open add menu' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Generate video' }));
+
+    const textarea = screen.getByLabelText('Message prompt');
+    fireEvent.change(textarea, {
+      target: { value: 'Add a gentle camera orbit and hair movement' }
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Render video' }));
+
+    await waitFor(() => {
+      expect(mockApi.generation.startVideo).toHaveBeenCalledWith({
+        conversationId: conversation.id,
+        workspaceId: undefined,
+        prompt: 'Add a gentle camera orbit and hair movement',
+        model: 'E:/LocalModels/diffusion_models/DasiwaWAN22I2V14BSynthseduction_q8High.gguf',
+        highNoiseModel:
+          'E:/LocalModels/diffusion_models/DasiwaWAN22I2V14BSynthseduction_q8High.gguf',
+        lowNoiseModel:
+          'E:/LocalModels/diffusion_models/DasiwaWAN22I2V14BSynthseduction_q8Low.gguf',
+        mode: 'image-to-video',
+        workflowProfile: 'wan-image-to-video',
+        referenceImages: [imageAttachment]
+      });
+    });
+
+    expect(await screen.findByText('Video generation')).toBeInTheDocument();
   });
 
   it('renders conversation-scoped image jobs directly in the chat timeline', async () => {

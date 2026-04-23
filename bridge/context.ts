@@ -7,6 +7,7 @@ import type {
   ToolDefinition
 } from '@bridge/ipc/contracts';
 import { isImageAttachment } from '@bridge/chat/attachment-utils';
+import { buildPrimarySystemPrompt } from '@bridge/system-prompt';
 
 export interface ContextChatMessage {
   role: 'system' | 'user' | 'assistant';
@@ -35,49 +36,26 @@ export interface ContextAssemblyResult {
   };
 }
 
+const THINKING_BLOCK_PATTERN = /<(think|thinking|reasoning)\b[^>]*>[\s\S]*?<\/\1>/gi;
+const THINKING_TAG_PATTERN = /<\/?(?:think|thinking|reasoning)\b[^>]*>/gi;
+
 function estimateTokens(value: string): number {
   return Math.max(1, Math.ceil(value.trim().length / 4));
 }
 
-function formatAvailableToolLine(tool: ToolDefinition): string {
-  const command = tool.command.trim();
-  const commandPart = command ? ` via \`${command}\`` : '';
-
-  return `- \`${tool.id}\`${commandPart}: ${tool.description.trim()}`;
+function stripAssistantThinkingContent(content: string): string {
+  return content
+    .replace(THINKING_BLOCK_PATTERN, '\n')
+    .replace(THINKING_TAG_PATTERN, ' ')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
 
-function formatAvailableSkillLine(skill: SkillDefinition): string {
-  return `- \`${skill.id}\` (${skill.title.trim()}): ${skill.description.trim()}`;
-}
-
-function buildCapabilitySystemPrompt(input: {
-  availableTools: ToolDefinition[];
-  availableSkills: SkillDefinition[];
-}): string | null {
-  if (input.availableTools.length === 0 && input.availableSkills.length === 0) {
-    return null;
-  }
-
-  const lines = [
-    'Capability catalog:',
-    '- Choose the most relevant tool and skill behavior for the user request.',
-    '- If another system message already activates a specific skill, follow that active skill prompt over this catalog.',
-    '- If no skill is already active, internally adopt the single best matching skill behavior from the skills listed below.',
-    '- Use tools when they materially improve correctness, grounding, or workspace inspection.',
-    '- Do not mention this internal selection process unless the user asks.',
-    '',
-    'Available tools:',
-    ...(input.availableTools.length > 0
-      ? input.availableTools.map((tool) => formatAvailableToolLine(tool))
-      : ['_No available tools_']),
-    '',
-    'Available skills:',
-    ...(input.availableSkills.length > 0
-      ? input.availableSkills.map((skill) => formatAvailableSkillLine(skill))
-      : ['_No available skills_'])
-  ];
-
-  return lines.join('\n');
+function getContextMessageContent(message: StoredMessage): string {
+  return message.role === 'assistant'
+    ? stripAssistantThinkingContent(message.content)
+    : message.content;
 }
 
 function buildStructuredLatestUserPrompt(input: {
@@ -100,7 +78,7 @@ function formatMessageWithAttachments(message: StoredMessage): ContextChatMessag
   const nonImageAttachments = (message.attachments ?? []).filter(
     (attachment) => !isImageAttachment(attachment)
   );
-  const contentParts = [message.content];
+  const contentParts = [getContextMessageContent(message)];
 
   if (imageAttachments.length > 0) {
     const accessibleImages = imageAttachments.filter((attachment) => attachment.filePath !== null);
@@ -174,6 +152,7 @@ export function buildConversationContext(input: {
   summarizedMessageIds?: string[];
   excludedRecentMessageCount?: number;
   maxMessages?: number;
+  includeBaseSystemPrompt?: boolean;
 }): ContextAssemblyResult {
   const maxMessages = input.maxMessages ?? 20;
   const eligibleRecentMessages = input.recentMessages.filter(
@@ -190,7 +169,7 @@ export function buildConversationContext(input: {
     id: randomUUID(),
     kind: 'pinned_message' as const,
     label: `${message.role.toUpperCase()} memory`,
-    excerpt: message.content.trim() || '_No content_',
+    excerpt: getContextMessageContent(message).trim() || '_No content_',
     sourcePath: null,
     documentId: null,
     score: null
@@ -208,15 +187,15 @@ export function buildConversationContext(input: {
   const availableSkills = input.availableSkills ?? [];
   const sources = [...pinnedSources, ...dedupedRetrievedSources];
   const systemMessages: ContextChatMessage[] = [];
-  const capabilitySystemPrompt = buildCapabilitySystemPrompt({
-    availableTools,
-    availableSkills
-  });
+  const includeBaseSystemPrompt = input.includeBaseSystemPrompt ?? true;
 
-  if (capabilitySystemPrompt) {
+  if (includeBaseSystemPrompt) {
     systemMessages.push({
       role: 'system',
-      content: capabilitySystemPrompt,
+      content: buildPrimarySystemPrompt({
+        availableTools,
+        availableSkills
+      }),
       imageAttachments: []
     });
   }
@@ -252,7 +231,7 @@ export function buildConversationContext(input: {
         'Pinned memory:',
         ...pinnedMessagesForSystemBlock.map(
           (message, index) =>
-            `${index + 1}. ${message.role.toUpperCase()}: ${message.content.trim() || '_No content_'}`
+            `${index + 1}. ${message.role.toUpperCase()}: ${getContextMessageContent(message).trim() || '_No content_'}`
         )
       ].join('\n'),
       imageAttachments: []
@@ -349,6 +328,7 @@ export function buildRecentTurnContext(
     memorySummary: null,
     summarizedMessageIds: [],
     excludedRecentMessageCount: 0,
-    maxMessages
+    maxMessages,
+    includeBaseSystemPrompt: false
   });
 }

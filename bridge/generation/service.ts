@@ -1,15 +1,16 @@
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type {
   CancelGenerationJobInput,
   GenerationJob,
+  GenerationStartResult,
   ImageGenerationModelCatalog,
   GenerationStreamEvent,
   ImageGenerationRequest,
-  ImageGenerationStartResult,
   ListGenerationJobsInput,
-  RetryGenerationJobInput
+  RetryGenerationJobInput,
+  VideoGenerationRequest
 } from '@bridge/ipc/contracts';
 import {
   generationArtifactSchema,
@@ -36,6 +37,14 @@ const QWEN_EDIT_STEPS = 4;
 const QWEN_EDIT_GUIDANCE_SCALE = 1;
 const QWEN_EDIT_NEGATIVE_PROMPT =
   'blur, motion blur, soft focus, low resolution, distorted faces, identity change, bad anatomy, extra limbs, incorrect positioning, duplicate faces, unrealistic lighting, cartoon, illustration, CGI look, oversmooth skin, plastic skin, noise, grain, compression artifacts, perspective errors';
+const DEFAULT_VIDEO_WIDTH = 528;
+const DEFAULT_VIDEO_HEIGHT = 704;
+const DEFAULT_VIDEO_FRAME_COUNT = 81;
+const DEFAULT_VIDEO_FRAME_RATE = 60;
+const DEFAULT_VIDEO_STEPS = 8;
+const DEFAULT_VIDEO_GUIDANCE_SCALE = 1;
+const WAN_VIDEO_NEGATIVE_PROMPT =
+  'oversaturated colors, overexposed highlights, static frame, frozen motion, blurry details, low resolution, subtitles, watermark, illustration look, painting, static composition, flat gray image, worst quality, low quality, JPEG artifacts, ugly, malformed anatomy, extra limbs, bad hands, bad face, deformed body, fused fingers, chaotic background, duplicate people, crowded background, reversed motion, unnatural motion, temporal flicker, ghosting';
 const POLL_INTERVAL_MS = 600;
 const BASE_DIFFUSERS_HEADROOM_MB = 384;
 const BASE_COMFYUI_HEADROOM_MB = 512;
@@ -43,6 +52,20 @@ const PER_MEGAPIXEL_HEADROOM_MB = 256;
 const HIGH_STEP_THRESHOLD = 20;
 const HIGH_STEP_EXTRA_HEADROOM_MB = 128;
 const MAX_HEADROOM_MB = 2048;
+
+interface WorkspaceScopedGenerationInput {
+  conversationId?: string | undefined;
+  workspaceId?: string | undefined;
+}
+
+interface WanModelPair {
+  primaryModel: string;
+  highNoiseModel: string;
+  lowNoiseModel: string;
+}
+
+type ImageWorkflowProfile = NonNullable<ImageGenerationRequest['workflowProfile']>;
+type ImageGenerationMode = NonNullable<ImageGenerationRequest['mode']>;
 
 function sleep(milliseconds: number) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -56,10 +79,25 @@ function isTerminalJobStatus(status: GenerationJob['status']) {
   return status === 'completed' || status === 'failed' || status === 'cancelled';
 }
 
+function isPathLikeModelId(model: string): boolean {
+  const normalized = model.trim();
+  return (
+    normalized.includes('\\') ||
+    normalized.startsWith('.') ||
+    normalized.startsWith('/') ||
+    (normalized.length > 1 && normalized[1] === ':')
+  );
+}
+
 function resolveBackend(
+  kind: GenerationJob['kind'],
   model: string,
   workflowProfile: GenerationJob['workflowProfile']
 ): GenerationJob['backend'] {
+  if (kind === 'video' || workflowProfile === 'wan-image-to-video') {
+    return 'comfyui';
+  }
+
   if (model.trim().toLowerCase() === 'builtin:placeholder') {
     return 'placeholder';
   }
@@ -110,27 +148,26 @@ export class GenerationService {
     return catalog;
   }
 
-  async startImageJob(input: ImageGenerationRequest): Promise<ImageGenerationStartResult> {
+  async startImageJob(input: ImageGenerationRequest): Promise<GenerationStartResult> {
     const workspaceId = this.resolveWorkspaceId(input);
     const settings = this.settingsService.get();
     const model =
       input.model?.trim() || settings.imageGenerationModel.trim() || 'builtin:placeholder';
     const jobId = randomUUID();
-    const outputPath = this.buildOutputPath(jobId);
+    const outputPath = this.buildOutputPath(jobId, 'image');
     const referenceImages = (input.referenceImages ?? []).map((attachment) =>
       messageAttachmentSchema.parse(attachment)
     );
-    const workflowProfile = this.resolveWorkflowProfile(model, input.workflowProfile);
-    const backend = resolveBackend(model, workflowProfile);
-    const mode = input.mode ?? (referenceImages.length > 0 ? 'image-to-image' : 'text-to-image');
-    const width = this.resolveWidth(input, workflowProfile);
-    const height = this.resolveHeight(input, workflowProfile);
-    const steps = this.resolveSteps(input, workflowProfile);
-    const guidanceScale = this.resolveGuidanceScale(input, workflowProfile);
+    const workflowProfile = this.resolveImageWorkflowProfile(model, input.workflowProfile);
+    const backend = resolveBackend('image', model, workflowProfile);
+    const mode: ImageGenerationMode =
+      input.mode ?? (referenceImages.length > 0 ? 'image-to-image' : 'text-to-image');
+    const width = this.resolveImageWidth(input, workflowProfile);
+    const height = this.resolveImageHeight(input, workflowProfile);
+    const steps = this.resolveImageSteps(input, workflowProfile);
+    const guidanceScale = this.resolveImageGuidanceScale(input, workflowProfile);
 
-    this.validateWorkflowInput({
-      model,
-      mode,
+    this.validateImageWorkflowInput({
       workflowProfile,
       referenceImages
     });
@@ -161,7 +198,7 @@ export class GenerationService {
       workflowProfile,
       status: 'queued',
       prompt: input.prompt.trim(),
-      negativePrompt: this.resolveNegativePrompt(input, workflowProfile),
+      negativePrompt: this.resolveImageNegativePrompt(input, workflowProfile),
       model,
       backend,
       width,
@@ -169,6 +206,8 @@ export class GenerationService {
       steps,
       guidanceScale,
       seed: input.seed ?? null,
+      frameCount: null,
+      frameRate: null,
       progress: 0,
       stage: 'Queued',
       errorMessage: null,
@@ -190,8 +229,8 @@ export class GenerationService {
         negativePrompt: preparedJob.negativePrompt,
         model: preparedJob.model,
         backend: preparedJob.backend,
-        mode: preparedJob.mode,
-        workflowProfile: preparedJob.workflowProfile,
+        mode,
+        workflowProfile,
         width: preparedJob.width,
         height: preparedJob.height,
         steps: preparedJob.steps,
@@ -219,7 +258,138 @@ export class GenerationService {
     }
   }
 
-  async retryJob(input: RetryGenerationJobInput): Promise<ImageGenerationStartResult> {
+  async startVideoJob(input: VideoGenerationRequest): Promise<GenerationStartResult> {
+    const workspaceId = this.resolveWorkspaceId(input);
+    const settings = this.settingsService.get();
+    const explicitHighNoiseModel =
+      input.highNoiseModel?.trim() || settings.videoGenerationHighNoiseModel.trim();
+    const explicitLowNoiseModel =
+      input.lowNoiseModel?.trim() || settings.videoGenerationLowNoiseModel.trim();
+    const selectedModel =
+      input.model?.trim() ||
+      explicitHighNoiseModel ||
+      settings.videoGenerationModel.trim() ||
+      explicitLowNoiseModel;
+
+    if (!selectedModel && !explicitHighNoiseModel && !explicitLowNoiseModel) {
+      throw new Error(
+        'No Wan video model pair is configured. Select both Video Gen checkpoints in Settings before queueing image-to-video jobs.'
+      );
+    }
+
+    const modelPair = this.resolveConfiguredWanModelPair({
+      selectedModel,
+      highNoiseModel: explicitHighNoiseModel,
+      lowNoiseModel: explicitLowNoiseModel,
+      additionalModelsDirectory: settings.additionalModelsDirectory
+    });
+    const jobId = randomUUID();
+    const outputPath = this.buildOutputPath(jobId, 'video');
+    const referenceImages = input.referenceImages.map((attachment) =>
+      messageAttachmentSchema.parse(attachment)
+    );
+    const workflowProfile = input.workflowProfile ?? 'wan-image-to-video';
+    const backend = resolveBackend('video', modelPair.primaryModel, workflowProfile);
+    const width = input.width ?? DEFAULT_VIDEO_WIDTH;
+    const height = input.height ?? DEFAULT_VIDEO_HEIGHT;
+    const steps = input.steps ?? DEFAULT_VIDEO_STEPS;
+    const guidanceScale = input.guidanceScale ?? DEFAULT_VIDEO_GUIDANCE_SCALE;
+    const frameCount = input.frameCount ?? DEFAULT_VIDEO_FRAME_COUNT;
+    const frameRate = input.frameRate ?? DEFAULT_VIDEO_FRAME_RATE;
+
+    this.validateVideoWorkflowInput({
+      referenceImages
+    });
+    await this.assertVideoJobCanStart({
+      model: modelPair.primaryModel,
+      highNoiseModel: modelPair.highNoiseModel,
+      lowNoiseModel: modelPair.lowNoiseModel
+    });
+
+    let conversation: ConversationSummary | undefined;
+    let conversationId: string | null = input.conversationId ?? null;
+    if (!conversationId) {
+      conversation = this.chatRepository.createConversation({
+        prompt: input.prompt,
+        ...(workspaceId ? { workspaceId } : {})
+      });
+      conversationId = conversation.id;
+    }
+
+    const preparedJob = this.repository.upsertJob({
+      id: jobId,
+      workspaceId,
+      conversationId,
+      kind: 'video',
+      mode: 'image-to-video',
+      workflowProfile,
+      status: 'queued',
+      prompt: input.prompt.trim(),
+      negativePrompt: this.resolveVideoNegativePrompt(input),
+      model: modelPair.primaryModel,
+      backend,
+      width,
+      height,
+      steps,
+      guidanceScale,
+      seed: input.seed ?? null,
+      frameCount,
+      frameRate,
+      progress: 0,
+      stage: 'Queued',
+      errorMessage: null,
+      createdAt: nowIso(),
+      updatedAt: nowIso(),
+      startedAt: null,
+      completedAt: null,
+      referenceImages
+    });
+    if (preparedJob.conversationId) {
+      this.chatRepository.touchConversation(preparedJob.conversationId);
+    }
+    this.emit(preparedJob);
+
+    try {
+      const snapshot = await this.pythonManager.startVideoJob({
+        id: preparedJob.id,
+        prompt: preparedJob.prompt,
+        negativePrompt: preparedJob.negativePrompt,
+        model: preparedJob.model,
+        backend: 'comfyui',
+        mode: 'image-to-video',
+        workflowProfile: 'wan-image-to-video',
+        width: preparedJob.width,
+        height: preparedJob.height,
+        steps: preparedJob.steps,
+        guidanceScale: preparedJob.guidanceScale,
+        seed: preparedJob.seed,
+        frameCount: preparedJob.frameCount ?? frameCount,
+        frameRate: preparedJob.frameRate ?? frameRate,
+        outputPath,
+        highNoiseModel: modelPair.highNoiseModel,
+        lowNoiseModel: modelPair.lowNoiseModel,
+        referenceImages: preparedJob.referenceImages
+      });
+      const job = this.applySnapshot(snapshot, preparedJob);
+      this.ensurePolling(job.id);
+      return { job, ...(conversation ? { conversation } : {}) };
+    } catch (error) {
+      const failedJob = this.repository.upsertJob({
+        ...preparedJob,
+        status: 'failed',
+        progress: preparedJob.progress,
+        stage: 'Failed to start',
+        errorMessage:
+          error instanceof Error ? error.message : 'Unable to start video generation.',
+        updatedAt: nowIso(),
+        completedAt: nowIso()
+      });
+      this.emit(failedJob);
+      throw error;
+    }
+  }
+
+  async retryJob(input: RetryGenerationJobInput): Promise<GenerationStartResult> {
     const existingJob = this.repository.getJob(input.jobId);
 
     if (!existingJob) {
@@ -227,7 +397,31 @@ export class GenerationService {
     }
 
     if (existingJob.status !== 'failed' && existingJob.status !== 'cancelled') {
-      throw new Error('Only failed or cancelled image jobs can be retried.');
+      throw new Error('Only failed or cancelled generation jobs can be retried.');
+    }
+
+    if (existingJob.kind === 'video') {
+      return this.startVideoJob({
+        conversationId: existingJob.conversationId ?? undefined,
+        workspaceId:
+          existingJob.conversationId === null ? existingJob.workspaceId ?? undefined : undefined,
+        prompt: existingJob.prompt,
+        negativePrompt: existingJob.negativePrompt ?? undefined,
+        model: existingJob.model,
+        mode: 'image-to-video',
+        workflowProfile: 'wan-image-to-video',
+        referenceImages: existingJob.referenceImages.map((attachment) => ({
+          ...attachment,
+          id: randomUUID()
+        })),
+        width: existingJob.width,
+        height: existingJob.height,
+        steps: existingJob.steps,
+        guidanceScale: existingJob.guidanceScale,
+        seed: existingJob.seed,
+        frameCount: existingJob.frameCount ?? undefined,
+        frameRate: existingJob.frameRate ?? undefined
+      });
     }
 
     return this.startImageJob({
@@ -237,8 +431,11 @@ export class GenerationService {
       prompt: existingJob.prompt,
       negativePrompt: existingJob.negativePrompt ?? undefined,
       model: existingJob.model,
-      mode: existingJob.mode,
-      workflowProfile: existingJob.workflowProfile,
+      mode: existingJob.mode === 'image-to-image' ? 'image-to-image' : 'text-to-image',
+      workflowProfile:
+        existingJob.workflowProfile === 'qwen-image-edit-2511'
+          ? 'qwen-image-edit-2511'
+          : 'default',
       referenceImages: existingJob.referenceImages.map((attachment) => ({
         ...attachment,
         id: randomUUID()
@@ -381,7 +578,7 @@ export class GenerationService {
       id: snapshot.id,
       workspaceId: persistedJob?.workspaceId ?? null,
       conversationId: persistedJob?.conversationId ?? null,
-      kind: 'image',
+      kind: snapshot.kind,
       mode: snapshot.mode,
       workflowProfile: snapshot.workflow_profile,
       status: snapshot.status,
@@ -394,6 +591,8 @@ export class GenerationService {
       steps: snapshot.steps,
       guidanceScale: snapshot.guidance_scale,
       seed: snapshot.seed,
+      frameCount: snapshot.frame_count,
+      frameRate: snapshot.frame_rate,
       progress: snapshot.progress,
       stage: snapshot.stage,
       errorMessage: snapshot.error_message,
@@ -432,7 +631,7 @@ export class GenerationService {
     return hydratedJob;
   }
 
-  private resolveWorkspaceId(input: ImageGenerationRequest): string | null {
+  private resolveWorkspaceId(input: WorkspaceScopedGenerationInput): string | null {
     if (input.workspaceId) {
       return input.workspaceId;
     }
@@ -444,10 +643,10 @@ export class GenerationService {
     return this.chatRepository.ensureDefaultWorkspace().id;
   }
 
-  private resolveWorkflowProfile(
+  private resolveImageWorkflowProfile(
     model: string,
-    requestedWorkflowProfile?: GenerationJob['workflowProfile']
-  ): GenerationJob['workflowProfile'] {
+    requestedWorkflowProfile?: ImageGenerationRequest['workflowProfile']
+  ): ImageWorkflowProfile {
     const settings = this.settingsService.get();
     const option = discoverImageGenerationModels(settings.additionalModelsDirectory).options.find(
       (candidate) => candidate.id === model
@@ -461,17 +660,11 @@ export class GenerationService {
       return 'qwen-image-edit-2511';
     }
 
-    if (requestedWorkflowProfile) {
-      return requestedWorkflowProfile;
-    }
-
-    return 'default';
+    return requestedWorkflowProfile ?? 'default';
   }
 
-  private validateWorkflowInput(input: {
-    model: string;
-    mode: GenerationJob['mode'];
-    workflowProfile: GenerationJob['workflowProfile'];
+  private validateImageWorkflowInput(input: {
+    workflowProfile: ImageWorkflowProfile;
     referenceImages: GenerationJob['referenceImages'];
   }): void {
     if (input.workflowProfile !== 'qwen-image-edit-2511') {
@@ -482,8 +675,6 @@ export class GenerationService {
       throw new Error('Qwen Image Edit 2511 supports up to 3 reference images per job.');
     }
 
-    // No reference images is allowed — the runner will substitute blank white images.
-
     for (const attachment of input.referenceImages) {
       if (!attachment.filePath) {
         throw new Error(
@@ -493,9 +684,25 @@ export class GenerationService {
     }
   }
 
-  private resolveNegativePrompt(
+  private validateVideoWorkflowInput(input: {
+    referenceImages: GenerationJob['referenceImages'];
+  }): void {
+    if (input.referenceImages.length !== 1) {
+      throw new Error('Wan image-to-video requires exactly one starting image.');
+    }
+
+    const [attachment] = input.referenceImages;
+
+    if (!attachment?.filePath) {
+      throw new Error(
+        `Reference image "${attachment?.fileName ?? 'start-image'}" is missing a local file path and cannot be used for video generation.`
+      );
+    }
+  }
+
+  private resolveImageNegativePrompt(
     input: ImageGenerationRequest,
-    workflowProfile: GenerationJob['workflowProfile']
+    workflowProfile: ImageWorkflowProfile
   ): string | null {
     const explicitNegativePrompt = input.negativePrompt?.trim();
 
@@ -510,9 +717,13 @@ export class GenerationService {
     return null;
   }
 
-  private resolveWidth(
+  private resolveVideoNegativePrompt(input: VideoGenerationRequest): string {
+    return input.negativePrompt?.trim() || WAN_VIDEO_NEGATIVE_PROMPT;
+  }
+
+  private resolveImageWidth(
     input: ImageGenerationRequest,
-    workflowProfile: GenerationJob['workflowProfile']
+    workflowProfile: ImageWorkflowProfile
   ) {
     if (typeof input.width === 'number') {
       return input.width;
@@ -525,9 +736,9 @@ export class GenerationService {
     return DEFAULT_IMAGE_WIDTH;
   }
 
-  private resolveHeight(
+  private resolveImageHeight(
     input: ImageGenerationRequest,
-    workflowProfile: GenerationJob['workflowProfile']
+    workflowProfile: ImageWorkflowProfile
   ) {
     if (typeof input.height === 'number') {
       return input.height;
@@ -540,9 +751,9 @@ export class GenerationService {
     return DEFAULT_IMAGE_HEIGHT;
   }
 
-  private resolveSteps(
+  private resolveImageSteps(
     input: ImageGenerationRequest,
-    workflowProfile: GenerationJob['workflowProfile']
+    workflowProfile: ImageWorkflowProfile
   ) {
     if (typeof input.steps === 'number') {
       return input.steps;
@@ -555,9 +766,9 @@ export class GenerationService {
     return DEFAULT_IMAGE_STEPS;
   }
 
-  private resolveGuidanceScale(
+  private resolveImageGuidanceScale(
     input: ImageGenerationRequest,
-    workflowProfile: GenerationJob['workflowProfile']
+    workflowProfile: ImageWorkflowProfile
   ) {
     if (typeof input.guidanceScale === 'number') {
       return input.guidanceScale;
@@ -570,8 +781,11 @@ export class GenerationService {
     return DEFAULT_IMAGE_GUIDANCE_SCALE;
   }
 
-  private buildOutputPath(jobId: string): string {
-    return path.join(this.assetRootPath, `${jobId}.png`);
+  private buildOutputPath(jobId: string, kind: GenerationJob['kind']): string {
+    const directory = path.join(this.assetRootPath, kind === 'video' ? 'videos' : 'images');
+    const extension = kind === 'video' ? '.mp4' : '.png';
+    mkdirSync(directory, { recursive: true });
+    return path.join(directory, `${jobId}${extension}`);
   }
 
   private async assertImageJobCanStart(input: {
@@ -627,6 +841,44 @@ export class GenerationService {
     );
   }
 
+  private async assertVideoJobCanStart(input: {
+    model: string;
+    highNoiseModel: string;
+    lowNoiseModel: string;
+  }): Promise<void> {
+    const settings = this.settingsService.get();
+    const modelOption = discoverImageGenerationModels(settings.additionalModelsDirectory).options.find(
+      (candidate) => candidate.id === input.model
+    );
+
+    if (modelOption && modelOption.family !== 'wan-video') {
+      throw new Error(
+        `The selected Video Gen model "${modelOption.label}" is not a Wan image-to-video checkpoint.`
+      );
+    }
+
+    for (const [label, modelPath] of [
+      ['high-noise', input.highNoiseModel],
+      ['low-noise', input.lowNoiseModel]
+    ] as const) {
+      if (!isPathLikeModelId(modelPath) || !existsSync(modelPath)) {
+        throw new Error(
+          `The paired ${label} Wan model "${modelPath}" was not found on disk.`
+        );
+      }
+    }
+
+    const pythonStatus = await this.pythonManager.getStatus();
+
+    if (!pythonStatus.reachable) {
+      throw new Error(
+        pythonStatus.error
+          ? `The local Python video worker is unavailable: ${pythonStatus.error}`
+          : 'The local Python video worker is unavailable, so this image-to-video job cannot be started yet.'
+      );
+    }
+  }
+
   private requiredVramHeadroomMb(input: {
     backend: GenerationJob['backend'];
     width: number;
@@ -647,5 +899,147 @@ export class GenerationService {
     }
 
     return Math.min(MAX_HEADROOM_MB, headroom);
+  }
+
+  private resolveConfiguredWanModelPair(input: {
+    selectedModel: string | null | undefined;
+    highNoiseModel: string | null | undefined;
+    lowNoiseModel: string | null | undefined;
+    additionalModelsDirectory: string | null;
+  }): WanModelPair {
+    const highNoiseModel = input.highNoiseModel?.trim() ?? '';
+    const lowNoiseModel = input.lowNoiseModel?.trim() ?? '';
+
+    if (highNoiseModel && lowNoiseModel) {
+      const resolvedHighNoiseModel = this.resolveWanModelPath(
+        highNoiseModel,
+        input.additionalModelsDirectory
+      );
+      const resolvedLowNoiseModel = this.resolveWanModelPath(
+        lowNoiseModel,
+        input.additionalModelsDirectory
+      );
+
+      return {
+        primaryModel: resolvedHighNoiseModel,
+        highNoiseModel: resolvedHighNoiseModel,
+        lowNoiseModel: resolvedLowNoiseModel
+      };
+    }
+
+    if (highNoiseModel) {
+      const derivedPair = this.resolveWanModelPair(
+        highNoiseModel,
+        input.additionalModelsDirectory
+      );
+
+      return {
+        primaryModel: derivedPair.highNoiseModel,
+        highNoiseModel: derivedPair.highNoiseModel,
+        lowNoiseModel: derivedPair.lowNoiseModel
+      };
+    }
+
+    if (lowNoiseModel) {
+      const derivedPair = this.resolveWanModelPair(
+        lowNoiseModel,
+        input.additionalModelsDirectory
+      );
+
+      return {
+        primaryModel: derivedPair.highNoiseModel,
+        highNoiseModel: derivedPair.highNoiseModel,
+        lowNoiseModel: derivedPair.lowNoiseModel
+      };
+    }
+
+    if (!input.selectedModel?.trim()) {
+      throw new Error(
+        'No Wan video model pair is configured. Select both Video Gen checkpoints in Settings before queueing image-to-video jobs.'
+      );
+    }
+
+    return this.resolveWanModelPair(input.selectedModel, input.additionalModelsDirectory);
+  }
+
+  private resolveWanModelPath(
+    model: string,
+    additionalModelsDirectory?: string | null
+  ): string {
+    const option = discoverImageGenerationModels(additionalModelsDirectory).options.find(
+      (candidate) => candidate.id === model
+    );
+
+    return path.normalize(option?.path ?? model);
+  }
+
+  private resolveWanModelPair(
+    model: string,
+    additionalModelsDirectory?: string | null
+  ): WanModelPair {
+    const primaryModel = this.resolveWanModelPath(model, additionalModelsDirectory);
+
+    if (!isPathLikeModelId(primaryModel)) {
+      throw new Error(
+        'Wan video generation currently requires local high-noise and low-noise checkpoint files.'
+      );
+    }
+
+    const highNoiseModel = this.rewriteWanNoiseVariant(primaryModel, 'high');
+    const lowNoiseModel = this.rewriteWanNoiseVariant(primaryModel, 'low');
+
+    if (!highNoiseModel || !lowNoiseModel || highNoiseModel === lowNoiseModel) {
+      throw new Error(
+        'Unable to derive the paired Wan 2.2 high-noise and low-noise model files from the selected Video Gen checkpoint.'
+      );
+    }
+
+    return {
+      primaryModel,
+      highNoiseModel,
+      lowNoiseModel
+    };
+  }
+
+  private rewriteWanNoiseVariant(
+    modelPath: string,
+    target: 'high' | 'low'
+  ): string | null {
+    const fileName = path.basename(modelPath);
+    const directory = path.dirname(modelPath);
+    const variants = [
+      { high: 'high_noise', low: 'low_noise' },
+      { high: 'HighNoise', low: 'LowNoise' },
+      { high: 'high-noise', low: 'low-noise' },
+      { high: 'High-Noise', low: 'Low-Noise' },
+      { high: 'q8High', low: 'q8Low' },
+      { high: 'Q8High', low: 'Q8Low' },
+      { high: '_High', low: '_Low' },
+      { high: '-High', low: '-Low' },
+      { high: '_high', low: '_low' },
+      { high: '-high', low: '-low' }
+    ];
+
+    for (const variant of variants) {
+      if (target === 'high') {
+        if (fileName.includes(variant.high)) {
+          return path.join(directory, fileName);
+        }
+
+        if (fileName.includes(variant.low)) {
+          return path.join(directory, fileName.replace(variant.low, variant.high));
+        }
+      } else {
+        if (fileName.includes(variant.low)) {
+          return path.join(directory, fileName);
+        }
+
+        if (fileName.includes(variant.high)) {
+          return path.join(directory, fileName.replace(variant.high, variant.low));
+        }
+      }
+    }
+
+    return null;
   }
 }

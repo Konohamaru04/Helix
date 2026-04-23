@@ -11,7 +11,7 @@ function sleep(milliseconds: number) {
 export interface PythonGenerationArtifactSnapshot {
   id: string;
   job_id: string;
-  kind: 'image';
+  kind: 'image' | 'video';
   file_path: string;
   preview_path: string | null;
   mime_type: string;
@@ -32,9 +32,9 @@ export interface PythonGenerationReferenceImageSnapshot {
 
 export interface PythonGenerationJobSnapshot {
   id: string;
-  kind: 'image';
-  mode: 'text-to-image' | 'image-to-image';
-  workflow_profile: 'default' | 'qwen-image-edit-2511';
+  kind: 'image' | 'video';
+  mode: 'text-to-image' | 'image-to-image' | 'image-to-video';
+  workflow_profile: 'default' | 'qwen-image-edit-2511' | 'wan-image-to-video';
   status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
   prompt: string;
   negative_prompt: string | null;
@@ -45,6 +45,8 @@ export interface PythonGenerationJobSnapshot {
   steps: number;
   guidance_scale: number;
   seed: number | null;
+  frame_count: number | null;
+  frame_rate: number | null;
   progress: number;
   stage: string | null;
   error_message: string | null;
@@ -70,6 +72,35 @@ export interface StartPythonImageJobInput {
   guidanceScale: number;
   seed: number | null;
   outputPath: string;
+  referenceImages: Array<{
+    id: string;
+    fileName: string;
+    filePath: string | null;
+    mimeType: string | null;
+    sizeBytes: number | null;
+    extractedText: string | null;
+    createdAt: string;
+  }>;
+}
+
+export interface StartPythonVideoJobInput {
+  id: string;
+  prompt: string;
+  negativePrompt: string | null;
+  model: string;
+  backend: 'comfyui';
+  mode: 'image-to-video';
+  workflowProfile: 'wan-image-to-video';
+  width: number;
+  height: number;
+  steps: number;
+  guidanceScale: number;
+  seed: number | null;
+  frameCount: number;
+  frameRate: number;
+  outputPath: string;
+  highNoiseModel: string;
+  lowNoiseModel: string;
   referenceImages: Array<{
     id: string;
     fileName: string;
@@ -294,6 +325,42 @@ export class PythonServerManager {
         guidance_scale: input.guidanceScale,
         seed: input.seed,
         output_path: input.outputPath,
+        reference_images: input.referenceImages.map((attachment) => ({
+          id: attachment.id,
+          file_name: attachment.fileName,
+          file_path: attachment.filePath,
+          mime_type: attachment.mimeType,
+          size_bytes: attachment.sizeBytes,
+          extracted_text: attachment.extractedText,
+          created_at: attachment.createdAt
+        }))
+      })
+    });
+  }
+
+  async startVideoJob(
+    input: StartPythonVideoJobInput
+  ): Promise<PythonGenerationJobSnapshot> {
+    return this.requestJson<PythonGenerationJobSnapshot>('/jobs/videos', {
+      method: 'POST',
+      body: JSON.stringify({
+        id: input.id,
+        prompt: input.prompt,
+        negative_prompt: input.negativePrompt,
+        model: input.model,
+        backend: input.backend,
+        mode: input.mode,
+        workflow_profile: input.workflowProfile,
+        width: input.width,
+        height: input.height,
+        steps: input.steps,
+        guidance_scale: input.guidanceScale,
+        seed: input.seed,
+        frame_count: input.frameCount,
+        frame_rate: input.frameRate,
+        output_path: input.outputPath,
+        high_noise_model: input.highNoiseModel,
+        low_noise_model: input.lowNoiseModel,
         reference_images: input.referenceImages.map((attachment) => ({
           id: attachment.id,
           file_name: attachment.fileName,

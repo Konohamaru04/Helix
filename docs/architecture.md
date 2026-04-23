@@ -27,7 +27,7 @@ Milestone coverage today:
 - Milestone 6.1 is complete
 - Milestone 6.2 is complete
 - Milestone 6.3 is complete
-- Milestone 6.4 is planned
+- Milestone 6.4 is complete
 
 ## Data flow
 
@@ -39,9 +39,9 @@ The routed chat flow is:
 4. `ChatService` first decides whether the submit should become an inline image-generation job in `Auto` mode, then otherwise persists the turn in SQLite, resolves explicit `/tool` and `@skill` directives, and asks `ChatRouter` for the route decision.
 5. Optional workspace knowledge import happens for text-like attachments.
 6. Optional tool execution runs inside the bridge layer.
-7. `buildConversationContext` assembles workspace prompt, active skill prompt, pinned memory, retrieved knowledge, and recent turns.
-   The latest user turn is normalized into a markdown envelope with `# Prompt`, optional `# Workspace`, and `# Available Tools` sections so the selected folder path and callable surface are explicit to the model.
-   Workspace-bound local file tools are only advertised when the active workspace has a connected root folder.
+7. `buildConversationContext` assembles the system base prompt, workspace prompt, active skill prompt, pinned memory, retrieved knowledge, and recent turns.
+   The system base prompt now carries the Helix persona plus a detailed baked-in tool and skill catalog for the current turn.
+   The latest user turn is normalized into a markdown envelope with `# Prompt` and optional `# Workspace` sections so the selected folder path stays explicit to the model.
 8. For normal chat turns, `ChatService` now routes through a provider-aware text backend layer:
    - `OllamaClient` handles local Ollama chat and the native `/api/chat` tool-call loop when the model should be allowed to auto-select local tools.
    - `NvidiaClient` handles OpenAI-compatible NVIDIA chat completions through `https://integrate.api.nvidia.com/v1`.
@@ -49,8 +49,9 @@ The routed chat flow is:
 9. Capability-backed tool calls run only through the bridge and can persist tasks, schedules, agent sessions, worktrees, plan state, permission grants, and audit events in SQLite.
 10. Main proxies typed stream events back to the renderer, including graceful user-driven cancellation for in-flight replies.
 11. Assistant message bodies are persisted incrementally during streaming, and route/tool/source metadata is mirrored into SQLite as it becomes available instead of waiting for the turn to finish.
-12. Main proxies lightweight progress events back to the renderer with tool/source counts, while the renderer lazy-loads the heavy tool invocation and source records for an individual message only when those sections are expanded.
-13. The renderer rehydrates the finished message after terminal events so route traces, token usage, and any lazily opened tool/source detail stay in sync with SQLite.
+12. Native tool-loop turns now persist each completed assistant round as its own assistant message row and emit a typed `message-created` stream event when the loop advances to a fresh in-flight message, so interim status text and thinking blocks survive reloads instead of being overwritten by the final summary.
+13. Main proxies lightweight progress events back to the renderer with tool/source counts, while the renderer lazy-loads the heavy tool invocation and source records for an individual message only when those sections are expanded.
+14. The renderer rehydrates the finished message after terminal events so route traces, token usage, and any lazily opened tool/source detail stay in sync with SQLite.
 
 The renderer also uses the same bridge for:
 
@@ -64,7 +65,7 @@ The renderer also uses the same bridge for:
 - message edit-resend and regenerate actions
 - conversation import and export
 - system status and settings updates
-- image-generation job start, polling updates, and cancellation
+- image and video generation job start, polling updates, retry, and cancellation
 - tool and skill discovery
 - agent session visibility through a dedicated bottom drawer
 - in-flight chat cancellation
@@ -278,7 +279,7 @@ Current behavior:
 - polls `/health` before reporting the server healthy
 - logs stdout, stderr, and exits
 - reuses an already-healthy managed server during development if the port is already bound
-- exposes image-generation routes through `/jobs`
+- exposes image-generation routes through `/jobs/images` and Wan 2.2 image-to-video routes through `/jobs/videos`
 - keeps the active generation queue in the Python worker and mirrors durable job state into SQLite
 - reports loaded image backend state and VRAM telemetry through `/health`
 - on normal app quit, Electron asks the Python worker to cancel jobs, unload models, release VRAM, stop the embedded ComfyUI sidecar, and exit before the main process completes shutdown
@@ -286,11 +287,11 @@ Current behavior:
 
 Generation architecture today:
 
-1. The renderer enters image mode from the shared composer and submits an `ImageGenerationRequest`.
+1. The renderer enters image or video mode from the shared composer and submits a typed generation request.
 2. Electron main validates the request and calls `GenerationService`.
-3. `GenerationService` creates a durable `generation_jobs` row plus any later `generation_artifacts`.
+3. `GenerationService` creates a durable `generation_jobs` row plus any later `generation_artifacts`, with `frame_count` and `frame_rate` persisted for video jobs.
 4. Electron main starts the job on the managed FastAPI worker through `PythonServerManager`.
-5. The Python worker queues the job, runs either the built-in placeholder backend or a diffusers pipeline, and exposes snapshots through `/jobs/:id`.
+5. The Python worker queues the job, runs either the built-in placeholder backend, a diffusers pipeline, the embedded Qwen edit ComfyUI workflow, or the embedded Wan 2.2 image-to-video workflow, and exposes snapshots through `/jobs/:id`.
 6. Electron main polls those snapshots, persists each state transition, and re-broadcasts typed job updates to renderer windows.
 7. The renderer updates both the main chat transcript and the queue drawer from the same generation-job stream.
 
@@ -300,7 +301,9 @@ Current image backends:
 - discovered local diffusers directories and checkpoint files from a user-configured additional models directory, including ComfyUI-style `models` roots
 - architecture-aware GGUF discovery from ComfyUI-style `diffusion_models` roots, with Qwen Image text-to-image GGUF checkpoints loading through a diffusers transformer-plus-base-pipeline path
 - a dedicated `qwen-image-edit-2511` workflow profile that persists mode and reference-image metadata from renderer -> Electron -> FastAPI worker -> SQLite
+- a dedicated `wan-image-to-video` workflow profile that persists one start image plus frame metadata from renderer -> Electron -> FastAPI worker -> SQLite
 - Qwen Image Edit 2511 jobs reuse the shared composer attachments as reference images and apply workflow-specific defaults such as `1664x1248`, `4` steps, and the negative-prompt baseline captured from the vendored ComfyUI workflow
+- Wan 2.2 jobs run through the vendored embedded ComfyUI blueprint path and require both a high-noise and low-noise GGUF checkpoint; the bridge derives the paired checkpoint automatically from the selected Video Gen model
 - when the chat header stays on `Auto`, normal text submit can auto-route clear image creation prompts into text-to-image jobs and follow-up edit prompts such as `Now swap their clothing` into image-to-image jobs that reuse the latest generated artifact as the reference input
 - attached-image analysis prompts such as `Describe this image` stay on the multimodal chat path after leaving image mode, so they route to the Vision model instead of being mistaken for image generation
 
@@ -310,7 +313,7 @@ Current GGUF behavior:
 - the bridge classifies GGUF families before surfacing them in Settings
 - Qwen Image text-to-image GGUF checkpoints are selectable and routed through the Python worker
 - Qwen Image Edit 2511 GGUF checkpoints are selectable and routed through the dedicated Qwen workflow branch in the Python worker
-- Wan GGUF checkpoints stay visible but disabled until the Video Gen slice is implemented
+- Wan GGUF checkpoints are surfaced only for Video Gen selection and stay excluded from Image Gen selection
 - Qwen Image Edit GGUF checkpoints run through the vendored ComfyUI runtime that ships in this repo, so they no longer require a separate machine-level ComfyUI install; plain Qwen Image GGUF checkpoints still rely on the `Qwen/Qwen-Image` diffusers base pipeline if that separate path is selected
 
 Current VRAM behavior:
@@ -336,7 +339,7 @@ Current queue-hardening behavior:
 
 The following areas are still intentionally incomplete:
 
-- video and audio generation jobs
+- audio generation jobs
 - external MCP server configuration, connection management, manifest sync, and prompt insertion
 - inline approval prompts for risky actions
 

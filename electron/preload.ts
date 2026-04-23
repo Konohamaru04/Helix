@@ -25,6 +25,8 @@ import {
   generationStreamEventSchema,
   imageGenerationRequestSchema,
   imageGenerationStartResultSchema,
+  videoGenerationRequestSchema,
+  videoGenerationStartResultSchema,
   importConversationResultSchema,
   conversationSearchResultSchema,
   conversationSummarySchema,
@@ -92,6 +94,13 @@ const desktopApi: DesktopApi = {
         await ipcRenderer.invoke(
           IpcChannels.generationStartImage,
           imageGenerationRequestSchema.parse(input)
+        )
+      ),
+    startVideo: async (input) =>
+      videoGenerationStartResultSchema.parse(
+        await ipcRenderer.invoke(
+          IpcChannels.generationStartVideo,
+          videoGenerationRequestSchema.parse(input)
         )
       ),
     listImageModels: async (input) =>

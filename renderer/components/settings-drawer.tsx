@@ -14,7 +14,11 @@ import type {
   WorktreeSession
 } from '@bridge/ipc/contracts';
 import { APP_DISPLAY_NAME } from '@bridge/branding';
-import { getImageGenerationModelOptions } from '@renderer/lib/image-generation-models';
+import {
+  getImageGenerationModelOptions,
+  getVideoGenerationHighNoiseModelOptions,
+  getVideoGenerationLowNoiseModelOptions
+} from '@renderer/lib/image-generation-models';
 import { ThemedSelect, type ThemedSelectOption } from '@renderer/components/themed-select';
 
 interface SettingsDrawerProps {
@@ -162,6 +166,8 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
         draft.codingModel,
         draft.visionModel,
         draft.videoGenerationModel,
+        draft.videoGenerationHighNoiseModel,
+        draft.videoGenerationLowNoiseModel,
         ...(draft.textInferenceBackend === 'nvidia'
           ? props.nvidiaModels
           : props.ollamaModels)
@@ -172,9 +178,25 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
     localCatalog,
     draft.imageGenerationModel
   );
+  const videoGenerationHighNoiseModelOptions = getVideoGenerationHighNoiseModelOptions(
+    localCatalog,
+    draft.videoGenerationHighNoiseModel
+  );
+  const videoGenerationLowNoiseModelOptions = getVideoGenerationLowNoiseModelOptions(
+    localCatalog,
+    draft.videoGenerationLowNoiseModel
+  );
   const selectedImageGenerationOption =
     imageGenerationModelOptions.find((option) => option.id === draft.imageGenerationModel) ??
     null;
+  const selectedVideoGenerationHighNoiseOption =
+    videoGenerationHighNoiseModelOptions.find(
+      (option) => option.id === draft.videoGenerationHighNoiseModel
+    ) ?? null;
+  const selectedVideoGenerationLowNoiseOption =
+    videoGenerationLowNoiseModelOptions.find(
+      (option) => option.id === draft.videoGenerationLowNoiseModel
+    ) ?? null;
   const permissionByCapabilityId = new Map(
     props.capabilityPermissions.map((permission) => [permission.capabilityId, permission])
   );
@@ -225,7 +247,20 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
             additionalModelsDirectory: null,
             imageGenerationModel: looksLikeLocalModelId(current.imageGenerationModel)
               ? 'builtin:placeholder'
-              : current.imageGenerationModel
+              : current.imageGenerationModel,
+            videoGenerationModel: looksLikeLocalModelId(current.videoGenerationModel)
+              ? ''
+              : current.videoGenerationModel,
+            videoGenerationHighNoiseModel: looksLikeLocalModelId(
+              current.videoGenerationHighNoiseModel
+            )
+              ? ''
+              : current.videoGenerationHighNoiseModel,
+            videoGenerationLowNoiseModel: looksLikeLocalModelId(
+              current.videoGenerationLowNoiseModel
+            )
+              ? ''
+              : current.videoGenerationLowNoiseModel
           }
         : current
     );
@@ -523,30 +558,87 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                 </label>
 
                 <label className="block">
-                  <span className="mb-2 block text-sm font-medium text-slate-500">
-                    Video Gen
+                  <span className="mb-2 block text-sm font-medium text-slate-200">
+                    Video Gen (High noise)
                   </span>
-                  <p className="mb-3 text-xs text-slate-500">
-                    Disabled until video-generation jobs are implemented.
+                  <p className="mb-3 text-xs text-slate-400">
+                    Uses the embedded ComfyUI Wan 2.2 image-to-video flow. Pick the explicit
+                    high-noise checkpoint required by the workflow.
                   </p>
                   <SelectShell
-                    ariaLabel="Video Gen"
-                    disabled
-                    onChange={() => undefined}
-                    value={draft.videoGenerationModel}
+                    ariaLabel="Video Gen high noise"
+                    onChange={(value) =>
+                      setDraft((current) =>
+                        current
+                          ? {
+                              ...current,
+                              videoGenerationModel: value,
+                              videoGenerationHighNoiseModel: value
+                            }
+                          : current
+                      )
+                    }
+                    value={draft.videoGenerationHighNoiseModel}
                   >
                     <option value="">
-                      Video generation is not available yet
+                      Select a Wan high-noise model
                     </option>
-                    {modelOptions.map((model) => (
+                    {videoGenerationHighNoiseModelOptions.map((option) => (
                       <option
-                        key={`video-${model}`}
-                        value={model}
+                        key={`video-high-${option.id}`}
+                        value={option.id}
                       >
-                        {model}
+                        {option.label}
                       </option>
                     ))}
                   </SelectShell>
+                  <p className="mt-3 text-xs text-slate-400">
+                    {selectedVideoGenerationHighNoiseOption?.description ??
+                      (videoGenerationHighNoiseModelOptions.length > 0
+                        ? 'Select the local Wan high-noise checkpoint used for the first denoising pass.'
+                        : 'No Wan 2.2 checkpoints are currently discovered in the selected models directories.')}
+                  </p>
+                </label>
+
+                <label className="block">
+                  <span className="mb-2 block text-sm font-medium text-slate-200">
+                    Video Gen (Low noise)
+                  </span>
+                  <p className="mb-3 text-xs text-slate-400">
+                    Pick the explicit low-noise checkpoint required by the second Wan 2.2 pass.
+                  </p>
+                  <SelectShell
+                    ariaLabel="Video Gen low noise"
+                    onChange={(value) =>
+                      setDraft((current) =>
+                        current
+                          ? {
+                              ...current,
+                              videoGenerationLowNoiseModel: value
+                            }
+                          : current
+                      )
+                    }
+                    value={draft.videoGenerationLowNoiseModel}
+                  >
+                    <option value="">
+                      Select a Wan low-noise model
+                    </option>
+                    {videoGenerationLowNoiseModelOptions.map((option) => (
+                      <option
+                        key={`video-low-${option.id}`}
+                        value={option.id}
+                      >
+                        {option.label}
+                      </option>
+                    ))}
+                  </SelectShell>
+                  <p className="mt-3 text-xs text-slate-400">
+                    {selectedVideoGenerationLowNoiseOption?.description ??
+                      (videoGenerationLowNoiseModelOptions.length > 0
+                        ? 'Select the local Wan low-noise checkpoint used for the finishing pass.'
+                        : 'No Wan 2.2 checkpoints are currently discovered in the selected models directories.')}
+                  </p>
                 </label>
               </div>
             </section>

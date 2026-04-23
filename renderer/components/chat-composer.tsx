@@ -10,9 +10,11 @@ interface ChatComposerProps {
   submitting?: boolean;
   submitLabel?: string | null;
   submitHint?: string | null;
-  generationMode: boolean;
+  generationMode: 'chat' | 'image' | 'video';
   imageGenerationAvailable: boolean;
   imageGenerationModelLabel: string | null;
+  videoGenerationAvailable: boolean;
+  videoGenerationModelLabel: string | null;
   prompt: string;
   attachments: MessageAttachment[];
   activeWorkspaceName: string | null;
@@ -22,7 +24,9 @@ interface ChatComposerProps {
   onPromptChange: (prompt: string) => void;
   onAttach: () => Promise<void>;
   onEnterImageMode: () => void;
+  onEnterVideoMode: () => void;
   onExitImageMode: () => void;
+  onExitVideoMode: () => void;
   onImportWorkspaceKnowledge: () => Promise<void>;
   onRemoveAttachment: (attachmentId: string) => void;
   onCancelEdit: () => void;
@@ -82,13 +86,25 @@ export function ChatComposer(props: ChatComposerProps) {
     textareaRef.current?.focus();
   }
 
+  function handleVideoModeClick() {
+    setActiveMenu(null);
+    props.onEnterVideoMode();
+    textareaRef.current?.focus();
+  }
+
   async function handleImportKnowledgeClick() {
     setActiveMenu(null);
     await props.onImportWorkspaceKnowledge();
   }
   const visibleSubmitLabel =
     props.submitLabel ??
-    (props.generationMode ? 'Generating...' : props.editing ? 'Resending...' : 'Sending...');
+    (props.generationMode === 'image'
+      ? 'Generating...'
+      : props.generationMode === 'video'
+        ? 'Rendering video...'
+        : props.editing
+          ? 'Resending...'
+          : 'Sending...');
 
   return (
     <form
@@ -121,7 +137,7 @@ export function ChatComposer(props: ChatComposerProps) {
           </div>
         ) : null}
 
-        {props.generationMode ? (
+        {props.generationMode === 'image' ? (
           <div className="motion-panel flex flex-wrap items-center justify-between gap-3 rounded-[1.5rem] border border-fuchsia-300/20 bg-fuchsia-500/10 px-4 py-3">
             <div>
               <p className="text-xs uppercase tracking-[0.24em] text-fuchsia-100/80">
@@ -139,6 +155,32 @@ export function ChatComposer(props: ChatComposerProps) {
             <button
               className="motion-interactive rounded-xl border border-fuchsia-100/20 px-3 py-1.5 text-xs font-medium text-fuchsia-50 transition hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fuchsia-300"
               onClick={props.onExitImageMode}
+              type="button"
+            >
+              Back to chat
+            </button>
+          </div>
+        ) : null}
+
+        {props.generationMode === 'video' ? (
+          <div className="motion-panel flex flex-wrap items-center justify-between gap-3 rounded-[1.5rem] border border-orange-300/20 bg-orange-500/10 px-4 py-3">
+            <div>
+              <p className="text-xs uppercase tracking-[0.24em] text-orange-100/80">
+                Image to video
+              </p>
+              <p className="mt-1 text-sm text-orange-50">
+                This chat composer is now creating an inline Wan 2.2 video turn.
+                {props.videoGenerationModelLabel
+                  ? ` Current backend: ${props.videoGenerationModelLabel}.`
+                  : ''}
+                {' '}
+                Attach exactly one start image and the bridge will use the configured
+                high-noise and low-noise checkpoints before queueing the job.
+              </p>
+            </div>
+            <button
+              className="motion-interactive rounded-xl border border-orange-100/20 px-3 py-1.5 text-xs font-medium text-orange-50 transition hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-300"
+              onClick={props.onExitVideoMode}
               type="button"
             >
               Back to chat
@@ -168,8 +210,10 @@ export function ChatComposer(props: ChatComposerProps) {
             onChange={(event) => props.onPromptChange(event.target.value)}
             onKeyDown={handleKeyDown}
             placeholder={
-              props.generationMode
+              props.generationMode === 'image'
                 ? 'Describe the image you want to generate'
+                : props.generationMode === 'video'
+                  ? 'Describe the motion, camera movement, and style for the video'
                 : `Message ${APP_DISPLAY_NAME}`
             }
             rows={4}
@@ -229,7 +273,11 @@ export function ChatComposer(props: ChatComposerProps) {
                       role="menuitem"
                       type="button"
                     >
-                      {props.generationMode ? 'Attach reference images' : 'Attach files'}
+                      {props.generationMode === 'image'
+                        ? 'Attach reference images'
+                        : props.generationMode === 'video'
+                          ? 'Attach start image'
+                          : 'Attach files'}
                     </button>
                     <button
                       className="motion-interactive flex w-full items-center rounded-xl px-3 py-2 text-left text-sm text-slate-100 transition hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
@@ -239,6 +287,15 @@ export function ChatComposer(props: ChatComposerProps) {
                       type="button"
                     >
                       Generate image
+                    </button>
+                    <button
+                      className="motion-interactive flex w-full items-center rounded-xl px-3 py-2 text-left text-sm text-slate-100 transition hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
+                      disabled={!props.videoGenerationAvailable}
+                      onClick={handleVideoModeClick}
+                      role="menuitem"
+                      type="button"
+                    >
+                      Generate video
                     </button>
                   </div>
                 ) : null}
@@ -323,8 +380,10 @@ export function ChatComposer(props: ChatComposerProps) {
               <p className="text-xs text-slate-500">
                 {props.submitting
                   ? 'The desktop bridge is preparing this turn before the reply starts streaming.'
-                  : props.generationMode
+                  : props.generationMode === 'image'
                   ? 'Enter starts the image job. Shift+Enter keeps writing. Attached images are used as references.'
+                  : props.generationMode === 'video'
+                    ? 'Enter starts the video job. Shift+Enter keeps writing. Attach one starting image for the Wan 2.2 workflow.'
                   : 'Enter sends. Shift+Enter keeps writing. Models choose tools and skills automatically when needed.'}
               </p>
             </div>
@@ -348,8 +407,10 @@ export function ChatComposer(props: ChatComposerProps) {
               >
                 {props.submitting
                   ? visibleSubmitLabel
-                  : props.generationMode
+                  : props.generationMode === 'image'
                     ? 'Generate'
+                    : props.generationMode === 'video'
+                      ? 'Render video'
                     : props.editing
                       ? 'Resend'
                       : 'Send'}

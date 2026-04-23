@@ -49,6 +49,8 @@ const generationJob: GenerationJob = {
   steps: 6,
   guidanceScale: 4,
   seed: null,
+  frameCount: null,
+  frameRate: null,
   progress: 0.4,
   stage: 'Rendering',
   errorMessage: null,

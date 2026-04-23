@@ -46,7 +46,7 @@ function mergeAttachments(
   return merged.slice(0, 8);
 }
 
-type SubmitPhase = 'chat' | 'image' | 'edit';
+type SubmitPhase = 'chat' | 'image' | 'video' | 'edit';
 
 function getSubmitFeedback(phase: SubmitPhase | null) {
   if (phase === 'chat') {
@@ -66,6 +66,16 @@ function getSubmitFeedback(phase: SubmitPhase | null) {
       transcriptLabel: 'Preparing image job',
       transcriptHint:
         'The bridge is packaging the prompt, references, and backend settings before queueing the job.'
+    };
+  }
+
+  if (phase === 'video') {
+    return {
+      label: 'Queueing...',
+      hint: 'Preparing the image-to-video job and validating the paired Wan 2.2 models.',
+      transcriptLabel: 'Preparing video job',
+      transcriptHint:
+        'The bridge is packaging the start frame, paired Wan checkpoints, and workflow defaults before the video job enters the queue.'
     };
   }
 
@@ -100,7 +110,7 @@ export function ChatPage() {
   const [submissionError, setSubmissionError] = useState<string | null>(null);
   const [composerDraft, setComposerDraft] = useState('');
   const [composerAttachments, setComposerAttachments] = useState<MessageAttachment[]>([]);
-  const [composerMode, setComposerMode] = useState<'chat' | 'image'>('chat');
+  const [composerMode, setComposerMode] = useState<'chat' | 'image' | 'video'>('chat');
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [creatingWorkspace, setCreatingWorkspace] = useState(false);
   const [workspaceDraft, setWorkspaceDraft] = useState('');
@@ -177,6 +187,7 @@ export function ChatPage() {
     (state) => state.inspectImageGenerationModels
   );
   const startImageGeneration = useAppStore((state) => state.startImageGeneration);
+  const startVideoGeneration = useAppStore((state) => state.startVideoGeneration);
   const sendPrompt = useAppStore((state) => state.sendPrompt);
   const editMessageAndResend = useAppStore((state) => state.editMessageAndResend);
   const regenerateResponse = useAppStore((state) => state.regenerateResponse);
@@ -219,10 +230,32 @@ export function ChatPage() {
       ? (systemStatus?.nvidia.configured ?? false)
       : (systemStatus?.ollama.reachable ?? false);
   const imageGenerationAvailable = Boolean(settings) && Boolean(systemStatus?.python.reachable);
+  const hasExplicitVideoGenerationPair = Boolean(
+    settings?.videoGenerationHighNoiseModel && settings?.videoGenerationLowNoiseModel
+  );
+  const videoGenerationAvailable =
+    Boolean(systemStatus?.python.reachable) &&
+    (hasExplicitVideoGenerationPair || Boolean(settings?.videoGenerationModel));
   const imageGenerationModelLabel = getImageGenerationModelLabel(
     settings?.imageGenerationModel,
     imageGenerationModelCatalog
   );
+  const videoGenerationHighNoiseModelLabel = getImageGenerationModelLabel(
+    settings?.videoGenerationHighNoiseModel,
+    imageGenerationModelCatalog
+  );
+  const videoGenerationLowNoiseModelLabel = getImageGenerationModelLabel(
+    settings?.videoGenerationLowNoiseModel,
+    imageGenerationModelCatalog
+  );
+  const legacyVideoGenerationModelLabel = getImageGenerationModelLabel(
+    settings?.videoGenerationModel,
+    imageGenerationModelCatalog
+  );
+  const videoGenerationModelLabel =
+    videoGenerationHighNoiseModelLabel && videoGenerationLowNoiseModelLabel
+      ? `High: ${videoGenerationHighNoiseModelLabel} | Low: ${videoGenerationLowNoiseModelLabel}`
+      : legacyVideoGenerationModelLabel;
   const submitFeedback = getSubmitFeedback(submitPhase);
   const submitInFlight = submitPhase !== null;
   const selectedImageGenerationModelOption =
@@ -348,7 +381,13 @@ export function ChatPage() {
     }
 
     const nextSubmitPhase: SubmitPhase =
-      editingMessageId ? 'edit' : composerMode === 'image' ? 'image' : 'chat';
+      editingMessageId
+        ? 'edit'
+        : composerMode === 'image'
+          ? 'image'
+          : composerMode === 'video'
+            ? 'video'
+            : 'chat';
 
     submitLockRef.current = true;
     setSubmitPhase(nextSubmitPhase);
@@ -376,6 +415,24 @@ export function ChatPage() {
               ? 'qwen-image-edit-2511'
               : 'default',
           referenceImages: composerAttachments
+        });
+      } else if (composerMode === 'video') {
+        await startVideoGeneration({
+          conversationId: activeConversationId ?? undefined,
+          workspaceId:
+            activeConversationId === null
+              ? activeWorkspaceId ?? undefined
+              : undefined,
+          prompt: composerDraft.trim(),
+          model:
+            settings?.videoGenerationHighNoiseModel ||
+            settings?.videoGenerationModel ||
+            undefined,
+          highNoiseModel: settings?.videoGenerationHighNoiseModel || undefined,
+          lowNoiseModel: settings?.videoGenerationLowNoiseModel || undefined,
+          mode: 'image-to-video',
+          workflowProfile: 'wan-image-to-video',
+          referenceImages: composerAttachments.slice(0, 1)
         });
       } else {
         await sendPrompt(composerDraft, composerAttachments);
@@ -479,7 +536,7 @@ export function ChatPage() {
       await cancelGenerationJob(jobId);
     } catch (error) {
       setSubmissionError(
-        error instanceof Error ? error.message : 'Unable to cancel the image job.'
+        error instanceof Error ? error.message : 'Unable to cancel the generation job.'
       );
     }
   }
@@ -490,7 +547,7 @@ export function ChatPage() {
       await retryGenerationJob(jobId);
     } catch (error) {
       setSubmissionError(
-        error instanceof Error ? error.message : 'Unable to retry the image job.'
+        error instanceof Error ? error.message : 'Unable to retry the generation job.'
       );
     }
   }
@@ -890,12 +947,16 @@ export function ChatPage() {
                   disabled={
                     composerMode === 'image'
                       ? !imageGenerationAvailable || streaming || submitInFlight
+                      : composerMode === 'video'
+                        ? !videoGenerationAvailable || streaming || submitInFlight
                       : !settings || !textBackendReady || streaming || submitInFlight
                   }
                   editing={editingMessageId !== null}
-                  generationMode={composerMode === 'image'}
+                  generationMode={composerMode}
                   imageGenerationAvailable={imageGenerationAvailable}
                   imageGenerationModelLabel={imageGenerationModelLabel}
+                  videoGenerationAvailable={videoGenerationAvailable}
+                  videoGenerationModelLabel={videoGenerationModelLabel}
                   knowledgeDocumentCount={knowledgeDocuments.length}
                   onAttach={handleAttachFiles}
                   onCancelEdit={resetComposer}
@@ -904,7 +965,15 @@ export function ChatPage() {
                     setEditingMessageId(null);
                     setComposerMode('image');
                   }}
+                  onEnterVideoMode={() => {
+                    setSubmissionError(null);
+                    setEditingMessageId(null);
+                    setComposerMode('video');
+                  }}
                   onExitImageMode={() => {
+                    setComposerMode('chat');
+                  }}
+                  onExitVideoMode={() => {
                     setComposerMode('chat');
                   }}
                   onImportWorkspaceKnowledge={handleImportKnowledge}
@@ -957,7 +1026,7 @@ export function ChatPage() {
       <SettingsDrawer
         key={
           settings
-            ? `${settings.textInferenceBackend}-${settings.ollamaBaseUrl}-${settings.nvidiaBaseUrl}-${settings.defaultModel}-${settings.codingModel}-${settings.visionModel}-${settings.imageGenerationModel}-${settings.additionalModelsDirectory ?? 'none'}-${settings.videoGenerationModel}-${settings.pythonPort}-${String(settings.streamingMascotEnabled)}-${settings.theme}-${String(settingsDrawerOpen)}`
+            ? `${settings.textInferenceBackend}-${settings.ollamaBaseUrl}-${settings.nvidiaBaseUrl}-${settings.defaultModel}-${settings.codingModel}-${settings.visionModel}-${settings.imageGenerationModel}-${settings.additionalModelsDirectory ?? 'none'}-${settings.videoGenerationModel}-${settings.videoGenerationHighNoiseModel}-${settings.videoGenerationLowNoiseModel}-${settings.pythonPort}-${String(settings.streamingMascotEnabled)}-${settings.theme}-${String(settingsDrawerOpen)}`
             : 'settings-empty'
         }
         capabilities={availableTools}

@@ -10,7 +10,18 @@ interface GenerationThreadItemProps {
 }
 
 function formatGenerationMode(mode: GenerationJob['mode']) {
-  return mode === 'image-to-image' ? 'Image edit' : 'Image request';
+  switch (mode) {
+    case 'image-to-image':
+      return 'Image edit';
+    case 'image-to-video':
+      return 'Image to video';
+    default:
+      return 'Image request';
+  }
+}
+
+function getGenerationLabel(job: GenerationJob) {
+  return job.kind === 'video' ? 'Video generation' : 'Image generation';
 }
 
 export function GenerationThreadItem(props: GenerationThreadItemProps) {
@@ -55,7 +66,7 @@ export function GenerationThreadItem(props: GenerationThreadItemProps) {
                 assistant
               </p>
               <span className="rounded-full border border-white/10 px-2.5 py-1 text-[11px] font-medium uppercase tracking-[0.16em] text-slate-200">
-                Image generation
+                {getGenerationLabel(props.job)}
               </span>
             </div>
 

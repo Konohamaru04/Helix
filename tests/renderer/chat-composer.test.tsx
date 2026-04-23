@@ -1,36 +1,50 @@
 // @vitest-environment jsdom
 
+import type { ComponentProps } from 'react';
 import '@testing-library/jest-dom/vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { ChatComposer } from '@renderer/components/chat-composer';
 
+function renderComposer(
+  overrides: Partial<ComponentProps<typeof ChatComposer>> = {}
+) {
+  const props: ComponentProps<typeof ChatComposer> = {
+    activeWorkspaceName: 'General',
+    attachments: [],
+    disabled: false,
+    editing: false,
+    generationMode: 'chat',
+    imageGenerationAvailable: true,
+    imageGenerationModelLabel: 'Built-in placeholder',
+    videoGenerationAvailable: false,
+    videoGenerationModelLabel: null,
+    streaming: false,
+    knowledgeDocumentCount: 0,
+    onAttach: vi.fn().mockResolvedValue(undefined),
+    onCancelEdit: vi.fn(),
+    onEnterImageMode: vi.fn(),
+    onEnterVideoMode: vi.fn(),
+    onExitImageMode: vi.fn(),
+    onExitVideoMode: vi.fn(),
+    onImportWorkspaceKnowledge: vi.fn().mockResolvedValue(undefined),
+    onPromptChange: vi.fn(),
+    onRemoveAttachment: vi.fn(),
+    onSubmit: vi.fn().mockResolvedValue(undefined),
+    prompt: '',
+    workspaceActionsEnabled: true,
+    workspaceRootPath: null,
+    ...overrides
+  };
+
+  render(<ChatComposer {...props} />);
+}
+
 describe('ChatComposer', () => {
   it('uses automatic routing copy instead of manual tool and skill picker buttons', () => {
-    render(
-      <ChatComposer
-        activeWorkspaceName="General"
-        attachments={[]}
-        disabled={false}
-        editing={false}
-        generationMode={false}
-        imageGenerationAvailable={true}
-        imageGenerationModelLabel="Built-in placeholder"
-        streaming={false}
-        knowledgeDocumentCount={0}
-        onAttach={vi.fn().mockResolvedValue(undefined)}
-        onCancelEdit={vi.fn()}
-        onEnterImageMode={vi.fn()}
-        onExitImageMode={vi.fn()}
-        onImportWorkspaceKnowledge={vi.fn().mockResolvedValue(undefined)}
-        onPromptChange={vi.fn()}
-        onRemoveAttachment={vi.fn()}
-        onSubmit={vi.fn().mockResolvedValue(undefined)}
-        prompt="Summarize the workspace docs"
-        workspaceActionsEnabled
-        workspaceRootPath={null}
-      />
-    );
+    renderComposer({
+      prompt: 'Summarize the workspace docs'
+    });
 
     expect(screen.queryByRole('button', { name: 'Tools' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Skills' })).not.toBeInTheDocument();
@@ -42,30 +56,10 @@ describe('ChatComposer', () => {
   });
 
   it('opens the workspace menu with docs actions and no folder rebinding controls', () => {
-    render(
-      <ChatComposer
-        activeWorkspaceName="General"
-        attachments={[]}
-        disabled={false}
-        editing={false}
-        generationMode={false}
-        imageGenerationAvailable={true}
-        imageGenerationModelLabel="Built-in placeholder"
-        streaming={false}
-        knowledgeDocumentCount={2}
-        onAttach={vi.fn().mockResolvedValue(undefined)}
-        onCancelEdit={vi.fn()}
-        onEnterImageMode={vi.fn()}
-        onExitImageMode={vi.fn()}
-        onImportWorkspaceKnowledge={vi.fn().mockResolvedValue(undefined)}
-        onPromptChange={vi.fn()}
-        onRemoveAttachment={vi.fn()}
-        onSubmit={vi.fn().mockResolvedValue(undefined)}
-        prompt=""
-        workspaceActionsEnabled
-        workspaceRootPath="E:/Projects/demo-app"
-      />
-    );
+    renderComposer({
+      knowledgeDocumentCount: 2,
+      workspaceRootPath: 'E:/Projects/demo-app'
+    });
 
     fireEvent.click(screen.getByRole('button', { name: 'Open workspace settings' }));
 
@@ -74,33 +68,14 @@ describe('ChatComposer', () => {
   });
 
   it('shows a visible processing indicator while a submit is starting', () => {
-    render(
-      <ChatComposer
-        activeWorkspaceName="General"
-        attachments={[]}
-        disabled={true}
-        editing={false}
-        generationMode={false}
-        imageGenerationAvailable={true}
-        imageGenerationModelLabel="Built-in placeholder"
-        knowledgeDocumentCount={0}
-        onAttach={vi.fn().mockResolvedValue(undefined)}
-        onCancelEdit={vi.fn()}
-        onEnterImageMode={vi.fn()}
-        onExitImageMode={vi.fn()}
-        onImportWorkspaceKnowledge={vi.fn().mockResolvedValue(undefined)}
-        onPromptChange={vi.fn()}
-        onRemoveAttachment={vi.fn()}
-        onSubmit={vi.fn().mockResolvedValue(undefined)}
-        prompt="Describe this scene"
-        submitHint="The base model is choosing the best route."
-        submitLabel="Analyzing..."
-        submitting={true}
-        streaming={false}
-        workspaceActionsEnabled={false}
-        workspaceRootPath={null}
-      />
-    );
+    renderComposer({
+      disabled: true,
+      prompt: 'Describe this scene',
+      submitHint: 'The base model is choosing the best route.',
+      submitLabel: 'Analyzing...',
+      submitting: true,
+      workspaceActionsEnabled: false
+    });
 
     expect(screen.getByRole('status')).toHaveTextContent('Analyzing...');
     expect(screen.getByRole('status')).toHaveTextContent(
@@ -110,31 +85,34 @@ describe('ChatComposer', () => {
   });
 
   it('keeps the prompt area at a fixed height and scrolls long drafts internally', () => {
-    render(
-      <ChatComposer
-        activeWorkspaceName="General"
-        attachments={[]}
-        disabled={false}
-        editing={false}
-        generationMode={false}
-        imageGenerationAvailable={true}
-        imageGenerationModelLabel="Built-in placeholder"
-        knowledgeDocumentCount={0}
-        onAttach={vi.fn().mockResolvedValue(undefined)}
-        onCancelEdit={vi.fn()}
-        onEnterImageMode={vi.fn()}
-        onExitImageMode={vi.fn()}
-        onImportWorkspaceKnowledge={vi.fn().mockResolvedValue(undefined)}
-        onPromptChange={vi.fn()}
-        onRemoveAttachment={vi.fn()}
-        onSubmit={vi.fn().mockResolvedValue(undefined)}
-        prompt={'Line 1\n'.repeat(12)}
-        streaming={false}
-        workspaceActionsEnabled={true}
-        workspaceRootPath={null}
-      />
-    );
+    renderComposer({
+      prompt: 'Line 1\n'.repeat(12)
+    });
 
     expect(screen.getByLabelText('Message prompt')).toHaveClass('h-28', 'overflow-y-auto');
+  });
+
+  it('shows Wan image-to-video guidance when video mode is active', () => {
+    renderComposer({
+      generationMode: 'video',
+      videoGenerationAvailable: true,
+      videoGenerationModelLabel: 'DasiwaWAN22I2V14BSynthseduction_q8High.gguf',
+      prompt: 'Animate this portrait with a slow dolly-in.',
+      attachments: [
+        {
+          id: '70000000-0000-4000-8000-000000000099',
+          fileName: 'start-frame.png',
+          filePath: 'E:/images/start-frame.png',
+          mimeType: 'image/png',
+          sizeBytes: 1024,
+          extractedText: null,
+          createdAt: '2026-04-08T00:00:00.000Z'
+        }
+      ]
+    });
+
+    expect(screen.getByText('Image to video')).toBeInTheDocument();
+    expect(screen.getByText(/Attach exactly one start image/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Render video' })).toBeInTheDocument();
   });
 });

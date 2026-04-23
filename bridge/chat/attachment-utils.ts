@@ -41,6 +41,8 @@ const IMAGE_ATTACHMENT_EXTENSIONS = new Set([
   '.webp'
 ]);
 
+const VIDEO_ATTACHMENT_EXTENSIONS = new Set(['.mp4']);
+
 const MIME_TYPE_BY_EXTENSION: Record<string, string> = {
   '.avif': 'image/avif',
   '.bmp': 'image/bmp',
@@ -53,6 +55,7 @@ const MIME_TYPE_BY_EXTENSION: Record<string, string> = {
   '.json': 'application/json',
   '.md': 'text/markdown',
   '.mdx': 'text/markdown',
+  '.mp4': 'video/mp4',
   '.png': 'image/png',
   '.py': 'text/x-python',
   '.sh': 'text/x-shellscript',
@@ -74,6 +77,10 @@ function getAttachmentExtension(value: string): string {
 
 export function isImageFilePath(filePath: string): boolean {
   return IMAGE_ATTACHMENT_EXTENSIONS.has(getAttachmentExtension(filePath));
+}
+
+export function isVideoFilePath(filePath: string): boolean {
+  return VIDEO_ATTACHMENT_EXTENSIONS.has(getAttachmentExtension(filePath));
 }
 
 export function inferMimeType(filePath: string): string | null {

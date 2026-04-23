@@ -9,6 +9,7 @@ from inference_server import model_manager as model_manager_module
 from inference_server.model_manager import (
     ImageGenerationRequest,
     ModelManager,
+    VideoGenerationRequest,
 )
 
 
@@ -316,6 +317,85 @@ def test_build_pipeline_rejects_wan_gguf_in_current_flow(
         assert "Video Gen milestone" in str(error)
     else:  # pragma: no cover - defensive assertion
         raise AssertionError("Expected Wan GGUF to raise RuntimeError.")
+
+
+def test_generate_video_routes_wan_image_to_video_workflow_through_embedded_comfyui(
+    tmp_path: Path,
+) -> None:
+    high_noise_model = tmp_path / "DasiwaWAN22I2V14BSynthseduction_q8High.gguf"
+    low_noise_model = tmp_path / "DasiwaWAN22I2V14BSynthseduction_q8Low.gguf"
+    output_path = tmp_path / "result.mp4"
+    captured: dict[str, object] = {}
+
+    high_noise_model.write_text("high", encoding="utf-8")
+    low_noise_model.write_text("low", encoding="utf-8")
+
+    manager = ModelManager()
+    manager._comfyui_runner = type(
+        "FakeComfyUIRunner",
+        (),
+        {
+            "is_running": staticmethod(lambda: False),
+            "run_wan_image_to_video_workflow": staticmethod(
+                lambda request, progress_callback, is_cancelled: (
+                    captured.update(
+                        {
+                            "model": request.model,
+                            "workflow_profile": request.workflow_profile,
+                            "mode": request.mode,
+                            "frame_count": request.frame_count,
+                            "frame_rate": request.frame_rate,
+                            "high_noise_model": request.high_noise_model,
+                            "low_noise_model": request.low_noise_model,
+                        }
+                    )
+                    or {
+                        "file_path": str(output_path),
+                        "preview_path": None,
+                        "mime_type": "video/mp4",
+                        "width": 528,
+                        "height": 704,
+                    }
+                )
+            ),
+        },
+    )()
+
+    result = manager.generate_video(
+        VideoGenerationRequest(
+            prompt="Add a slow camera orbit",
+            negative_prompt="static frame",
+            model=str(high_noise_model),
+            width=528,
+            height=704,
+            steps=8,
+            guidance_scale=1,
+            seed=5,
+            output_path=str(output_path),
+            mode="image-to-video",
+            workflow_profile="wan-image-to-video",
+            reference_images=[],
+            frame_count=81,
+            frame_rate=16.0,
+            high_noise_model=str(high_noise_model),
+            low_noise_model=str(low_noise_model),
+        ),
+        lambda *_args, **_kwargs: None,
+        lambda: False,
+    )
+
+    assert result["file_path"] == str(output_path)
+    assert result["mime_type"] == "video/mp4"
+    assert captured == {
+        "model": str(high_noise_model),
+        "workflow_profile": "wan-image-to-video",
+        "mode": "image-to-video",
+        "frame_count": 81,
+        "frame_rate": 16.0,
+        "high_noise_model": str(high_noise_model),
+        "low_noise_model": str(low_noise_model),
+    }
+    assert manager.loaded_backend == "comfyui"
 
 
 def test_build_result_creates_a_smaller_preview_image(tmp_path: Path) -> None:

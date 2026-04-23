@@ -5,7 +5,8 @@ import path from 'node:path';
 import {
   canInlineAttachmentText,
   inferMimeType,
-  isImageFilePath
+  isImageFilePath,
+  isVideoFilePath
 } from '@bridge/chat/attachment-utils';
 import type { TurnMetadataService } from '@bridge/chat/turn-metadata';
 import { buildConversationContext } from '@bridge/context';
@@ -23,6 +24,7 @@ import type {
   ChatTurnAccepted,
   ChatTurnRequest,
   GenerationJob,
+  ImageGenerationRequest,
   ImportWorkspaceKnowledgeResult,
   KnowledgeDocument,
   MessageAttachment,
@@ -82,6 +84,7 @@ import type { ChatRepository } from './repository';
 
 const MAX_ATTACHMENT_TEXT_CHARS = 12_000;
 const MAX_ATTACHMENT_PREVIEW_BYTES = 8 * 1024 * 1024;
+const MAX_VIDEO_PREVIEW_BYTES = 256 * 1024 * 1024;
 const FOLLOW_UP_TOOL_RETRY_PATTERN =
   /^(?:continue|same|same tool|that tool|again|try again|fix this|do the same|use that|use that tool|use that tool again)$/i;
 const FOLLOW_UP_TOOL_CORRECTION_PATTERN =
@@ -1087,7 +1090,7 @@ interface ResolvedTurnPlan {
 
 interface AutomaticGenerationPlan {
   prompt: string;
-  mode: GenerationJob['mode'];
+  mode: ImageGenerationRequest['mode'];
   reason: string;
   referenceImages: MessageAttachment[];
 }
@@ -1121,6 +1124,22 @@ function sanitizeTextCommandRecoveryContent(content: string): string {
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+}
+
+function composePersistentAssistantContent(input: {
+  content: string;
+  thinking?: string | null;
+}): string {
+  const content = input.content.trim();
+  const thinking = input.thinking?.trim() ?? '';
+
+  if (!thinking) {
+    return content;
+  }
+
+  return content
+    ? `<think>\n${thinking}\n</think>\n\n${content}`
+    : `<think>\n${thinking}\n</think>`;
 }
 
 function decodeTextCommandQuotedValue(value: string): string | null {
@@ -1919,8 +1938,11 @@ export class ChatService {
       throw new Error('Attachment preview is not permitted for this path.');
     }
 
-    if (!isImageFilePath(normalizedPath)) {
-      throw new Error('Only image attachments can be previewed.');
+    const isImage = isImageFilePath(normalizedPath);
+    const isVideo = !isImage && isVideoFilePath(normalizedPath);
+
+    if (!isImage && !isVideo) {
+      throw new Error('Only image or video attachments can be previewed.');
     }
 
     const fileStat = await stat(normalizedPath);
@@ -1929,7 +1951,9 @@ export class ChatService {
       throw new Error(`Attachment path is not a file: ${normalizedPath}`);
     }
 
-    if (fileStat.size > MAX_ATTACHMENT_PREVIEW_BYTES) {
+    const sizeCap = isVideo ? MAX_VIDEO_PREVIEW_BYTES : MAX_ATTACHMENT_PREVIEW_BYTES;
+
+    if (fileStat.size > sizeCap) {
       throw new Error('Attachment preview is too large to load safely.');
     }
 
@@ -2393,6 +2417,7 @@ export class ChatService {
     model: string;
     messages: OllamaChatMessage[];
     onDelta: (delta: string) => void;
+    onThinkingDelta?: ((delta: string) => void) | undefined;
     signal?: AbortSignal;
     think?: OllamaThinkValue;
     numCtx?: number;
@@ -2413,6 +2438,7 @@ export class ChatService {
       model: input.model,
       messages: input.messages,
       onDelta: input.onDelta,
+      ...(input.onThinkingDelta ? { onThinkingDelta: input.onThinkingDelta } : {}),
       ...(input.numCtx === undefined ? {} : { numCtx: input.numCtx }),
       ...(input.think === undefined ? {} : { think: input.think }),
       ...(input.signal ? { signal: input.signal } : {})
@@ -2733,7 +2759,7 @@ export class ChatService {
     );
 
     return {
-      numCtx: basePromptBudget + appliedHeadroom,
+      numCtx: Math.max(1, Math.min(resourceCap, basePromptBudget + appliedHeadroom)),
       mode: 'local',
       priorConversationTokens,
       sessionRemainingTokens: null,
@@ -3123,12 +3149,106 @@ export class ChatService {
     );
 
     let content = '';
+    let thinking = '';
+    let currentAssistantMessageId = accepted.assistantMessage.id;
     const activeTurn: ActiveAssistantTurn = {
       abortController: new AbortController(),
       cancelled: false
     };
-    this.activeAssistantTurns.set(accepted.assistantMessage.id, activeTurn);
+    this.activeAssistantTurns.set(currentAssistantMessageId, activeTurn);
     this.queue.increment();
+
+    const bindActiveAssistantMessage = (assistantMessageId: string) => {
+      if (assistantMessageId === currentAssistantMessageId) {
+        return;
+      }
+
+      this.activeAssistantTurns.delete(currentAssistantMessageId);
+      this.activeAssistantTurns.set(assistantMessageId, activeTurn);
+      currentAssistantMessageId = assistantMessageId;
+    };
+
+    const createStreamingAssistantLoopMessage = () => {
+      const createdMessage = this.repository.createMessage({
+        conversationId: accepted.conversation.id,
+        role: 'assistant',
+        content: '',
+        attachments: [],
+        status: 'streaming',
+        correlationId: accepted.assistantMessage.correlationId,
+        model: accepted.model
+      });
+      const decoratedMessage = this.decorateMessage(createdMessage.id) ?? createdMessage;
+
+      this.emitAssistantMessageCreatedEvent({
+        emitEvent: input.emitEvent,
+        requestId: accepted.requestId,
+        conversationId: accepted.conversation.id,
+        message: decoratedMessage
+      });
+      bindActiveAssistantMessage(decoratedMessage.id);
+      return decoratedMessage;
+    };
+
+    const emitStreamingAssistantSnapshot = (snapshot: {
+      content: string;
+      thinking: string;
+      status: StoredMessage['status'];
+      toolInvocationCount?: number;
+      contextSourceCount?: number;
+      capabilitySnapshot?: CapabilitySurfaceSnapshot;
+    }) => {
+      this.reportAssistantProgressSafely({
+        emitEvent: input.emitEvent,
+        requestId: accepted.requestId,
+        conversationId: accepted.conversation.id,
+        assistantMessageId: currentAssistantMessageId,
+        content: composePersistentAssistantContent({
+          content: snapshot.content,
+          thinking: snapshot.thinking
+        }),
+        status: snapshot.status,
+        model: accepted.model,
+        ...(snapshot.toolInvocationCount === undefined
+          ? {}
+          : { toolInvocationCount: snapshot.toolInvocationCount }),
+        ...(snapshot.contextSourceCount === undefined
+          ? {}
+          : { contextSourceCount: snapshot.contextSourceCount }),
+        ...(snapshot.capabilitySnapshot === undefined
+          ? {}
+          : { capabilitySnapshot: snapshot.capabilitySnapshot })
+      });
+    };
+
+    const commitNativeLoopAssistantRound = (snapshot: {
+      content: string;
+      thinking: string;
+      capabilitySnapshot?: CapabilitySurfaceSnapshot;
+    }) => {
+      const persistedContent = composePersistentAssistantContent({
+        content: snapshot.content,
+        thinking: snapshot.thinking
+      });
+
+      if (!persistedContent.trim()) {
+        return;
+      }
+
+      emitStreamingAssistantSnapshot({
+        content: snapshot.content,
+        thinking: snapshot.thinking,
+        status: 'completed',
+        toolInvocationCount: 0,
+        contextSourceCount: 0,
+        ...(snapshot.capabilitySnapshot === undefined
+          ? {}
+          : { capabilitySnapshot: snapshot.capabilitySnapshot })
+      });
+      content = '';
+      thinking = '';
+      createStreamingAssistantLoopMessage();
+    };
 
     try {
       if (
@@ -3274,24 +3394,34 @@ export class ChatService {
           roundExtension: nativeToolCallRoundExtension,
           onProgress: ({
             content: nativeToolContent,
+            thinking: nativeToolThinking,
             toolInvocations: nativeToolInvocations,
             contextSources: nativeToolContextSources,
             capabilitySnapshot
           }) => {
             content = nativeToolContent;
+            thinking = nativeToolThinking;
             toolInvocations = [...initialToolInvocations, ...nativeToolInvocations];
             toolContextSources = [...initialToolContextSources, ...nativeToolContextSources];
-            this.reportAssistantProgressSafely({
-              emitEvent: input.emitEvent,
-              requestId: accepted.requestId,
-              conversationId: accepted.conversation.id,
-              assistantMessageId: accepted.assistantMessage.id,
+            emitStreamingAssistantSnapshot({
               content,
+              thinking,
               status: 'streaming',
-              model: accepted.model,
-              routeTrace,
-              toolInvocations,
-              contextSources: mergeContextSources(context.sources, toolContextSources),
+              toolInvocationCount: toolInvocations.length,
+              contextSourceCount: mergeContextSources(context.sources, toolContextSources).length,
+              ...(capabilitySnapshot === undefined ? {} : { capabilitySnapshot })
+            });
+          },
+          onRoundCommitted: ({
+            content: roundContent,
+            thinking: roundThinking,
+            capabilitySnapshot
+          }) => {
+            content = roundContent;
+            thinking = roundThinking;
+            commitNativeLoopAssistantRound({
+              content: roundContent,
+              thinking: roundThinking,
               ...(capabilitySnapshot === undefined ? {} : { capabilitySnapshot })
             });
           },
@@ -3299,6 +3429,7 @@ export class ChatService {
         });
 
         content = nativeToolResult.content;
+        thinking = nativeToolResult.thinking;
         toolInvocations = [...initialToolInvocations, ...nativeToolResult.toolInvocations];
         toolContextSources = [...initialToolContextSources, ...nativeToolResult.contextSources];
         routeTrace = this.createRouteTrace(input.routePlan.routeDecision, {
@@ -3308,19 +3439,20 @@ export class ChatService {
           usedTools: toolInvocations.length > 0
         });
 
+        const persistedContent = composePersistentAssistantContent({ content, thinking });
         const finalUsage = this.createUsageEstimateFromContext(
           context.usageEstimate.promptTokens,
-          content
+          persistedContent
         );
         const finalContextSources = mergeContextSources(context.sources, toolContextSources);
 
         this.finalizeAssistantCompletionSafely({
           conversationId: accepted.conversation.id,
-          assistantMessageId: accepted.assistantMessage.id,
+          assistantMessageId: currentAssistantMessageId,
           requestId: accepted.requestId,
           emitEvent: input.emitEvent,
           workspaceId: workspace?.id ?? null,
-          content,
+          content: persistedContent,
           doneReason: nativeToolResult.doneReason,
           model: accepted.model,
           routeTrace,
@@ -3333,14 +3465,14 @@ export class ChatService {
           {
             requestId: accepted.requestId,
             conversationId: accepted.conversation.id,
-            assistantMessageId: accepted.assistantMessage.id,
+            assistantMessageId: currentAssistantMessageId,
             model: accepted.model,
             strategy: routeTrace.strategy,
             doneReason: nativeToolResult.doneReason,
             usage: finalUsage,
             toolInvocations: summarizeLoggedToolInvocations(toolInvocations),
             contextSourceCount: finalContextSources.length,
-            assistantContent: clipLoggedText(content)
+            assistantContent: clipLoggedText(persistedContent)
           },
           'Completed assistant turn after native tool calling'
         );
@@ -3357,22 +3489,43 @@ export class ChatService {
         numCtx: initialNumCtxBudget.numCtx,
         ...(input.routePlan.thinkMode === undefined ? {} : { think: input.routePlan.thinkMode }),
         signal: activeTurn.abortController.signal,
+        onThinkingDelta: (delta) => {
+          thinking += delta;
+          const persistedContent = composePersistentAssistantContent({ content, thinking });
+
+          this.repository.updateMessage(currentAssistantMessageId, {
+            content: persistedContent,
+            status: 'streaming',
+            model: accepted.model
+          });
+          this.emitAssistantUpdateEvent({
+            emitEvent: input.emitEvent,
+            requestId: accepted.requestId,
+            assistantMessageId: currentAssistantMessageId,
+            content: persistedContent,
+            status: 'streaming',
+            model: accepted.model
+          });
+        },
         onDelta: (delta) => {
           content += delta;
-          this.repository.updateMessage(accepted.assistantMessage.id, {
-            content,
+          const persistedContent = composePersistentAssistantContent({ content, thinking });
+
+          this.repository.updateMessage(currentAssistantMessageId, {
+            content: persistedContent,
             status: 'streaming',
             model: accepted.model
           });
           input.emitEvent({
             type: 'delta',
             requestId: accepted.requestId,
-            assistantMessageId: accepted.assistantMessage.id,
+            assistantMessageId: currentAssistantMessageId,
             delta,
-            content
+            content: persistedContent
           });
         }
       });
+      thinking = result.thinking || thinking;
       const inlineToolRecovery = await this.recoverInlineToolCalls({
         backend: input.routePlan.backend,
         baseUrl: input.routePlan.baseUrl,
@@ -3395,19 +3548,20 @@ export class ChatService {
         usedRag: context.observability.usedRag,
         usedTools: toolInvocations.length > 0
       });
+      const persistedContent = composePersistentAssistantContent({ content, thinking });
       const finalUsage = this.createUsageEstimateFromContext(
         context.usageEstimate.promptTokens,
-        content
+        persistedContent
       );
       const finalContextSources = mergeContextSources(context.sources, toolContextSources);
 
       this.finalizeAssistantCompletionSafely({
         conversationId: accepted.conversation.id,
-        assistantMessageId: accepted.assistantMessage.id,
+        assistantMessageId: currentAssistantMessageId,
         requestId: accepted.requestId,
         emitEvent: input.emitEvent,
         workspaceId: workspace?.id ?? null,
-        content,
+        content: persistedContent,
         doneReason: inlineToolRecovery.doneReason,
         model: accepted.model,
         routeTrace,
@@ -3420,30 +3574,31 @@ export class ChatService {
         {
           requestId: accepted.requestId,
           conversationId: accepted.conversation.id,
-          assistantMessageId: accepted.assistantMessage.id,
+          assistantMessageId: currentAssistantMessageId,
           model: accepted.model,
           strategy: routeTrace.strategy,
           doneReason: inlineToolRecovery.doneReason,
           usage: finalUsage,
           toolInvocations: summarizeLoggedToolInvocations(toolInvocations),
           contextSourceCount: finalContextSources.length,
-          assistantContent: clipLoggedText(content)
+          assistantContent: clipLoggedText(persistedContent)
         },
         'Completed assistant turn'
       );
     } catch (error) {
       if (this.isAbortError(error) && activeTurn.cancelled) {
+        const persistedContent = composePersistentAssistantContent({ content, thinking });
         const cancelledUsage = this.createUsageEstimateFromContext(
           context.usageEstimate.promptTokens,
-          content
+          persistedContent
         );
 
         this.logger.info(
           {
             requestId: accepted.requestId,
             conversationId: accepted.conversation.id,
-            assistantMessageId: accepted.assistantMessage.id,
-            assistantContent: clipLoggedText(content),
+            assistantMessageId: currentAssistantMessageId,
+            assistantContent: clipLoggedText(persistedContent),
             usage: cancelledUsage
           },
           'Assistant turn cancelled by user'
@@ -3452,11 +3607,11 @@ export class ChatService {
         const cancelledContextSources = mergeContextSources(context.sources, toolContextSources);
         this.finalizeAssistantCompletionSafely({
           conversationId: accepted.conversation.id,
-          assistantMessageId: accepted.assistantMessage.id,
+          assistantMessageId: currentAssistantMessageId,
           requestId: accepted.requestId,
           emitEvent: input.emitEvent,
           workspaceId: workspace?.id ?? null,
-          content,
+          content: persistedContent,
           doneReason: 'cancelled',
           model: accepted.model,
           routeTrace,
@@ -3472,6 +3627,7 @@ export class ChatService {
         error instanceof Error ? error.message : 'Unknown chat streaming error';
 
       const failedContextSources = mergeContextSources(context.sources, toolContextSources);
+      const persistedContent = composePersistentAssistantContent({ content, thinking });
       this.logger.error(
         {
           requestId: accepted.requestId,
@@ -3480,32 +3636,35 @@ export class ChatService {
           strategy: routeTrace.strategy,
           toolInvocations: summarizeLoggedToolInvocations(toolInvocations),
           contextSourceCount: failedContextSources.length,
-          assistantContent: clipLoggedText(content)
+          assistantContent: clipLoggedText(persistedContent)
         },
         'Assistant turn failed'
       );
 
-      this.repository.updateMessage(accepted.assistantMessage.id, {
-        content,
+      this.repository.updateMessage(currentAssistantMessageId, {
+        content: persistedContent,
         status: 'failed',
         model: accepted.model
       });
       this.turnMetadataService.saveAssistantTurnArtifacts({
-        messageId: accepted.assistantMessage.id,
+        messageId: currentAssistantMessageId,
         routeTrace,
-        usage: this.createUsageEstimateFromContext(context.usageEstimate.promptTokens, content),
+        usage: this.createUsageEstimateFromContext(
+          context.usageEstimate.promptTokens,
+          persistedContent
+        ),
         toolInvocations,
         contextSources: failedContextSources
       });
       input.emitEvent({
         type: 'error',
         requestId: accepted.requestId,
-        assistantMessageId: accepted.assistantMessage.id,
+        assistantMessageId: currentAssistantMessageId,
         message,
         recoverable: true
       });
     } finally {
-      this.activeAssistantTurns.delete(accepted.assistantMessage.id);
+      this.activeAssistantTurns.delete(currentAssistantMessageId);
       this.queue.decrement();
     }
   }
@@ -3782,7 +3941,22 @@ export class ChatService {
         : {
             capabilityTasks: input.capabilitySnapshot.capabilityTasks,
             capabilityPlanState: input.capabilitySnapshot.capabilityPlanState
-          })
+      })
+    });
+  }
+
+  private emitAssistantMessageCreatedEvent(input: {
+    emitEvent: (event: ChatStreamEvent) => void;
+    requestId: string;
+    conversationId: string;
+    message: StoredMessage;
+  }): void {
+    input.emitEvent({
+      type: 'message-created',
+      requestId: input.requestId,
+      conversationId: input.conversationId,
+      assistantMessageId: input.message.id,
+      message: input.message
     });
   }
 
@@ -4227,13 +4401,20 @@ export class ChatService {
     roundExtension: number;
     onProgress?: ((input: {
       content: string;
+      thinking: string;
       toolInvocations: ToolInvocation[];
       contextSources: ContextSource[];
+      capabilitySnapshot?: CapabilitySurfaceSnapshot;
+    }) => void) | undefined;
+    onRoundCommitted?: ((input: {
+      content: string;
+      thinking: string;
       capabilitySnapshot?: CapabilitySurfaceSnapshot;
     }) => void) | undefined;
     signal?: AbortSignal;
   }): Promise<{
     content: string;
+    thinking: string;
     doneReason: string | null;
     toolInvocations: ToolInvocation[];
     contextSources: ContextSource[];
@@ -4251,7 +4432,6 @@ export class ChatService {
     const hardMaxRounds = Math.max(input.maxRounds, input.hardMaxRounds);
     let currentMaxRounds = input.maxRounds;
     let lastRoundExtensionProgressIndex = 0;
-    let visibleContent = '';
     let missingToolCallReminderCount = 0;
     let failedToolRecoveryReminderCount = 0;
 
@@ -4291,6 +4471,7 @@ export class ChatService {
       }
 
       let roundContent = '';
+      let roundThinking = '';
       const roundNumCtx = this.resolveNumCtxBudget({
         model: input.model,
         promptTokens: estimateOllamaMessageTokens(messages),
@@ -4318,23 +4499,32 @@ export class ChatService {
             ...(input.signal ? { signal: input.signal } : {}),
             onDelta: (delta) => {
               roundContent += delta;
-              visibleContent = roundContent;
               input.onProgress?.({
-                content: visibleContent,
+                content: roundContent,
+                thinking: roundThinking,
+                toolInvocations: [...toolInvocations],
+                contextSources: [...contextSources]
+              });
+            },
+            onThinkingDelta: (delta) => {
+              roundThinking += delta;
+              input.onProgress?.({
+                content: roundContent,
+                thinking: roundThinking,
                 toolInvocations: [...toolInvocations],
                 contextSources: [...contextSources]
               });
             }
           });
 
-      if (completion.content && roundContent !== completion.content) {
-        visibleContent = completion.content;
-        input.onProgress?.({
-          content: visibleContent,
-          toolInvocations: [...toolInvocations],
-          contextSources: [...contextSources]
-        });
-      }
+      roundContent = completion.content;
+      roundThinking = completion.thinking || roundThinking;
+      input.onProgress?.({
+        content: roundContent,
+        thinking: roundThinking,
+        toolInvocations: [...toolInvocations],
+        contextSources: [...contextSources]
+      });
 
       const completionToolCalls = completion.toolCalls ?? [];
 
@@ -4374,6 +4564,10 @@ export class ChatService {
               })
             }
           ];
+          input.onRoundCommitted?.({
+            content: roundContent,
+            thinking: roundThinking
+          });
           continue;
         }
 
@@ -4410,6 +4604,10 @@ export class ChatService {
               })
             }
           ];
+          input.onRoundCommitted?.({
+            content: roundContent,
+            thinking: roundThinking
+          });
           continue;
         }
 
@@ -4439,11 +4637,16 @@ export class ChatService {
               content: buildCodingVerificationReminder(toolInvocations)
             }
           ];
+          input.onRoundCommitted?.({
+            content: roundContent,
+            thinking: roundThinking
+          });
           continue;
         }
 
         return {
           content: completion.content,
+          thinking: roundThinking,
           doneReason: completion.doneReason,
           toolInvocations,
           contextSources
@@ -4460,6 +4663,7 @@ export class ChatService {
         }
       ];
 
+      let roundCapabilitySnapshot: CapabilitySurfaceSnapshot | undefined;
       for (const toolCall of completionToolCalls) {
         const toolResponse = await this.executeNativeToolCall({
           toolCall,
@@ -4470,13 +4674,17 @@ export class ChatService {
 
         toolInvocations.push(...toolResponse.toolInvocations);
         contextSources.push(...toolResponse.contextSources);
+        roundCapabilitySnapshot = this.didCapabilitySurfaceChange(toolResponse.toolInvocations)
+          ? this.getCapabilitySurfaceSnapshot(input.workspaceId)
+          : roundCapabilitySnapshot;
         input.onProgress?.({
-          content: visibleContent,
+          content: roundContent,
+          thinking: roundThinking,
           toolInvocations: [...toolInvocations],
           contextSources: [...contextSources],
-          ...(this.didCapabilitySurfaceChange(toolResponse.toolInvocations)
-            ? { capabilitySnapshot: this.getCapabilitySurfaceSnapshot(input.workspaceId) }
-            : {})
+          ...(roundCapabilitySnapshot === undefined
+            ? {}
+            : { capabilitySnapshot: roundCapabilitySnapshot })
         });
         messages.push({
           role: 'tool',
@@ -4484,6 +4692,14 @@ export class ChatService {
           content: toolResponse.content
         });
       }
+
+      input.onRoundCommitted?.({
+        content: roundContent,
+        thinking: roundThinking,
+        ...(roundCapabilitySnapshot === undefined
+          ? {}
+          : { capabilitySnapshot: roundCapabilitySnapshot })
+      });
     }
 
     throw new Error(

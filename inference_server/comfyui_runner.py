@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import hashlib
 import json
 import logging
+import math
 import os
 from pathlib import Path
 import random
@@ -22,7 +23,7 @@ from urllib.request import Request, urlopen
 from PIL import Image
 
 if TYPE_CHECKING:
-    from .model_manager import ImageGenerationRequest
+    from .model_manager import ImageGenerationRequest, VideoGenerationRequest
 
 
 LOGGER = logging.getLogger(__name__)
@@ -33,6 +34,26 @@ HTTP_TIMEOUT_SECONDS = 15
 QWEN_WORKFLOW_FILENAME = "Qwen Image Edit 2511 Texture Gen.json"
 PRIMARY_EDIT_NODE_ID = "13"
 NEGATIVE_EDIT_NODE_ID = "14"
+WAN_DEFAULT_NEGATIVE_PROMPT = (
+    "oversaturated colors, overexposed highlights, static frame, frozen motion, blurry details, "
+    "low resolution, subtitles, watermark, illustration look, painting, static composition, flat "
+    "gray image, worst quality, low quality, JPEG artifacts, ugly, malformed anatomy, extra limbs, "
+    "bad hands, bad face, deformed body, fused fingers, chaotic background, duplicate people, "
+    "crowded background, reversed motion, unnatural motion, temporal flicker, ghosting"
+)
+WAN_CLIP_CANDIDATES = [
+    "nsfw_wan_umt5-xxl_fp8_scaled.safetensors",
+    "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+]
+WAN_VAE_CANDIDATES = ["wan_2.1_vae.safetensors"]
+WAN_CLIP_VISION_CANDIDATES = ["CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors"]
+WAN_UPSCALE_MODEL_CANDIDATES = ["RealESRGAN_x4plus.pth"]
+WAN_RESIZE_TARGET_WIDTH = 1248
+WAN_RESIZE_TARGET_HEIGHT = 1664
+WAN_RIFE_CKPT_NAME = "rife49.pth"
+WAN_RIFE_MULTIPLIER = 4
+WAN_RIFE_CLEAR_CACHE_AFTER_N_FRAMES = 60
+WAN_RIFE_SCALE_FACTOR = 4.0
 
 
 class ComfyUICancelledError(RuntimeError):
@@ -84,6 +105,15 @@ class StagedWorkflowInputs:
     prompt_id: str
     blank_image_name: str
     reference_image_names: list[str]
+    created_files: list[Path]
+    output_prefix: str
+    prompt_seed: int
+
+
+@dataclass(frozen=True)
+class StagedVideoWorkflowInputs:
+    prompt_id: str
+    reference_image_name: str
     created_files: list[Path]
     output_prefix: str
     prompt_seed: int
@@ -151,6 +181,7 @@ class ComfyUIRunner:
             output_path = self._wait_for_prompt(
                 context=context,
                 prompt_id=staged_inputs.prompt_id,
+                prompt=prompt,
                 request=request,
                 progress_callback=progress_callback,
                 is_cancelled=is_cancelled,
@@ -167,6 +198,49 @@ class ComfyUIRunner:
                 "mime_type": "image/png",
                 "width": width,
                 "height": height,
+            }
+        finally:
+            self._cleanup_job_files(context, staged_inputs)
+
+    def run_wan_image_to_video_workflow(
+        self,
+        request: "VideoGenerationRequest",
+        progress_callback,
+        is_cancelled,
+    ) -> dict[str, object]:
+        context = self._ensure_server(Path(request.high_noise_model))
+        staged_inputs = self._stage_video_workflow_inputs(context, request)
+
+        try:
+            progress_callback(0.18, "Preparing embedded Wan 2.2 workflow")
+            prompt = self._build_wan_image_to_video_prompt(
+                context=context,
+                request=request,
+                staged_inputs=staged_inputs,
+            )
+            self._submit_prompt(
+                context=context,
+                prompt_id=staged_inputs.prompt_id,
+                prompt=prompt,
+            )
+            progress_callback(0.28, "Queued in embedded ComfyUI")
+            output_path = self._wait_for_prompt(
+                context=context,
+                prompt_id=staged_inputs.prompt_id,
+                prompt=prompt,
+                request=request,
+                progress_callback=progress_callback,
+                is_cancelled=is_cancelled,
+            )
+            progress_callback(0.96, "Saving video")
+            shutil.copy2(output_path, request.output_path)
+            progress_callback(1.0, "Video generation complete")
+            return {
+                "file_path": request.output_path,
+                "preview_path": None,
+                "mime_type": self._guess_video_mime_type(output_path),
+                "width": request.width,
+                "height": request.height,
             }
         finally:
             self._cleanup_job_files(context, staged_inputs)
@@ -395,6 +469,277 @@ class ComfyUIRunner:
             if request.seed is not None
             else random.randint(0, 2**63 - 1),
         )
+
+    def _stage_video_workflow_inputs(
+        self, context: ComfyUIContext, request: "VideoGenerationRequest"
+    ) -> StagedVideoWorkflowInputs:
+        prompt_id = f"ollama-desktop-{int(time.time() * 1000)}-{random.randint(1000, 9999)}"
+        reference_image = request.reference_images[0]
+
+        if not reference_image.file_path:
+            raise RuntimeError(
+                f'Reference image "{reference_image.file_name}" is missing a local path.'
+            )
+
+        source_path = Path(reference_image.file_path)
+
+        if not source_path.exists():
+            raise RuntimeError(
+                f'Reference image "{reference_image.file_name}" was not found at "{source_path}".'
+            )
+
+        suffix = source_path.suffix or ".png"
+        target_name = f"{prompt_id}-reference{suffix}"
+        target_path = context.input_dir / target_name
+        shutil.copy2(source_path, target_path)
+
+        return StagedVideoWorkflowInputs(
+            prompt_id=prompt_id,
+            reference_image_name=target_name,
+            created_files=[target_path],
+            output_prefix=f"ollama-desktop/{prompt_id}/video",
+            prompt_seed=request.seed
+            if request.seed is not None
+            else random.randint(0, 2**63 - 1),
+        )
+
+    def _build_wan_image_to_video_prompt(
+        self,
+        context: ComfyUIContext,
+        request: "VideoGenerationRequest",
+        staged_inputs: StagedVideoWorkflowInputs,
+    ) -> dict[str, object]:
+        clip_name = self._select_existing_asset(
+            context.models_root / "text_encoders",
+            WAN_CLIP_CANDIDATES,
+            asset_label="Wan text encoder",
+        )
+        vae_name = self._select_existing_asset(
+            context.models_root / "vae",
+            WAN_VAE_CANDIDATES,
+            asset_label="Wan VAE",
+        )
+        clip_vision_name = self._select_existing_asset(
+            context.models_root / "clip_vision",
+            WAN_CLIP_VISION_CANDIDATES,
+            asset_label="CLIP vision encoder",
+        )
+        upscale_model_name = self._select_existing_asset(
+            context.models_root / "upscale_models",
+            WAN_UPSCALE_MODEL_CANDIDATES,
+            asset_label="Wan upscale model",
+            required=False,
+        )
+        self._validate_wan_required_assets(
+            models_root=context.models_root,
+            clip_name=clip_name,
+            vae_name=vae_name,
+            clip_vision_name=clip_vision_name,
+            high_noise_model=Path(request.high_noise_model),
+            low_noise_model=Path(request.low_noise_model),
+        )
+
+        high_noise_node = self._build_wan_model_loader_node(
+            request.high_noise_model, node_id="12"
+        )
+        low_noise_node = self._build_wan_model_loader_node(
+            request.low_noise_model, node_id="14"
+        )
+
+        prompt: dict[str, object] = {
+            "1": {
+                "class_type": "LoadImage",
+                "inputs": {
+                    "image": staged_inputs.reference_image_name,
+                    "upload": "image",
+                },
+            },
+            "6": {
+                "class_type": "CLIPVisionLoader",
+                "inputs": {
+                    "clip_name": clip_vision_name,
+                },
+            },
+            "7": {
+                "class_type": "CLIPVisionEncode",
+                "inputs": {
+                    "clip_vision": ["6", 0],
+                    "image": ["5", 0],
+                    "crop": "none",
+                },
+            },
+            "8": {
+                "class_type": "CLIPLoader",
+                "inputs": {
+                    "clip_name": clip_name,
+                    "type": "wan",
+                    "device": "default",
+                },
+            },
+            "9": {
+                "class_type": "CLIPTextEncode",
+                "inputs": {
+                    "clip": ["8", 0],
+                    "text": request.prompt,
+                },
+            },
+            "10": {
+                "class_type": "CLIPTextEncode",
+                "inputs": {
+                    "clip": ["8", 0],
+                    "text": request.negative_prompt or WAN_DEFAULT_NEGATIVE_PROMPT,
+                },
+            },
+            "11": {
+                "class_type": "VAELoader",
+                "inputs": {
+                    "vae_name": vae_name,
+                },
+            },
+            "13": {
+                "class_type": "ModelSamplingSD3",
+                "inputs": {
+                    "model": ["12", 0],
+                    "shift": 3.0,
+                },
+            },
+            "15": {
+                "class_type": "ModelSamplingSD3",
+                "inputs": {
+                    "model": ["14", 0],
+                    "shift": 3.0,
+                },
+            },
+            "16": {
+                "class_type": "WanImageToVideo",
+                "inputs": {
+                    "positive": ["9", 0],
+                    "negative": ["10", 0],
+                    "vae": ["11", 0],
+                    "clip_vision_output": ["7", 0],
+                    "start_image": ["5", 0],
+                    "width": request.width,
+                    "height": request.height,
+                    "length": request.frame_count,
+                    "batch_size": 1,
+                },
+            },
+            "17": {
+                "class_type": "KSamplerAdvanced",
+                "inputs": {
+                    "model": ["13", 0],
+                    "positive": ["16", 0],
+                    "negative": ["16", 1],
+                    "latent_image": ["16", 2],
+                    "add_noise": "enable",
+                    "noise_seed": staged_inputs.prompt_seed,
+                    "steps": request.steps,
+                    "cfg": max(float(request.guidance_scale), 1.0),
+                    "sampler_name": "euler",
+                    "scheduler": "simple",
+                    "start_at_step": 0,
+                    "end_at_step": max(1, math.ceil(request.steps / 2)),
+                    "return_with_leftover_noise": "enable",
+                },
+            },
+            "18": {
+                "class_type": "KSamplerAdvanced",
+                "inputs": {
+                    "model": ["15", 0],
+                    "positive": ["16", 0],
+                    "negative": ["16", 1],
+                    "latent_image": ["17", 0],
+                    "add_noise": "disable",
+                    "noise_seed": staged_inputs.prompt_seed,
+                    "steps": request.steps,
+                    "cfg": max(float(request.guidance_scale), 1.0),
+                    "sampler_name": "euler",
+                    "scheduler": "simple",
+                    "start_at_step": max(1, math.ceil(request.steps / 2)),
+                    "end_at_step": request.steps,
+                    "return_with_leftover_noise": "disable",
+                },
+            },
+            "19": {
+                "class_type": "VAEDecode",
+                "inputs": {
+                    "samples": ["18", 0],
+                    "vae": ["11", 0],
+                },
+            },
+            "22": {
+                "class_type": "RIFE VFI",
+                "inputs": {
+                    "frames": ["19", 0],
+                    "ckpt_name": WAN_RIFE_CKPT_NAME,
+                    "clear_cache_after_n_frames": WAN_RIFE_CLEAR_CACHE_AFTER_N_FRAMES,
+                    "multiplier": WAN_RIFE_MULTIPLIER,
+                    "fast_mode": False,
+                    "ensemble": True,
+                    "scale_factor": WAN_RIFE_SCALE_FACTOR,
+                },
+            },
+            "20": {
+                "class_type": "CreateVideo",
+                "inputs": {
+                    "images": ["22", 0],
+                    "fps": request.frame_rate,
+                },
+            },
+            "21": {
+                "class_type": "SaveVideo",
+                "inputs": {
+                    "video": ["20", 0],
+                    "filename_prefix": staged_inputs.output_prefix,
+                    "format": "mp4",
+                    "codec": "auto",
+                },
+            },
+        }
+        prompt.update(high_noise_node)
+        prompt.update(low_noise_node)
+
+        if upscale_model_name:
+            prompt.update(
+                {
+                    "2": {
+                        "class_type": "UpscaleModelLoader",
+                        "inputs": {
+                            "model_name": upscale_model_name,
+                        },
+                    },
+                    "3": {
+                        "class_type": "ImageUpscaleWithModel",
+                        "inputs": {
+                            "upscale_model": ["2", 0],
+                            "image": ["1", 0],
+                        },
+                    },
+                    "5": {
+                        "class_type": "ResizeAndPadImage",
+                        "inputs": {
+                            "image": ["3", 0],
+                            "target_width": WAN_RESIZE_TARGET_WIDTH,
+                            "target_height": WAN_RESIZE_TARGET_HEIGHT,
+                            "padding_color": "white",
+                            "interpolation": "area",
+                        },
+                    },
+                }
+            )
+        else:
+            prompt["5"] = {
+                "class_type": "ResizeAndPadImage",
+                "inputs": {
+                    "image": ["1", 0],
+                    "target_width": WAN_RESIZE_TARGET_WIDTH,
+                    "target_height": WAN_RESIZE_TARGET_HEIGHT,
+                    "padding_color": "white",
+                    "interpolation": "area",
+                },
+            }
+
+        return prompt
 
     def _build_qwen_prompt(
         self,
@@ -643,6 +988,80 @@ class ComfyUIRunner:
         }
         return prompt
 
+    def _build_wan_model_loader_node(
+        self, model_path: str, *, node_id: str
+    ) -> dict[str, object]:
+        resolved_path = Path(model_path)
+        file_name = resolved_path.name
+
+        if resolved_path.suffix.lower() == ".gguf":
+            return {
+                node_id: {
+                    "class_type": "UnetLoaderGGUF",
+                    "inputs": {
+                        "unet_name": file_name,
+                    },
+                }
+            }
+
+        return {
+            node_id: {
+                "class_type": "UNETLoader",
+                "inputs": {
+                    "unet_name": file_name,
+                    "weight_dtype": "default",
+                },
+            }
+        }
+
+    def _validate_wan_required_assets(
+        self,
+        models_root: Path,
+        clip_name: str,
+        vae_name: str,
+        clip_vision_name: str,
+        high_noise_model: Path,
+        low_noise_model: Path,
+    ) -> None:
+        required_assets = [
+            ("high-noise Wan model", high_noise_model),
+            ("low-noise Wan model", low_noise_model),
+            ("Wan text encoder", models_root / "text_encoders" / clip_name),
+            ("Wan VAE", models_root / "vae" / vae_name),
+            ("CLIP vision encoder", models_root / "clip_vision" / clip_vision_name),
+        ]
+
+        missing_assets = [
+            f"{label} ({asset_path})"
+            for label, asset_path in required_assets
+            if not asset_path.exists()
+        ]
+
+        if missing_assets:
+            raise RuntimeError(
+                "The embedded Wan 2.2 image-to-video workflow is missing required ComfyUI assets: "
+                + ", ".join(missing_assets)
+            )
+
+    def _select_existing_asset(
+        self,
+        directory: Path,
+        candidates: list[str],
+        *,
+        asset_label: str,
+        required: bool = True,
+    ) -> str | None:
+        for candidate in candidates:
+            if (directory / candidate).exists():
+                return candidate
+
+        if required:
+            raise RuntimeError(
+                f"{asset_label} was not found in {directory}. Expected one of: {', '.join(candidates)}"
+            )
+
+        return None
+
     def _submit_prompt(
         self,
         context: ComfyUIContext,
@@ -663,12 +1082,15 @@ class ComfyUIRunner:
         self,
         context: ComfyUIContext,
         prompt_id: str,
-        request: "ImageGenerationRequest",
+        prompt: dict[str, object],
+        request: "ImageGenerationRequest | VideoGenerationRequest",
         progress_callback,
         is_cancelled,
     ) -> Path:
         deadline = time.monotonic() + COMFY_JOB_TIMEOUT_SECONDS
         cancellation_requested = False
+        total_nodes = max(len(prompt), 1)
+        floor, ceil = 0.30, 0.93
 
         while time.monotonic() < deadline:
             if is_cancelled() and not cancellation_requested:
@@ -685,9 +1107,16 @@ class ComfyUIRunner:
             status = str(job.get("status") or "")
 
             if status == "pending":
-                progress_callback(0.34, "Queued in embedded ComfyUI")
+                progress_callback(floor, "Queued in embedded ComfyUI")
             elif status == "in_progress":
-                progress_callback(0.68, "Running embedded Qwen workflow")
+                overall, stage_label = self._poll_execution_progress(
+                    context=context,
+                    prompt_id=prompt_id,
+                    prompt=prompt,
+                    total_nodes=total_nodes,
+                )
+                scaled = floor + (ceil - floor) * overall
+                progress_callback(scaled, stage_label)
             elif status == "completed":
                 output_path = self._extract_output_path(job, context.output_dir)
 
@@ -705,6 +1134,97 @@ class ComfyUIRunner:
             time.sleep(COMFY_POLL_INTERVAL_SECONDS)
 
         raise RuntimeError("Embedded ComfyUI generation timed out before it completed.")
+
+    def _poll_execution_progress(
+        self,
+        context: ComfyUIContext,
+        prompt_id: str,
+        prompt: dict[str, object],
+        total_nodes: int,
+    ) -> tuple[float, str]:
+        try:
+            snapshot = self._request_json(
+                context, f"/api/ollama-desktop/progress/{prompt_id}"
+            )
+        except Exception:
+            return 0.0, "Running embedded workflow"
+
+        if not isinstance(snapshot, dict):
+            return 0.0, "Running embedded workflow"
+
+        nodes = snapshot.get("nodes") or {}
+        finished = 0
+        running_ids: list[str] = []
+        running_frac_sum = 0.0
+
+        for node_id, node_state in nodes.items():
+            if not isinstance(node_state, dict):
+                continue
+
+            state = node_state.get("state")
+
+            if state == "finished":
+                finished += 1
+            elif state == "running":
+                running_ids.append(str(node_id))
+                value = float(node_state.get("value") or 0)
+                max_value = float(node_state.get("max") or 1) or 1.0
+                running_frac_sum += min(max(value / max_value, 0.0), 1.0)
+
+        overall = (finished + running_frac_sum) / total_nodes if total_nodes > 0 else 0.0
+        overall = min(max(overall, 0.0), 1.0)
+
+        stage_label = "Running embedded workflow"
+
+        if running_ids:
+            primary_id = running_ids[0]
+            node_definition = prompt.get(primary_id) if isinstance(prompt, dict) else None
+            class_type = (
+                node_definition.get("class_type")
+                if isinstance(node_definition, dict)
+                else None
+            )
+            node_state = nodes.get(primary_id) or {}
+            value = int(float(node_state.get("value") or 0))
+            max_value = int(float(node_state.get("max") or 1) or 1)
+            friendly = self._friendly_node_label(class_type) if class_type else f"node {primary_id}"
+
+            if max_value > 1 and value > 0:
+                stage_label = f"{friendly} {value}/{max_value}"
+            else:
+                stage_label = friendly
+
+        return overall, stage_label
+
+    def _friendly_node_label(self, class_type: str) -> str:
+        labels = {
+            "KSampler": "Sampling",
+            "KSamplerAdvanced": "Sampling",
+            "VAEDecode": "Decoding latents",
+            "VAEEncode": "Encoding image",
+            "SaveImage": "Saving image",
+            "SaveVideo": "Saving video",
+            "CreateVideo": "Composing video",
+            "RIFE VFI": "Interpolating frames",
+            "UpscaleModelLoader": "Loading upscaler",
+            "ImageUpscaleWithModel": "Upscaling reference",
+            "CLIPLoader": "Loading text encoder",
+            "CLIPTextEncode": "Encoding prompt",
+            "CLIPVisionEncode": "Encoding reference",
+            "CLIPVisionLoader": "Loading vision encoder",
+            "UnetLoaderGGUF": "Loading UNet",
+            "UNETLoader": "Loading UNet",
+            "VAELoader": "Loading VAE",
+            "LoraLoaderModelOnly": "Loading LoRA",
+            "ResizeAndPadImage": "Preparing image",
+            "LoadImage": "Loading image",
+            "ModelSamplingSD3": "Configuring sampler",
+            "ModelSamplingAuraFlow": "Configuring sampler",
+            "WanImageToVideo": "Preparing video latents",
+            "CFGNorm": "Configuring sampler",
+            "NebulaTextEncodeQwenImageEditPlusNSFW": "Encoding prompt",
+        }
+        return labels.get(class_type, class_type)
 
     def _cancel_prompt(self, context: ComfyUIContext, prompt_id: str) -> None:
         try:
@@ -773,10 +1293,12 @@ class ComfyUIRunner:
             if isinstance(message, str) and message.strip():
                 return message
 
-        return "Embedded ComfyUI failed to execute the Qwen image workflow."
+        return "Embedded ComfyUI failed to execute the generation workflow."
 
     def _cleanup_job_files(
-        self, context: ComfyUIContext, staged_inputs: StagedWorkflowInputs
+        self,
+        context: ComfyUIContext,
+        staged_inputs: StagedWorkflowInputs | StagedVideoWorkflowInputs,
     ) -> None:
         for file_path in staged_inputs.created_files:
             try:
@@ -788,6 +1310,17 @@ class ComfyUIRunner:
 
         if prompt_output_directory.exists():
             shutil.rmtree(prompt_output_directory, ignore_errors=True)
+
+    def _guess_video_mime_type(self, output_path: Path) -> str:
+        suffix = output_path.suffix.lower()
+
+        if suffix == ".webm":
+            return "video/webm"
+
+        if suffix == ".mov":
+            return "video/quicktime"
+
+        return "video/mp4"
 
     def _resolve_embedded_comfy_root(self) -> Path:
         comfy_root = Path(__file__).resolve().parents[1] / "comfyui_backend" / "ComfyUI"

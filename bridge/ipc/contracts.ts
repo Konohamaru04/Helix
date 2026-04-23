@@ -11,7 +11,7 @@ const skillIdSchema = z
 
 export const messageRoleSchema = z.enum(['system', 'user', 'assistant']);
 export const messageStatusSchema = z.enum(['pending', 'streaming', 'completed', 'failed']);
-export const generationJobKindSchema = z.enum(['image']);
+export const generationJobKindSchema = z.enum(['image', 'video']);
 export const generationJobStatusSchema = z.enum([
   'queued',
   'running',
@@ -20,10 +20,15 @@ export const generationJobStatusSchema = z.enum([
   'cancelled'
 ]);
 export const textInferenceBackendSchema = z.enum(['ollama', 'nvidia']);
-export const generationModeSchema = z.enum(['text-to-image', 'image-to-image']);
+export const generationModeSchema = z.enum([
+  'text-to-image',
+  'image-to-image',
+  'image-to-video'
+]);
 export const generationWorkflowProfileSchema = z.enum([
   'default',
-  'qwen-image-edit-2511'
+  'qwen-image-edit-2511',
+  'wan-image-to-video'
 ]);
 export const routeStrategySchema = z.enum([
   'chat',
@@ -35,7 +40,7 @@ export const routeStrategySchema = z.enum([
 ]);
 export const toolInvocationStatusSchema = z.enum(['completed', 'failed']);
 export const contextSourceKindSchema = z.enum(['document_chunk', 'pinned_message']);
-export const generationArtifactKindSchema = z.enum(['image']);
+export const generationArtifactKindSchema = z.enum(['image', 'video']);
 export const capabilityKindSchema = z.enum([
   'tool',
   'mode',
@@ -250,6 +255,8 @@ export const generationJobSchema = z.object({
   steps: z.number().int().min(1).max(100),
   guidanceScale: z.number().min(0).max(50),
   seed: z.number().int().nullable(),
+  frameCount: z.number().int().min(1).max(241).nullable().default(null),
+  frameRate: z.number().min(1).max(120).nullable().default(null),
   progress: z.number().min(0).max(1),
   stage: z.string().nullable(),
   errorMessage: z.string().nullable(),
@@ -412,6 +419,8 @@ export const userSettingsSchema = z.object({
   imageGenerationModel: z.string(),
   additionalModelsDirectory: z.string().min(1).nullable(),
   videoGenerationModel: z.string(),
+  videoGenerationHighNoiseModel: z.string(),
+  videoGenerationLowNoiseModel: z.string(),
   pythonPort: z.number().int().min(1024).max(65535),
   streamingMascotEnabled: z.boolean(),
   theme: z.enum(['system', 'light', 'dark'])
@@ -494,20 +503,48 @@ export const chatTurnRequestSchema = z.object({
   think: ollamaThinkModeSchema.optional()
 });
 
+export const imageGenerationModeSchema = z.enum(['text-to-image', 'image-to-image']);
+export const imageGenerationWorkflowProfileSchema = z.enum([
+  'default',
+  'qwen-image-edit-2511'
+]);
+export const videoGenerationModeSchema = z.enum(['image-to-video']);
+export const videoGenerationWorkflowProfileSchema = z.enum(['wan-image-to-video']);
+
 export const imageGenerationRequestSchema = z.object({
   conversationId: uuidSchema.optional(),
   workspaceId: uuidSchema.optional(),
   prompt: z.string().trim().min(1),
   negativePrompt: z.string().trim().max(2000).optional(),
   model: z.string().trim().min(1).optional(),
-  mode: generationModeSchema.optional(),
-  workflowProfile: generationWorkflowProfileSchema.optional(),
+  mode: imageGenerationModeSchema.optional(),
+  workflowProfile: imageGenerationWorkflowProfileSchema.optional(),
   referenceImages: z.array(messageAttachmentSchema).max(5).optional(),
   width: z.number().int().min(256).max(2048).optional(),
   height: z.number().int().min(256).max(2048).optional(),
   steps: z.number().int().min(1).max(100).optional(),
   guidanceScale: z.number().min(0).max(50).optional(),
   seed: z.number().int().nullable().optional()
+});
+
+export const videoGenerationRequestSchema = z.object({
+  conversationId: uuidSchema.optional(),
+  workspaceId: uuidSchema.optional(),
+  prompt: z.string().trim().min(1),
+  negativePrompt: z.string().trim().max(4000).optional(),
+  model: z.string().trim().min(1).optional(),
+  highNoiseModel: z.string().trim().min(1).optional(),
+  lowNoiseModel: z.string().trim().min(1).optional(),
+  mode: videoGenerationModeSchema.optional(),
+  workflowProfile: videoGenerationWorkflowProfileSchema.optional(),
+  referenceImages: z.array(messageAttachmentSchema).min(1).max(1),
+  width: z.number().int().min(256).max(2048).optional(),
+  height: z.number().int().min(256).max(2048).optional(),
+  steps: z.number().int().min(1).max(100).optional(),
+  guidanceScale: z.number().min(0).max(50).optional(),
+  seed: z.number().int().nullable().optional(),
+  frameCount: z.number().int().min(1).max(241).optional(),
+  frameRate: z.number().min(1).max(120).optional()
 });
 
 export const listImageGenerationModelsInputSchema = z.object({
@@ -723,12 +760,17 @@ export const chatStartAcceptedSchema = z.discriminatedUnion('kind', [
   })
 ]);
 
-export const imageGenerationStartResultSchema = z.object({
+export const generationStartResultSchema = z.object({
   job: generationJobSchema,
   conversation: conversationSummarySchema.optional()
 });
 
-export type ImageGenerationStartResult = z.infer<typeof imageGenerationStartResultSchema>;
+export const imageGenerationStartResultSchema = generationStartResultSchema;
+export const videoGenerationStartResultSchema = generationStartResultSchema;
+
+export type GenerationStartResult = z.infer<typeof generationStartResultSchema>;
+export type ImageGenerationStartResult = GenerationStartResult;
+export type VideoGenerationStartResult = GenerationStartResult;
 
 export const generationStreamEventSchema = z.discriminatedUnion('type', [
   z.object({
@@ -789,6 +831,13 @@ export const chatStreamEventSchema = z.discriminatedUnion('type', [
     assistantMessageId: uuidSchema
   }).merge(chatStreamMessageSnapshotSchema),
   z.object({
+    type: z.literal('message-created'),
+    requestId: uuidSchema,
+    conversationId: uuidSchema,
+    assistantMessageId: uuidSchema,
+    message: storedMessageSchema
+  }),
+  z.object({
     type: z.literal('error'),
     requestId: uuidSchema,
     assistantMessageId: uuidSchema,
@@ -837,6 +886,7 @@ export type SystemStatus = z.infer<typeof systemStatusSchema>;
 export type OllamaThinkMode = z.infer<typeof ollamaThinkModeSchema>;
 export type ChatTurnRequest = z.infer<typeof chatTurnRequestSchema>;
 export type ImageGenerationRequest = z.infer<typeof imageGenerationRequestSchema>;
+export type VideoGenerationRequest = z.infer<typeof videoGenerationRequestSchema>;
 export type ListImageGenerationModelsInput = z.infer<
   typeof listImageGenerationModelsInputSchema
 >;
@@ -898,6 +948,7 @@ export const IpcChannels = {
   systemGetStatus: 'system:get-status',
   chatStart: 'chat:start',
   generationStartImage: 'generation:start-image',
+  generationStartVideo: 'generation:start-video',
   generationListImageModels: 'generation:list-image-models',
   generationListJobs: 'generation:list-jobs',
   generationCancelJob: 'generation:cancel-job',
@@ -961,6 +1012,7 @@ export interface DesktopApi {
   };
   generation: {
     startImage: (input: ImageGenerationRequest) => Promise<ImageGenerationStartResult>;
+    startVideo: (input: VideoGenerationRequest) => Promise<VideoGenerationStartResult>;
     listImageModels: (
       input?: ListImageGenerationModelsInput
     ) => Promise<ImageGenerationModelCatalog>;

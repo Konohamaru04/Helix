@@ -27,6 +27,45 @@ def _image_job_payload(job_id: str, output_path: Path) -> dict[str, object]:
     }
 
 
+def _video_job_payload(
+    job_id: str,
+    output_path: Path,
+    start_image_path: Path,
+    high_noise_model: Path,
+    low_noise_model: Path,
+) -> dict[str, object]:
+    return {
+        "id": job_id,
+        "prompt": "Add a slow camera orbit",
+        "negative_prompt": "static frame",
+        "model": str(high_noise_model),
+        "backend": "comfyui",
+        "mode": "image-to-video",
+        "workflow_profile": "wan-image-to-video",
+        "width": 528,
+        "height": 704,
+        "steps": 8,
+        "guidance_scale": 1,
+        "seed": 42,
+        "output_path": str(output_path),
+        "reference_images": [
+            {
+                "id": "90000000-0000-4000-8000-000000000201",
+                "file_name": start_image_path.name,
+                "file_path": str(start_image_path),
+                "mime_type": "image/png",
+                "size_bytes": 3,
+                "extracted_text": None,
+                "created_at": "2026-04-23T00:00:00.000Z",
+            }
+        ],
+        "frame_count": 81,
+        "frame_rate": 16,
+        "high_noise_model": str(high_noise_model),
+        "low_noise_model": str(low_noise_model),
+    }
+
+
 def _wait_for_job_status(
     queue: JobQueue, job_id: str, expected_status: str, timeout_seconds: float = 1.5
 ) -> dict[str, object]:
@@ -64,6 +103,32 @@ class _BlockingPlaceholderManager:
             "file_path": str(output_path),
             "preview_path": str(output_path),
             "mime_type": "image/png",
+            "width": request.width,
+            "height": request.height,
+        }
+
+    def shutdown(self) -> None:
+        return
+
+
+class _BlockingVideoManager:
+    def __init__(self, started: Event, allow_finish: Event) -> None:
+        self._started = started
+        self._allow_finish = allow_finish
+
+    def generate_video(self, request, progress_callback, is_cancelled):
+        progress_callback(0.3, "Preparing embedded Wan 2.2 workflow")
+        self._started.set()
+        assert self._allow_finish.wait(timeout=1.0)
+
+        output_path = Path(request.output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(b"fake-video")
+
+        return {
+            "file_path": str(output_path),
+            "preview_path": None,
+            "mime_type": "video/mp4",
             "width": request.width,
             "height": request.height,
         }
@@ -151,4 +216,50 @@ def test_restore_jobs_replays_persisted_running_jobs(tmp_path: Path) -> None:
         queue, "70000000-0000-4000-8000-000000000011", "completed"
     )
     assert completed_job["artifacts"][0]["file_path"] == str(output_path)
+    assert not state_file.exists()
+
+
+def test_video_job_state_persists_frame_metadata_and_paired_wan_models(
+    tmp_path: Path,
+) -> None:
+    state_file = tmp_path / "queue-state.json"
+    output_path = tmp_path / "generated.mp4"
+    start_image = tmp_path / "start.png"
+    high_noise_model = tmp_path / "DasiwaWAN22I2V14BSynthseduction_q8High.gguf"
+    low_noise_model = tmp_path / "DasiwaWAN22I2V14BSynthseduction_q8Low.gguf"
+    started = Event()
+    allow_finish = Event()
+    queue = JobQueue(state_file)
+    model_manager = _BlockingVideoManager(started, allow_finish)
+
+    start_image.write_bytes(b"png")
+    high_noise_model.write_text("high", encoding="utf-8")
+    low_noise_model.write_text("low", encoding="utf-8")
+
+    queue.create_video_job(
+        _video_job_payload(
+            "70000000-0000-4000-8000-000000000210",
+            output_path,
+            start_image,
+            high_noise_model,
+            low_noise_model,
+        ),
+        model_manager,
+    )
+
+    assert started.wait(timeout=1.0)
+    persisted_state = json.loads(state_file.read_text(encoding="utf-8"))
+    persisted_job = persisted_state["jobs"][0]
+    assert persisted_job["kind"] == "video"
+    assert persisted_job["frame_count"] == 81
+    assert persisted_job["frame_rate"] == 16.0
+    assert persisted_job["high_noise_model"] == str(high_noise_model)
+    assert persisted_job["low_noise_model"] == str(low_noise_model)
+
+    allow_finish.set()
+
+    completed_job = _wait_for_job_status(
+        queue, "70000000-0000-4000-8000-000000000210", "completed"
+    )
+    assert completed_job["artifacts"][0]["mime_type"] == "video/mp4"
     assert not state_file.exists()

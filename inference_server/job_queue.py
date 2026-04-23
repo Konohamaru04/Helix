@@ -12,6 +12,8 @@ from .model_manager import (
     GenerationCancelledError,
     ImageGenerationRequest,
     ModelManager,
+    ReferenceImageInput,
+    VideoGenerationRequest,
 )
 
 
@@ -19,14 +21,14 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-PERSISTED_QUEUE_STATE_VERSION = 1
+PERSISTED_QUEUE_STATE_VERSION = 2
 
 
 @dataclass
 class JobArtifact:
     id: str
     job_id: str
-    kind: Literal["image"]
+    kind: Literal["image", "video"]
     file_path: str
     preview_path: str | None
     mime_type: str
@@ -71,14 +73,15 @@ class ReferenceImage:
 
 
 @dataclass
-class ImageJob:
+class GenerationJobRecord:
     id: str
+    kind: Literal["image", "video"]
     prompt: str
     negative_prompt: str | None
     model: str
     backend: Literal["placeholder", "diffusers", "comfyui"]
-    mode: Literal["text-to-image", "image-to-image"]
-    workflow_profile: Literal["default", "qwen-image-edit-2511"]
+    mode: Literal["text-to-image", "image-to-image", "image-to-video"]
+    workflow_profile: Literal["default", "qwen-image-edit-2511", "wan-image-to-video"]
     width: int
     height: int
     steps: int
@@ -86,6 +89,10 @@ class ImageJob:
     seed: int | None
     output_path: str
     reference_images: list[ReferenceImage]
+    frame_count: int | None = None
+    frame_rate: float | None = None
+    high_noise_model: str | None = None
+    low_noise_model: str | None = None
     status: Literal["queued", "running", "completed", "failed", "cancelled"] = "queued"
     progress: float = 0.0
     stage: str | None = "Queued"
@@ -98,9 +105,9 @@ class ImageJob:
     cancel_event: Event = field(default_factory=Event, repr=False)
 
     def to_dict(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "id": self.id,
-            "kind": "image",
+            "kind": self.kind,
             "mode": self.mode,
             "workflow_profile": self.workflow_profile,
             "status": self.status,
@@ -113,6 +120,8 @@ class ImageJob:
             "steps": self.steps,
             "guidance_scale": self.guidance_scale,
             "seed": self.seed,
+            "frame_count": self.frame_count,
+            "frame_rate": self.frame_rate,
             "progress": round(self.progress, 6),
             "stage": self.stage,
             "error_message": self.error_message,
@@ -124,14 +133,22 @@ class ImageJob:
                 reference_image.to_dict() for reference_image in self.reference_images
             ],
             "artifacts": [artifact.to_dict() for artifact in self.artifacts],
+            "output_path": self.output_path,
         }
+
+        if self.high_noise_model:
+            payload["high_noise_model"] = self.high_noise_model
+        if self.low_noise_model:
+            payload["low_noise_model"] = self.low_noise_model
+
+        return payload
 
 
 class JobQueue:
     """In-memory generation queue with observable status snapshots."""
 
     def __init__(self, state_file_path: str | Path | None = None) -> None:
-        self._jobs: dict[str, ImageJob] = {}
+        self._jobs: dict[str, GenerationJobRecord] = {}
         self._workers: dict[str, Thread] = {}
         self._lock = Lock()
         self._execution_lock = Lock()
@@ -167,8 +184,9 @@ class JobQueue:
         payload: dict[str, object],
         model_manager: ModelManager,
     ) -> dict[str, object]:
-        job = ImageJob(
+        job = GenerationJobRecord(
             id=str(payload["id"]),
+            kind="image",
             prompt=str(payload["prompt"]),
             negative_prompt=self._coerce_optional_text(payload.get("negative_prompt")),
             model=str(payload["model"]),
@@ -185,13 +203,47 @@ class JobQueue:
                 payload.get("reference_images")
             ),
         )
+        return self._enqueue_job(job, model_manager)
 
+    def create_video_job(
+        self,
+        payload: dict[str, object],
+        model_manager: ModelManager,
+    ) -> dict[str, object]:
+        job = GenerationJobRecord(
+            id=str(payload["id"]),
+            kind="video",
+            prompt=str(payload["prompt"]),
+            negative_prompt=self._coerce_optional_text(payload.get("negative_prompt")),
+            model=str(payload["model"]),
+            backend="comfyui",
+            mode="image-to-video",
+            workflow_profile="wan-image-to-video",
+            width=int(payload["width"]),
+            height=int(payload["height"]),
+            steps=int(payload["steps"]),
+            guidance_scale=float(payload["guidance_scale"]),
+            seed=self._coerce_optional_int(payload.get("seed")),
+            output_path=str(payload["output_path"]),
+            reference_images=self._coerce_reference_images(
+                payload.get("reference_images")
+            ),
+            frame_count=int(payload["frame_count"]),
+            frame_rate=float(payload["frame_rate"]),
+            high_noise_model=str(payload["high_noise_model"]),
+            low_noise_model=str(payload["low_noise_model"]),
+        )
+        return self._enqueue_job(job, model_manager)
+
+    def _enqueue_job(
+        self, job: GenerationJobRecord, model_manager: ModelManager
+    ) -> dict[str, object]:
         with self._lock:
             self._jobs[job.id] = job
             self._persist_state_locked()
 
         worker = Thread(
-            target=self._run_image_job,
+            target=self._run_job,
             args=(job.id, model_manager),
             daemon=True,
         )
@@ -226,7 +278,7 @@ class JobQueue:
                 self._jobs[job.id] = job
 
                 worker = Thread(
-                    target=self._run_image_job,
+                    target=self._run_job,
                     args=(job.id, model_manager),
                     daemon=True,
                 )
@@ -260,7 +312,7 @@ class JobQueue:
 
             return job.to_dict()
 
-    def _run_image_job(self, job_id: str, model_manager: ModelManager) -> None:
+    def _run_job(self, job_id: str, model_manager: ModelManager) -> None:
         acquired_execution_slot = False
         try:
             acquired_execution_slot = self._execution_lock.acquire(blocking=False)
@@ -285,26 +337,7 @@ class JobQueue:
                     job.updated_at = timestamp
                     self._persist_state_locked()
 
-                result = model_manager.generate_image(
-                    ImageGenerationRequest(
-                        prompt=job.prompt,
-                        negative_prompt=job.negative_prompt,
-                        model=job.model,
-                        width=job.width,
-                        height=job.height,
-                        steps=job.steps,
-                        guidance_scale=job.guidance_scale,
-                        seed=job.seed,
-                        output_path=job.output_path,
-                        mode=job.mode,
-                        workflow_profile=job.workflow_profile,
-                        reference_images=job.reference_images,
-                    ),
-                    progress_callback=lambda progress, stage: self._update_progress(
-                        job_id, progress, stage
-                    ),
-                    is_cancelled=lambda: self._is_cancelled(job_id),
-                )
+                result = self._execute_job(job, model_manager)
 
             if self._is_cancelled(job_id):
                 self._mark_cancelled(job_id)
@@ -313,12 +346,13 @@ class JobQueue:
             artifact = JobArtifact(
                 id=str(uuid4()),
                 job_id=job_id,
-                kind="image",
+                kind=job.kind,
                 file_path=str(result["file_path"]),
-                preview_path=(
-                    str(result["preview_path"])
-                    if result.get("preview_path") is not None
-                    else str(result["file_path"])
+                preview_path=self._coerce_optional_text(result.get("preview_path"))
+                if job.kind == "video"
+                else (
+                    self._coerce_optional_text(result.get("preview_path"))
+                    or str(result["file_path"])
                 ),
                 mime_type=str(result["mime_type"]),
                 width=int(result["width"]) if result.get("width") is not None else None,
@@ -336,6 +370,74 @@ class JobQueue:
 
             with self._lock:
                 self._workers.pop(job_id, None)
+
+    def _execute_job(
+        self, job: GenerationJobRecord, model_manager: ModelManager
+    ) -> dict[str, object]:
+        if job.kind == "image":
+            return model_manager.generate_image(
+                ImageGenerationRequest(
+                    prompt=job.prompt,
+                    negative_prompt=job.negative_prompt,
+                    model=job.model,
+                    width=job.width,
+                    height=job.height,
+                    steps=job.steps,
+                    guidance_scale=job.guidance_scale,
+                    seed=job.seed,
+                    output_path=job.output_path,
+                    mode=job.mode,
+                    workflow_profile=job.workflow_profile,
+                    reference_images=self._to_reference_image_inputs(
+                        job.reference_images
+                    ),
+                ),
+                progress_callback=lambda progress, stage: self._update_progress(
+                    job.id, progress, stage
+                ),
+                is_cancelled=lambda: self._is_cancelled(job.id),
+            )
+
+        return model_manager.generate_video(
+            VideoGenerationRequest(
+                prompt=job.prompt,
+                negative_prompt=job.negative_prompt,
+                model=job.model,
+                width=job.width,
+                height=job.height,
+                steps=job.steps,
+                guidance_scale=job.guidance_scale,
+                seed=job.seed,
+                output_path=job.output_path,
+                mode=job.mode,
+                workflow_profile=job.workflow_profile,
+                reference_images=self._to_reference_image_inputs(job.reference_images),
+                frame_count=job.frame_count or 81,
+                frame_rate=job.frame_rate or 16.0,
+                high_noise_model=job.high_noise_model or job.model,
+                low_noise_model=job.low_noise_model or job.model,
+            ),
+            progress_callback=lambda progress, stage: self._update_progress(
+                job.id, progress, stage
+            ),
+            is_cancelled=lambda: self._is_cancelled(job.id),
+        )
+
+    def _to_reference_image_inputs(
+        self, reference_images: list[ReferenceImage]
+    ) -> list[ReferenceImageInput]:
+        return [
+            ReferenceImageInput(
+                id=reference_image.id,
+                file_name=reference_image.file_name,
+                file_path=reference_image.file_path,
+                mime_type=reference_image.mime_type,
+                size_bytes=reference_image.size_bytes,
+                extracted_text=reference_image.extracted_text,
+                created_at=reference_image.created_at,
+            )
+            for reference_image in reference_images
+        ]
 
     def _mark_waiting_for_execution(self, job_id: str) -> None:
         if not self._execution_lock.locked():
@@ -458,6 +560,11 @@ class JobQueue:
             return None
         return int(value)
 
+    def _coerce_optional_float(self, value: object) -> float | None:
+        if value in (None, ""):
+            return None
+        return float(value)
+
     def _coerce_reference_images(self, value: object) -> list[ReferenceImage]:
         if not isinstance(value, list):
             return []
@@ -496,7 +603,7 @@ class JobQueue:
                 JobArtifact(
                     id=str(item.get("id") or uuid4()),
                     job_id=str(item.get("job_id") or ""),
-                    kind="image",
+                    kind=str(item.get("kind") or "image"),
                     file_path=str(item.get("file_path") or ""),
                     preview_path=self._coerce_optional_text(item.get("preview_path")),
                     mime_type=str(item.get("mime_type") or "image/png"),
@@ -541,7 +648,7 @@ class JobQueue:
         except Exception:
             return
 
-    def _load_persisted_jobs(self) -> list[ImageJob]:
+    def _load_persisted_jobs(self) -> list[GenerationJobRecord]:
         if self._state_file_path is None or not self._state_file_path.exists():
             return []
 
@@ -561,7 +668,7 @@ class JobQueue:
             self._remove_state_file()
             return []
 
-        restored_jobs: list[ImageJob] = []
+        restored_jobs: list[GenerationJobRecord] = []
 
         for item in jobs:
             if not isinstance(item, dict):
@@ -571,8 +678,9 @@ class JobQueue:
                 continue
 
             restored_jobs.append(
-                ImageJob(
+                GenerationJobRecord(
                     id=str(item.get("id") or uuid4()),
+                    kind=str(item.get("kind") or "image"),
                     prompt=str(item.get("prompt") or ""),
                     negative_prompt=self._coerce_optional_text(
                         item.get("negative_prompt")
@@ -593,6 +701,14 @@ class JobQueue:
                     output_path=str(item.get("output_path") or ""),
                     reference_images=self._coerce_reference_images(
                         item.get("reference_images")
+                    ),
+                    frame_count=self._coerce_optional_int(item.get("frame_count")),
+                    frame_rate=self._coerce_optional_float(item.get("frame_rate")),
+                    high_noise_model=self._coerce_optional_text(
+                        item.get("high_noise_model")
+                    ),
+                    low_noise_model=self._coerce_optional_text(
+                        item.get("low_noise_model")
                     ),
                     status=str(item.get("status") or "queued"),
                     progress=float(item.get("progress") or 0.0),

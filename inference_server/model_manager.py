@@ -91,6 +91,26 @@ class ImageGenerationRequest:
     reference_images: list[ReferenceImageInput]
 
 
+@dataclass
+class VideoGenerationRequest:
+    prompt: str
+    negative_prompt: str | None
+    model: str
+    width: int
+    height: int
+    steps: int
+    guidance_scale: float
+    seed: int | None
+    output_path: str
+    mode: str
+    workflow_profile: str
+    reference_images: list[ReferenceImageInput]
+    frame_count: int
+    frame_rate: float
+    high_noise_model: str
+    low_noise_model: str
+
+
 class ModelManager:
     """Tracks the currently loaded image model and executes local image jobs."""
 
@@ -254,6 +274,49 @@ class ModelManager:
             if self._looks_like_oom(error):
                 self._recover_after_oom(backend)
                 raise RuntimeError(self._format_oom_error(request, backend)) from error
+            raise
+        finally:
+            self._mark_generation_finished()
+            self._soft_empty_cache()
+
+    def generate_video(
+        self,
+        request: VideoGenerationRequest,
+        progress_callback,
+        is_cancelled,
+    ) -> dict[str, object]:
+        output_path = Path(request.output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        self._mark_generation_started()
+
+        try:
+            self._prepare_runtime_for_video_request(request)
+            progress_callback(0.08, "Preparing embedded ComfyUI backend")
+            with self._lock:
+                self.loaded_model = request.model
+                self.loaded_backend = "comfyui"
+            result = dict(
+                self._comfyui_runner.run_wan_image_to_video_workflow(
+                    request=request,
+                    progress_callback=progress_callback,
+                    is_cancelled=is_cancelled,
+                )
+            )
+            self.last_error = None
+            return result
+        except ComfyUICancelledError as error:
+            raise GenerationCancelledError(str(error)) from error
+        except GenerationCancelledError:
+            raise
+        except torch.cuda.OutOfMemoryError as error:
+            self.last_error = str(error)
+            self._recover_after_oom("comfyui")
+            raise RuntimeError(self._format_video_oom_error(request)) from error
+        except Exception as error:
+            self.last_error = str(error)
+            if self._looks_like_oom(error):
+                self._recover_after_oom("comfyui")
+                raise RuntimeError(self._format_video_oom_error(request)) from error
             raise
         finally:
             self._mark_generation_finished()
@@ -768,6 +831,19 @@ class ModelManager:
         if not self._comfyui_runner.is_running():
             self._ensure_vram_headroom(request, "comfyui")
 
+    def _prepare_runtime_for_video_request(self, request: VideoGenerationRequest) -> None:
+        self._clear_diffusers_runtime(
+            "Switching from diffusers to the embedded ComfyUI video workflow"
+        )
+
+        if self._comfyui_runner.is_running() and self.loaded_model != request.model:
+            self._shutdown_comfyui_runtime(
+                "Switching to a different embedded ComfyUI video model"
+            )
+
+        if not self._comfyui_runner.is_running():
+            self._ensure_vram_headroom(request, "comfyui")
+
     def _clear_mismatched_diffusers_pipeline(self, pipeline_key: str) -> None:
         with self._lock:
             if self._pipeline is None or self._pipeline_key == pipeline_key:
@@ -813,7 +889,9 @@ class ModelManager:
         gc.collect()
 
     def _ensure_vram_headroom(
-        self, request: ImageGenerationRequest, backend: str
+        self,
+        request: ImageGenerationRequest | VideoGenerationRequest,
+        backend: str,
     ) -> None:
         if backend == "placeholder" or not torch.cuda.is_available():
             return
@@ -844,7 +922,9 @@ class ModelManager:
         )
 
     def _required_vram_headroom_mb(
-        self, request: ImageGenerationRequest, backend: str
+        self,
+        request: ImageGenerationRequest | VideoGenerationRequest,
+        backend: str,
     ) -> int:
         base_headroom = (
             BASE_COMFYUI_HEADROOM_MB
@@ -902,6 +982,21 @@ class ModelManager:
             f"The {backend} path targets about {required_headroom_mb} MB of free headroom for this request, and the worker recovered by evicting cached runtimes. "
             f"Current state: {free_detail}. "
             "Try a smaller resolution, fewer steps, or a lighter model."
+        )
+
+    def _format_video_oom_error(self, request: VideoGenerationRequest) -> str:
+        required_headroom_mb = self._required_vram_headroom_mb(request, "comfyui")
+        free_mb = self._read_free_vram_mb()
+        free_detail = (
+            f"{free_mb:.0f} MB free after cleanup"
+            if free_mb is not None
+            else "free VRAM unavailable"
+        )
+        return (
+            "Video generation ran out of VRAM. "
+            f"The embedded Wan 2.2 workflow targets about {required_headroom_mb} MB of free headroom for this request, and the worker recovered by evicting cached runtimes. "
+            f"Current state: {free_detail}. "
+            "Try a smaller frame size, fewer frames, or fewer total steps."
         )
 
     def _mark_generation_started(self) -> None:

@@ -66,6 +66,7 @@ describe('app-store stream buffering', () => {
       },
       generation: {
         startImage: vi.fn().mockResolvedValue({ job: undefined, conversation: undefined }),
+        startVideo: vi.fn().mockResolvedValue({ job: undefined, conversation: undefined }),
         listImageModels: vi.fn().mockResolvedValue({
           additionalModelsDirectory: null,
           options: [
@@ -164,6 +165,8 @@ describe('app-store stream buffering', () => {
         imageGenerationModel: 'builtin:placeholder',
         additionalModelsDirectory: null,
         videoGenerationModel: '',
+        videoGenerationHighNoiseModel: '',
+        videoGenerationLowNoiseModel: '',
         pythonPort: 8765,
         streamingMascotEnabled: true,
         theme: 'system'
@@ -359,6 +362,47 @@ describe('app-store stream buffering', () => {
     expect(state.systemStatus?.pendingRequestCount).toBe(1);
   });
 
+  it('inserts follow-up assistant loop messages created mid-turn and keeps the active stream on the newest message', async () => {
+    await useAppStore.getState().sendPrompt('Hello');
+
+    const followUpAssistantMessage = {
+      ...assistantMessage,
+      id: '10000000-0000-4000-8000-000000000099',
+      content:
+        '<think>\nChecking the workspace before the next step.\n</think>\n\nInspecting the current files.',
+      status: 'streaming' as const,
+      createdAt: '2026-04-08T00:00:02.000Z',
+      updatedAt: '2026-04-08T00:00:02.000Z'
+    };
+
+    useAppStore.getState().applyStreamEvent({
+      type: 'update',
+      requestId: '30000000-0000-4000-8000-000000000001',
+      assistantMessageId: assistantMessage.id,
+      content: 'Initial loop reply',
+      status: 'completed'
+    });
+    useAppStore.getState().applyStreamEvent({
+      type: 'message-created',
+      requestId: '30000000-0000-4000-8000-000000000001',
+      conversationId: conversation.id,
+      assistantMessageId: followUpAssistantMessage.id,
+      message: followUpAssistantMessage
+    });
+
+    const state = useAppStore.getState();
+    const assistantMessages =
+      state.messagesByConversation[conversation.id]?.filter(
+        (message) => message.role === 'assistant'
+      ) ?? [];
+
+    expect(assistantMessages).toHaveLength(2);
+    expect(assistantMessages[1]?.id).toBe(followUpAssistantMessage.id);
+    expect(assistantMessages[1]?.content).toContain('Inspecting the current files.');
+    expect(state.streamingAssistantIds).not.toContain(assistantMessage.id);
+    expect(state.streamingAssistantIds).toContain(followUpAssistantMessage.id);
+  });
+
   it('applies capability snapshots from stream events immediately', async () => {
     await useAppStore.getState().sendPrompt('Hello');
 
@@ -469,6 +513,8 @@ describe('app-store stream buffering', () => {
       steps: 4,
       guidanceScale: 1,
       seed: null,
+      frameCount: null,
+      frameRate: null,
       progress: 0,
       stage: 'Queued',
       errorMessage: null,
@@ -515,6 +561,8 @@ describe('app-store stream buffering', () => {
       steps: 6,
       guidanceScale: 4,
       seed: null,
+      frameCount: null,
+      frameRate: null,
       progress: 0,
       stage: 'Failed',
       errorMessage: 'Worker offline',

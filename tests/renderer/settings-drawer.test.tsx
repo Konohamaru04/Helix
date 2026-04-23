@@ -16,6 +16,8 @@ const settings = {
   imageGenerationModel: 'builtin:placeholder',
   additionalModelsDirectory: null,
   videoGenerationModel: '',
+  videoGenerationHighNoiseModel: '',
+  videoGenerationLowNoiseModel: '',
   pythonPort: 8765,
   streamingMascotEnabled: true,
   theme: 'system' as const
@@ -84,7 +86,7 @@ function chooseCombobox(index: number, optionName: string | RegExp) {
 }
 
 describe('SettingsDrawer', () => {
-  it('renders role-based model routing controls and only keeps video generation disabled', () => {
+  it('renders role-based model routing controls and keeps video generation selectable', () => {
     const capabilityProps = createCapabilityProps();
 
     render(
@@ -110,7 +112,8 @@ describe('SettingsDrawer', () => {
     expect(screen.getByText('Additional models directory')).toBeInTheDocument();
     expect(screen.getByText('Text backend connections')).toBeInTheDocument();
     expect(screen.getByRole('combobox', { name: /Image Gen/i })).toBeEnabled();
-    expect(screen.getByRole('combobox', { name: /Video Gen/i })).toBeDisabled();
+    expect(screen.getByRole('combobox', { name: /Video Gen high noise/i })).toBeEnabled();
+    expect(screen.getByRole('combobox', { name: /Video Gen low noise/i })).toBeEnabled();
   });
 
   it('discovers local image models from a selected directory', async () => {
@@ -259,6 +262,8 @@ describe('SettingsDrawer', () => {
         imageGenerationModel: 'builtin:placeholder',
         additionalModelsDirectory: null,
         videoGenerationModel: '',
+        videoGenerationHighNoiseModel: '',
+        videoGenerationLowNoiseModel: '',
         pythonPort: 8765,
         streamingMascotEnabled: true,
         theme: 'system'
@@ -304,6 +309,8 @@ describe('SettingsDrawer', () => {
         imageGenerationModel: 'builtin:placeholder',
         additionalModelsDirectory: null,
         videoGenerationModel: '',
+        videoGenerationHighNoiseModel: '',
+        videoGenerationLowNoiseModel: '',
         pythonPort: 8765,
         streamingMascotEnabled: false,
         theme: 'system'
@@ -352,6 +359,8 @@ describe('SettingsDrawer', () => {
         imageGenerationModel: 'builtin:placeholder',
         additionalModelsDirectory: null,
         videoGenerationModel: '',
+        videoGenerationHighNoiseModel: '',
+        videoGenerationLowNoiseModel: '',
         pythonPort: 8765,
         streamingMascotEnabled: true,
         theme: 'system'

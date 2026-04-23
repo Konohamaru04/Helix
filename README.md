@@ -4,7 +4,7 @@
 
 **Local-first desktop AI workbench** — built with Electron, React, SQLite, and a managed Python inference server.
 
-Helix runs entirely on your machine. Chat with local Ollama models or NVIDIA-hosted models, use a full agentic tool surface, retrieve from your own knowledge base, and generate images — all without sending your data to a third-party service unless you opt in.
+Helix runs entirely on your machine. Chat with local Ollama models or NVIDIA-hosted models, use a full agentic tool surface, retrieve from your own knowledge base, and generate images or videos — all without sending your data to a third-party service unless you opt in.
 
 ---
 
@@ -82,7 +82,7 @@ User-defined skills go in `skills/user/`.
 - Citation cards and source provenance in the transcript
 - Conversation memory summarization and pruning; pinned messages survive summarization
 
-### Image Generation
+### Generation
 
 Managed FastAPI worker launched from `python_embeded\python.exe`:
 
@@ -93,10 +93,11 @@ Managed FastAPI worker launched from `python_embeded\python.exe`:
 | `diffusers` | `.safetensors`/`.ckpt`/`.pt`/`.pth` checkpoint | `diffusers-single-file` |
 | `diffusers` | GGUF Qwen Image (text-to-image) | `diffusers-gguf` |
 | `comfyui` | GGUF Qwen Image Edit (image-to-image) | `comfyui-workflow` |
+| `comfyui` | Wan 2.2 GGUF pair (image-to-video) | `wan-image-to-video` |
 
-GGUF architecture is sniffed from file headers (`qwen_image`, `wan`, `flux`). Wan and FLUX families are discovered but gated — not yet enabled.
+GGUF architecture is sniffed from file headers (`qwen_image`, `wan`, `flux`). Qwen image families are enabled for image workflows. Wan 2.2 is enabled for image-to-video and requires both a high-noise and low-noise checkpoint pair; Settings now exposes explicit selectors for both checkpoints, while the bridge still keeps single-model derivation as a backward-compatible fallback.
 
-`Auto` chat submit routes image creation and follow-up edit prompts directly to inline generation jobs. The `Auto` flow reuses the latest generated image as the reference input for edit follow-ups.
+`Auto` chat submit routes image creation and follow-up edit prompts directly to inline generation jobs. The `Auto` flow reuses the latest generated image as the reference input for edit follow-ups. The shared composer also exposes an explicit Image to Video mode for inline Wan 2.2 jobs.
 
 GPU headroom is enforced before loading models. The Python worker persists queued and running jobs to a restart-safe state file and replays them on boot. Desktop notifications fire on job completion and failure. Failed jobs can be retried from the chat timeline or the queue drawer.
 
@@ -119,7 +120,7 @@ Packaged Windows builds intentionally exclude a deferred dependency set (`numpy`
 | Build | electron-vite, Vite 7 |
 | State | Zustand 5 |
 | Schema validation | Zod 4 |
-| Persistence | SQLite (WAL, FK enforced) — 13 numbered migrations |
+| Persistence | SQLite (WAL, FK enforced) — 16 numbered migrations |
 | Logging | Pino (structured, main process) |
 | Testing | Vitest, @testing-library/react, pytest |
 | Text inference | Ollama (local REST + streaming), NVIDIA OpenAI-compatible API |
@@ -384,6 +385,7 @@ Image job:
 
 Context assembly order per turn:
 1. System base prompt
+   The base prompt carries the Helix persona plus the detailed current-turn tool and skill catalog.
 2. Workspace prompt
 3. Skill prompt
 4. Pinned memory
@@ -411,7 +413,7 @@ See [docs/architecture.md](docs/architecture.md) for the full design record.
 | 6.1 | Image generation — FastAPI worker, job persistence, inline rendering, cancellation | ✅ Done |
 | 6.2 | VRAM management — headroom policy, backend eviction, status bar telemetry | ✅ Done |
 | 6.3 | Queue hardening & notifications — queue replay, desktop notifications, retry flows | ✅ Done |
-| 6.4 | Future generation surfaces — video jobs, gallery management | 🔲 Planned |
+| 6.4 | Future generation surfaces — video jobs, gallery management | ✅ Video jobs done |
 | 7 | MCP — server config, connection manager, tool manifest sync, resources, prompts | 🔲 Planned |
 | 8 | Polish & release hardening — auto-update, crash recovery, accessibility, security pass | 🔲 Planned |
 

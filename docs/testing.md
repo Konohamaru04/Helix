@@ -47,7 +47,7 @@ The current suite covers:
 - workspace knowledge import, dedupe, local embedding persistence, typo-tolerant hybrid retrieval, and memory summarization/pruning
 - multimodal Ollama image payload generation for raster attachments
 - renderer prompt submission through the preload bridge
-- settings-drawer role configuration and disabled generation slots
+- settings-drawer role configuration and image/video generation slot behavior
 - single Settings entrypoint in the main chat surface
 - composer keyboard behavior for `Enter` vs `Shift+Enter`
 - transcript auto-scroll behavior when the user is at or away from the bottom
@@ -61,7 +61,7 @@ The current suite covers:
 - generation preflight rejection for unsupported discovered models and clearly impossible worker states before queue persistence
 - local image-model discovery from additional models directories, including ComfyUI-style diffusers/checkpoint layouts and GGUF discovery from `diffusion_models`
 - GGUF model surfacing rules, including selectable Qwen Image text checkpoints, selectable Qwen Image Edit 2511 workflow checkpoints, and disabled video GGUF families
-- workflow-aware generation payloads that preserve mode, workflow profile, and reference-image metadata across SQLite persistence and Python transport
+- workflow-aware generation payloads that preserve mode, workflow profile, reference-image metadata, and Wan frame/high-noise/low-noise settings across SQLite persistence and Python transport
 - attached-image analysis prompts continue through chat and multimodal Vision routing after exiting image mode, instead of incorrectly starting image generation
 - image-prompt authoring requests such as `create an image generation prompt for the same clothing` stay on the chat path instead of auto-starting image generation
 - immediate submit feedback while bridge-side routing/classification starts, including duplicate-send suppression during the pre-stream startup window
@@ -71,7 +71,8 @@ The current suite covers:
 - renderer retry flows for failed or cancelled image jobs in both the transcript and the shared queue drawer
 - Python model-loader selection between diffusers directories, single-file checkpoints, supported Qwen Image GGUF checkpoints, Qwen Image Edit 2511 workflow pipelines, unsupported GGUF families, and missing local paths
 - Python runtime eviction rules across diffusers and embedded ComfyUI, plus single-slot generation queue behavior for GPU-bound jobs
-- Python queue-state persistence and replay inside the worker after an interrupted runtime
+- Python queue-state persistence and replay inside the worker after an interrupted runtime, including Wan video frame metadata
+- FastAPI Wan image-to-video route smoke tests and embedded ComfyUI asset validation for paired high-noise/low-noise checkpoints
 - summarized-memory injection into live Ollama prompt assembly for long conversations
 - assistant Markdown, thinking blocks, tool traces, and source rendering
 - FastAPI health route smoke test with VRAM visibility

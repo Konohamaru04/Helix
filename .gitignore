@@ -83,3 +83,5 @@ graphify-out
 docs/benchmark-prompts.md
 docs/testing.md
 docs/testing.md
+comfyui_backend/ComfyUI/user/comfyui.db
+comfyui_backend/ComfyUI/user/comfyui.db.lock

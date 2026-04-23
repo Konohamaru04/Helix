@@ -14,6 +14,7 @@ import type {
   GenerationStreamEvent,
   ImageGenerationModelCatalog,
   ImageGenerationRequest,
+  VideoGenerationRequest,
   KnowledgeDocument,
   MessageAttachment,
   OllamaThinkMode,
@@ -74,6 +75,42 @@ function upsertGenerationJobList(existing: GenerationJob[], nextJob: GenerationJ
     (left, right) =>
       new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()
   );
+}
+
+function sortMessagesByTimeline(messages: StoredMessage[]) {
+  return [...messages]
+    .map((message, index) => ({ message, index }))
+    .sort((left, right) => {
+      const createdAtDiff =
+        new Date(left.message.createdAt).getTime() - new Date(right.message.createdAt).getTime();
+
+      if (createdAtDiff !== 0) {
+        return createdAtDiff;
+      }
+
+      const updatedAtDiff =
+        new Date(left.message.updatedAt).getTime() - new Date(right.message.updatedAt).getTime();
+
+      if (updatedAtDiff !== 0) {
+        return updatedAtDiff;
+      }
+
+      return left.index - right.index;
+    })
+    .map(({ message }) => message);
+}
+
+function mergeConversationMessages(
+  existing: StoredMessage[],
+  incoming: StoredMessage[]
+) {
+  const dedupedMessages = new Map<string, StoredMessage>();
+
+  for (const message of [...existing, ...incoming]) {
+    dedupedMessages.set(message.id, message);
+  }
+
+  return sortMessagesByTimeline([...dedupedMessages.values()]);
 }
 
 type ChatThinkModeSelection = '' | OllamaThinkMode;
@@ -246,6 +283,19 @@ function applyStreamEventToMessages(
   messagesByConversation: Record<string, StoredMessage[]>,
   event: ChatStreamEvent
 ): AssistantMessageUpdateResult {
+  if (event.type === 'message-created') {
+    return {
+      found: true,
+      messagesByConversation: {
+        ...messagesByConversation,
+        [event.conversationId]: mergeConversationMessages(
+          messagesByConversation[event.conversationId] ?? [],
+          [event.message]
+        )
+      }
+    };
+  }
+
   if (event.type === 'delta') {
     return updateAssistantMessage(messagesByConversation, event.assistantMessageId, (message) =>
       applyAssistantStreamSnapshot(message, {
@@ -456,6 +506,9 @@ interface AppStoreState {
   deleteTask: (taskId: string) => Promise<void>;
   startImageGeneration: (
     input: ImageGenerationRequest
+  ) => Promise<void>;
+  startVideoGeneration: (
+    input: VideoGenerationRequest
   ) => Promise<void>;
   sendPrompt: (prompt: string, attachments?: MessageAttachment[]) => Promise<void>;
   editMessageAndResend: (
@@ -1043,6 +1096,30 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
     }));
   },
 
+  startVideoGeneration: async (input) => {
+    const api = getDesktopApi();
+    const result = await api.generation.startVideo(input);
+
+    set((state) => ({
+      ...(result.conversation
+        ? {
+            activeConversationId: result.conversation.id,
+            activeWorkspaceId:
+              result.conversation.workspaceId ?? state.activeWorkspaceId,
+            conversations: upsertConversation(state.conversations, result.conversation),
+            messagesByConversation:
+              result.conversation.id in state.messagesByConversation
+                ? state.messagesByConversation
+                : {
+                    ...state.messagesByConversation,
+                    [result.conversation.id]: []
+                  }
+          }
+        : {}),
+      generationJobs: upsertGenerationJobList(state.generationJobs, result.job)
+    }));
+  },
+
   sendPrompt: async (prompt, attachments = []) => {
     const trimmedPrompt = prompt.trim();
 
@@ -1092,11 +1169,14 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
     }
 
     set((currentState) =>
-      integrateAcceptedTurn(currentState, accepted, [
-        ...(currentState.messagesByConversation[accepted.conversation.id] ?? []),
-        accepted.userMessage,
-        accepted.assistantMessage
-      ])
+      integrateAcceptedTurn(
+        currentState,
+        accepted,
+        mergeConversationMessages(
+          currentState.messagesByConversation[accepted.conversation.id] ?? [],
+          [accepted.userMessage, accepted.assistantMessage]
+        )
+      )
     );
 
     if (accepted.conversation.workspaceId && attachments.some((attachment) => attachment.extractedText)) {
@@ -1317,27 +1397,67 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
   },
 
   applyStreamEvent: (event) => {
-    const conversationId = findConversationIdByAssistantMessage(
-      get().messagesByConversation,
-      event.assistantMessageId
-    );
+    const assistantMessageId = event.assistantMessageId;
+    const bufferedPendingEvent =
+      event.type === 'message-created'
+        ? get().pendingStreamEventsByAssistantId[assistantMessageId]
+        : undefined;
+    const followUpEvent = bufferedPendingEvent ?? event;
+    const conversationId =
+      event.type === 'message-created'
+        ? event.conversationId
+        : findConversationIdByAssistantMessage(
+            get().messagesByConversation,
+            assistantMessageId
+          );
 
     set((state) => {
-      const appliedEvent = applyStreamEventToMessages(state.messagesByConversation, event);
-      const nextPendingStreamEvents = appliedEvent.found
+      let appliedEvent = applyStreamEventToMessages(state.messagesByConversation, event);
+      let nextPendingStreamEvents = appliedEvent.found
         ? removePendingStreamEvent(
             state.pendingStreamEventsByAssistantId,
-            event.assistantMessageId
+            assistantMessageId
           )
         : {
             ...state.pendingStreamEventsByAssistantId,
-            [event.assistantMessageId]: event
+            [assistantMessageId]: event
           };
-      const capabilitySurfacePatch = getCapabilitySurfacePatch(event);
+      let effectiveEvent = event;
 
-      if (event.type === 'delta' || event.type === 'update') {
+      if (event.type === 'message-created') {
+        const pendingEvent = state.pendingStreamEventsByAssistantId[assistantMessageId];
+
+        if (pendingEvent) {
+          appliedEvent = applyStreamEventToMessages(
+            appliedEvent.messagesByConversation,
+            pendingEvent
+          );
+          effectiveEvent = pendingEvent;
+          nextPendingStreamEvents = removePendingStreamEvent(
+            nextPendingStreamEvents,
+            assistantMessageId
+          );
+        }
+      }
+
+      const capabilitySurfacePatch = getCapabilitySurfacePatch(effectiveEvent);
+      const nextStreamingAssistantIds =
+        effectiveEvent.type === 'complete' || effectiveEvent.type === 'error'
+          ? state.streamingAssistantIds.filter((id) => id !== assistantMessageId)
+          : effectiveEvent.type === 'update'
+            ? effectiveEvent.status === 'streaming'
+              ? upsertStreamingAssistantId(state.streamingAssistantIds, assistantMessageId)
+              : state.streamingAssistantIds.filter((id) => id !== assistantMessageId)
+            : effectiveEvent.type === 'delta'
+              ? upsertStreamingAssistantId(state.streamingAssistantIds, assistantMessageId)
+              : effectiveEvent.message.status === 'streaming'
+                ? upsertStreamingAssistantId(state.streamingAssistantIds, assistantMessageId)
+                : state.streamingAssistantIds.filter((id) => id !== assistantMessageId);
+
+      if (effectiveEvent.type === 'delta' || effectiveEvent.type === 'update') {
         return {
           messagesByConversation: appliedEvent.messagesByConversation,
+          streamingAssistantIds: nextStreamingAssistantIds,
           pendingStreamEventsByAssistantId: nextPendingStreamEvents,
           ...capabilitySurfacePatch
         };
@@ -1345,9 +1465,7 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
 
       return {
         messagesByConversation: appliedEvent.messagesByConversation,
-        streamingAssistantIds: state.streamingAssistantIds.filter(
-          (id) => id !== event.assistantMessageId
-        ),
+        streamingAssistantIds: nextStreamingAssistantIds,
         pendingStreamEventsByAssistantId: nextPendingStreamEvents,
         ...capabilitySurfacePatch,
         systemStatus: state.systemStatus
@@ -1362,14 +1480,17 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
       };
     });
 
-    if (isTerminalStreamEvent(event)) {
+    if (isTerminalStreamEvent(followUpEvent)) {
       if (conversationId) {
         void get().rehydrateConversationMessages(conversationId);
       }
-      if (!hasCapabilitySurfaceSnapshot(event)) {
+      if (!hasCapabilitySurfaceSnapshot(followUpEvent)) {
         void get().refreshCapabilitySurface();
       }
-    } else if (!hasCapabilitySurfaceSnapshot(event) && hasPlanTaskToolInvocation(event)) {
+    } else if (
+      !hasCapabilitySurfaceSnapshot(followUpEvent) &&
+      hasPlanTaskToolInvocation(followUpEvent)
+    ) {
       void get().refreshCapabilitySurface();
     }
   },

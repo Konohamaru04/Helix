@@ -22,6 +22,8 @@ const completedJob = {
   steps: 6,
   guidanceScale: 4,
   seed: 1,
+  frameCount: null,
+  frameRate: null,
   progress: 1,
   stage: 'Completed',
   errorMessage: null,
@@ -64,6 +66,7 @@ describe('GenerationJobCard', () => {
       },
       generation: {
         startImage: vi.fn(),
+        startVideo: vi.fn(),
         listImageModels: vi.fn(),
         listJobs: vi.fn(),
         cancelJob: vi.fn(),
@@ -130,7 +133,7 @@ describe('GenerationJobCard', () => {
     render(<GenerationJobCard job={completedJob} showPrompt={false} />);
 
     await screen.findByRole('img', { name: completedJob.prompt });
-    fireEvent.click(screen.getByRole('button', { name: 'Open generated image' }));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Open generated image' })[0]!);
 
     await waitFor(() => {
       expect(window.ollamaDesktop.chat.openLocalPath).toHaveBeenCalledWith({
@@ -188,5 +191,45 @@ describe('GenerationJobCard', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Retry job' }));
 
     expect(onRetry).toHaveBeenCalledWith('80000000-0000-4000-8000-000000000012');
+  });
+
+  it('renders a video artifact card that opens the local clip', async () => {
+    render(
+      <GenerationJobCard
+        job={{
+          ...completedJob,
+          id: '80000000-0000-4000-8000-000000000013',
+          kind: 'video',
+          mode: 'image-to-video',
+          workflowProfile: 'wan-image-to-video',
+          width: 528,
+          height: 704,
+          frameCount: 81,
+          frameRate: 16,
+          artifacts: [
+            {
+              id: '81000000-0000-4000-8000-000000000013',
+              jobId: '80000000-0000-4000-8000-000000000013',
+              kind: 'video',
+              filePath: 'E:/generated/clip.mp4',
+              previewPath: null,
+              mimeType: 'video/mp4',
+              width: 528,
+              height: 704,
+              createdAt: '2026-04-09T00:00:01.000Z'
+            }
+          ]
+        }}
+        showPrompt={false}
+      />
+    );
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Open generated video' })[0]!);
+
+    await waitFor(() => {
+      expect(window.ollamaDesktop.chat.openLocalPath).toHaveBeenCalledWith({
+        filePath: 'E:/generated/clip.mp4'
+      });
+    });
   });
 });

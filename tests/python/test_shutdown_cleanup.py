@@ -2,14 +2,15 @@ from __future__ import annotations
 
 from threading import Event
 
-from inference_server.job_queue import ImageJob, JobQueue
+from inference_server.job_queue import GenerationJobRecord, JobQueue
 from inference_server.main import monitor_parent_process
 from inference_server.model_manager import ModelManager
 
 
-def build_job(job_id: str, status: str) -> ImageJob:
-    return ImageJob(
+def build_job(job_id: str, status: str) -> GenerationJobRecord:
+    return GenerationJobRecord(
         id=job_id,
+        kind="image",
         prompt="test",
         negative_prompt=None,
         model="builtin:placeholder",
