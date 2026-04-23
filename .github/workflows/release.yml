@@ -1,0 +1,38 @@
+name: Release (self-hosted Windows)
+
+# Runs on the designated Windows build machine. Requires a GitHub Actions
+# self-hosted runner registered to this repo with labels [self-hosted, windows, helix-builder].
+# The runner must have: Node.js 22+, npm, 7-Zip at C:\Program Files\7-Zip\7z.exe,
+# and gh CLI authenticated (or rely on GITHUB_TOKEN injected below).
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch: {}
+
+concurrency:
+  group: release-windows
+  cancel-in-progress: false
+
+jobs:
+  build-and-release:
+    name: Build + upload Helix.v1.0.Windows.7z
+    runs-on: [self-hosted, windows, helix-builder]
+    timeout-minutes: 120
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          clean: true
+
+      - name: Install dependencies
+        shell: pwsh
+        run: npm ci
+
+      - name: Build, package, compress, upload
+        shell: pwsh
+        run: ./scripts/release-windows.ps1
