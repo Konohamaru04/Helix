@@ -30,9 +30,9 @@ jobs:
           clean: true
 
       - name: Install dependencies
-        shell: pwsh
+        shell: powershell
         run: npm ci
 
       - name: Build, package, compress, upload
-        shell: pwsh
+        shell: powershell
         run: ./scripts/release-windows.ps1
