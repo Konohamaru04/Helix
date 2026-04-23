@@ -20,7 +20,7 @@ $ErrorActionPreference = 'Stop'
 
 $RepoRoot   = Split-Path -Parent $PSScriptRoot
 $ReleaseDir = Join-Path $RepoRoot 'release'
-$SevenZip   = 'C:\Program Files\7-Zip\7z.exe'
+$SevenZip   = if ($env:HELIX_SEVENZIP) { $env:HELIX_SEVENZIP } else { 'E:\Softwar\7z\7z.exe' }
 $ArtifactName = 'Helix.v1.0.Windows.7z'
 $ReleaseTag = 'V1.0-Diablo'
 $Repo       = 'Konohamaru04/Helix'
