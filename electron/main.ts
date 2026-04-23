@@ -6,6 +6,7 @@ import {
   app,
   BrowserWindow,
   dialog,
+  ipcMain,
   Menu,
   type MenuItemConstructorOptions,
   shell
@@ -22,6 +23,128 @@ import { registerIpcHandlers } from '@electron/ipc/register-handlers';
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
 const SPLASH_MIN_VISIBLE_MS = 5_000;
 const SPLASH_STATUS_CHANNEL = 'helix:splash-status';
+const UPDATE_CHECK_CHANNEL = 'helix:check-updates';
+const UPDATE_CHECK_TIMEOUT_MS = 6_000;
+const GITHUB_REPO = 'Konohamaru04/Helix';
+
+type UpdateCheckResult = {
+  currentVersion: string;
+  latestVersion: string | null;
+  hasUpdate: boolean;
+  releaseUrl: string | null;
+  publishedAt: string | null;
+  latestCommit: { sha: string; message: string; date: string; url: string } | null;
+  error: string | null;
+};
+
+function compareSemver(a: string, b: string): number {
+  const parse = (v: string) =>
+    v
+      .replace(/^v/i, '')
+      .split(/[.\-+]/)
+      .map((part) => {
+        const n = Number.parseInt(part, 10);
+        return Number.isFinite(n) ? n : 0;
+      });
+  const left = parse(a);
+  const right = parse(b);
+  const len = Math.max(left.length, right.length);
+  for (let i = 0; i < len; i += 1) {
+    const li = left[i] ?? 0;
+    const ri = right[i] ?? 0;
+    if (li !== ri) return li < ri ? -1 : 1;
+  }
+  return 0;
+}
+
+async function fetchJsonWithTimeout(url: string, headers: Record<string, string>): Promise<unknown> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), UPDATE_CHECK_TIMEOUT_MS);
+  try {
+    const response = await fetch(url, { headers, signal: controller.signal });
+    if (!response.ok) {
+      throw new Error(`GitHub ${response.status} ${response.statusText}`);
+    }
+    return await response.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function fetchUpdateStatus(): Promise<UpdateCheckResult> {
+  const currentVersion = app.getVersion();
+  const headers = {
+    Accept: 'application/vnd.github+json',
+    'User-Agent': `Helix/${currentVersion}`
+  };
+  try {
+    const [releasePayload, commitsPayload] = await Promise.allSettled([
+      fetchJsonWithTimeout(`https://api.github.com/repos/${GITHUB_REPO}/releases/latest`, headers),
+      fetchJsonWithTimeout(`https://api.github.com/repos/${GITHUB_REPO}/commits?per_page=1`, headers)
+    ]);
+
+    let latestVersion: string | null = null;
+    let releaseUrl: string | null = null;
+    let publishedAt: string | null = null;
+    if (releasePayload.status === 'fulfilled') {
+      const release = releasePayload.value as {
+        tag_name?: string;
+        html_url?: string;
+        published_at?: string;
+      };
+      latestVersion = release.tag_name ?? null;
+      releaseUrl = release.html_url ?? null;
+      publishedAt = release.published_at ?? null;
+    }
+
+    let latestCommit: UpdateCheckResult['latestCommit'] = null;
+    if (commitsPayload.status === 'fulfilled' && Array.isArray(commitsPayload.value)) {
+      const first = (commitsPayload.value as Array<{
+        sha: string;
+        html_url?: string;
+        commit: { message: string; author: { date: string } };
+      }>)[0];
+      if (first) {
+        latestCommit = {
+          sha: first.sha.slice(0, 7),
+          message: ((first.commit.message ?? '').split('\n')[0] ?? '').slice(0, 140),
+          date: first.commit.author.date,
+          url: first.html_url ?? `https://github.com/${GITHUB_REPO}/commit/${first.sha}`
+        };
+      }
+    }
+
+    const hasUpdate = latestVersion !== null && compareSemver(currentVersion, latestVersion) < 0;
+    const error =
+      releasePayload.status === 'rejected' && commitsPayload.status === 'rejected'
+        ? releasePayload.reason instanceof Error
+          ? releasePayload.reason.message
+          : String(releasePayload.reason)
+        : null;
+
+    return {
+      currentVersion,
+      latestVersion,
+      hasUpdate,
+      releaseUrl,
+      publishedAt,
+      latestCommit,
+      error
+    };
+  } catch (error) {
+    return {
+      currentVersion,
+      latestVersion: null,
+      hasUpdate: false,
+      releaseUrl: null,
+      publishedAt: null,
+      latestCommit: null,
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
+}
+
+ipcMain.handle(UPDATE_CHECK_CHANNEL, () => fetchUpdateStatus());
 let appContext: DesktopAppContext | null = null;
 let shutdownInProgress = false;
 let shutdownPromise: Promise<void> | null = null;

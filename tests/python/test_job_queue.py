@@ -86,9 +86,15 @@ def _wait_for_job_status(
 
 
 class _BlockingPlaceholderManager:
-    def __init__(self, started: Event, allow_finish: Event) -> None:
+    def __init__(
+        self,
+        started: Event,
+        allow_finish: Event,
+        unload_calls: list[str] | None = None,
+    ) -> None:
         self._started = started
         self._allow_finish = allow_finish
+        self.unload_calls = [] if unload_calls is None else unload_calls
 
     def generate_image(self, request, progress_callback, is_cancelled):
         progress_callback(0.3, "Rendering placeholder image")
@@ -110,11 +116,20 @@ class _BlockingPlaceholderManager:
     def shutdown(self) -> None:
         return
 
+    def unload_idle_runtimes(self, reason: str) -> None:
+        self.unload_calls.append(reason)
+
 
 class _BlockingVideoManager:
-    def __init__(self, started: Event, allow_finish: Event) -> None:
+    def __init__(
+        self,
+        started: Event,
+        allow_finish: Event,
+        unload_calls: list[str] | None = None,
+    ) -> None:
         self._started = started
         self._allow_finish = allow_finish
+        self.unload_calls = [] if unload_calls is None else unload_calls
 
     def generate_video(self, request, progress_callback, is_cancelled):
         progress_callback(0.3, "Preparing embedded Wan 2.2 workflow")
@@ -135,6 +150,54 @@ class _BlockingVideoManager:
 
     def shutdown(self) -> None:
         return
+
+    def unload_idle_runtimes(self, reason: str) -> None:
+        self.unload_calls.append(reason)
+
+
+class _SequencedPlaceholderManager:
+    def __init__(
+        self,
+        first_started: Event,
+        allow_first_finish: Event,
+        second_started: Event,
+        allow_second_finish: Event,
+    ) -> None:
+        self._first_started = first_started
+        self._allow_first_finish = allow_first_finish
+        self._second_started = second_started
+        self._allow_second_finish = allow_second_finish
+        self._call_count = 0
+        self.unload_calls: list[str] = []
+
+    def generate_image(self, request, progress_callback, is_cancelled):
+        self._call_count += 1
+        output_path = Path(request.output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(b"fake-image")
+
+        if self._call_count == 1:
+            progress_callback(0.3, "Rendering first placeholder image")
+            self._first_started.set()
+            assert self._allow_first_finish.wait(timeout=1.0)
+        else:
+            progress_callback(0.3, "Rendering second placeholder image")
+            self._second_started.set()
+            assert self._allow_second_finish.wait(timeout=1.0)
+
+        return {
+            "file_path": str(output_path),
+            "preview_path": str(output_path),
+            "mime_type": "image/png",
+            "width": request.width,
+            "height": request.height,
+        }
+
+    def shutdown(self) -> None:
+        return
+
+    def unload_idle_runtimes(self, reason: str) -> None:
+        self.unload_calls.append(reason)
 
 
 def test_queue_state_file_tracks_active_jobs_and_cleans_up_after_completion(
@@ -263,3 +326,85 @@ def test_video_job_state_persists_frame_metadata_and_paired_wan_models(
     )
     assert completed_job["artifacts"][0]["mime_type"] == "video/mp4"
     assert not state_file.exists()
+
+
+def test_queue_unloads_cached_models_after_last_job_completes(tmp_path: Path) -> None:
+    state_file = tmp_path / "queue-state.json"
+    output_path = tmp_path / "generated.png"
+    started = Event()
+    allow_finish = Event()
+    queue = JobQueue(state_file)
+    model_manager = _BlockingPlaceholderManager(started, allow_finish)
+
+    queue.create_image_job(
+        _image_job_payload("70000000-0000-4000-8000-000000000310", output_path),
+        model_manager,
+    )
+
+    assert started.wait(timeout=1.0)
+
+    allow_finish.set()
+
+    completed_job = _wait_for_job_status(
+        queue, "70000000-0000-4000-8000-000000000310", "completed"
+    )
+    assert completed_job["artifacts"]
+    assert model_manager.unload_calls == [
+        "Generation queue became idle after a job completed"
+    ]
+
+
+def test_queue_keeps_models_loaded_while_follow_up_job_is_queued(
+    tmp_path: Path,
+) -> None:
+    state_file = tmp_path / "queue-state.json"
+    first_output = tmp_path / "first.png"
+    second_output = tmp_path / "second.png"
+    first_started = Event()
+    allow_first_finish = Event()
+    second_started = Event()
+    allow_second_finish = Event()
+    queue = JobQueue(state_file)
+    model_manager = _SequencedPlaceholderManager(
+        first_started,
+        allow_first_finish,
+        second_started,
+        allow_second_finish,
+    )
+
+    queue.create_image_job(
+        _image_job_payload("70000000-0000-4000-8000-000000000320", first_output),
+        model_manager,
+    )
+    queue.create_image_job(
+        _image_job_payload("70000000-0000-4000-8000-000000000321", second_output),
+        model_manager,
+    )
+
+    assert first_started.wait(timeout=1.0)
+    sleep(0.1)
+
+    second_job = queue.get_job("70000000-0000-4000-8000-000000000321")
+    assert second_job is not None
+    assert second_job["status"] == "queued"
+    assert second_job["stage"] == "Waiting for GPU slot"
+    assert model_manager.unload_calls == []
+
+    allow_first_finish.set()
+
+    first_completed = _wait_for_job_status(
+        queue, "70000000-0000-4000-8000-000000000320", "completed"
+    )
+    assert first_completed["artifacts"]
+    assert second_started.wait(timeout=1.0)
+    assert model_manager.unload_calls == []
+
+    allow_second_finish.set()
+
+    second_completed = _wait_for_job_status(
+        queue, "70000000-0000-4000-8000-000000000321", "completed"
+    )
+    assert second_completed["artifacts"]
+    assert model_manager.unload_calls == [
+        "Generation queue became idle after a job completed"
+    ]

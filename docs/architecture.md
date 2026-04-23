@@ -73,6 +73,7 @@ The renderer also uses the same bridge for:
 UI layout note:
 
 - the sidebar is intentionally navigation-only for workspace filters, search, and chat history
+- workspace and conversation selection now retarget the active thread immediately before lazy message hydration finishes, so a prompt submitted right after navigation cannot leak back into the previously active workspace conversation
 - workspace creation stays in the main chat surface and now requires both a name and a local folder selection up front; the composer-side workspace gear menu is limited to lightweight workspace actions such as document import
 - key transcript and sidebar entities also expose custom right-click context menus so workspace, chat, and message actions are reachable without hunting for inline affordances; the workspace context menu is also where existing workspaces can connect, change, or disconnect their local folder binding
 - settings open from a single header action, while the status bar stays focused on runtime health plus quick access to plan, agents, skills, and queue drawers
@@ -104,7 +105,7 @@ Current provider limits:
 - the NVIDIA backend is currently wired for text chat only
 - image attachments in chat context still require the Ollama multimodal path
 - native tool-calling remains enabled only on the Ollama path in this slice
-- when a provider emits inline tool-call markup or command-only slash-tool output, the bridge intercepts it, executes the requested local tool through the existing typed tool dispatcher, and asks the model to continue without exposing raw tool markup in the final transcript
+- when a provider emits inline tool-call markup or command-only slash-tool output, the bridge only auto-executes it on turns where tool use was already expected; plain conversational chat now leaves that output inert instead of silently running a tool
 
 Route decisions are persisted per assistant turn with:
 
@@ -323,6 +324,7 @@ Current VRAM behavior:
 - diffusers pipelines are cached only one-at-a-time, and loading a different diffusers model explicitly evicts the previous pipeline before the next allocation
 - switching between diffusers and the embedded ComfyUI backend explicitly tears down the inactive runtime before the next job starts
 - switching to a different ComfyUI-backed Qwen edit model restarts the embedded ComfyUI sidecar so stale model state does not accumulate across jobs
+- when the generation queue becomes empty, the Python worker unloads cached diffusers and embedded ComfyUI runtimes instead of keeping them resident between unrelated chat turns
 - before a fresh GPU runtime load, the worker checks a backend-specific free-VRAM headroom target and fails early with a clear error when cleanup still leaves too little free memory
 - before a job is even persisted or forwarded to Python, the bridge mirrors that conservative headroom policy and rejects clearly impossible GPU requests or unsupported discovered models
 - CUDA OOM failures are translated into explicit job errors instead of silent worker crashes

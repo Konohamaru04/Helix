@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { StoredMessage } from '@bridge/ipc/contracts';
 import { useAppStore } from '@renderer/store/app-store';
 
 const workspace = {
@@ -44,6 +45,35 @@ const assistantMessage = {
   correlationId: '40000000-0000-4000-8000-000000000001',
   createdAt: '2026-04-08T00:00:00.000Z',
   updatedAt: '2026-04-08T00:00:00.000Z'
+};
+
+const alternateWorkspace = {
+  id: '50000000-0000-4000-8000-000000000002',
+  name: 'Workspace B',
+  prompt: null,
+  rootPath: 'E:/WorkspaceB',
+  createdAt: '2026-04-08T00:00:00.000Z',
+  updatedAt: '2026-04-08T00:00:00.000Z'
+};
+
+const alternateConversation = {
+  id: '20000000-0000-4000-8000-000000000002',
+  workspaceId: alternateWorkspace.id,
+  title: 'Workspace B chat',
+  createdAt: '2026-04-08T00:00:00.000Z',
+  updatedAt: '2026-04-08T00:00:00.000Z'
+};
+
+const alternateUserMessage = {
+  ...userMessage,
+  id: '10000000-0000-4000-8000-000000000003',
+  conversationId: alternateConversation.id
+};
+
+const alternateAssistantMessage = {
+  ...assistantMessage,
+  id: '10000000-0000-4000-8000-000000000004',
+  conversationId: alternateConversation.id
 };
 
 describe('app-store stream buffering', () => {
@@ -541,6 +571,61 @@ describe('app-store stream buffering', () => {
     expect(state.conversations[0]?.id).toBe(conversation.id);
     expect(state.generationJobs[0]?.id).toBe(generationJob.id);
     expect(state.messagesByConversation[conversation.id]).toEqual([]);
+  });
+
+  it('does not reuse the previous workspace conversation while the next workspace is still loading', async () => {
+    const conversationMessagesDeferred: {
+      resolve: (messages: StoredMessage[]) => void;
+    } = {
+      resolve: () => undefined
+    };
+    const pendingConversationMessages = new Promise<StoredMessage[]>((resolve) => {
+      conversationMessagesDeferred.resolve = resolve;
+    });
+
+    window.ollamaDesktop.chat.getConversationMessages = vi.fn().mockImplementation((conversationId) => {
+      if (conversationId === alternateConversation.id) {
+        return pendingConversationMessages;
+      }
+
+      return Promise.resolve([]);
+    });
+    window.ollamaDesktop.chat.start = vi.fn().mockResolvedValue({
+      kind: 'chat',
+      requestId: '30000000-0000-4000-8000-000000000003',
+      model: 'llama3.2:latest',
+      conversation: alternateConversation,
+      userMessage: alternateUserMessage,
+      assistantMessage: alternateAssistantMessage
+    });
+
+    useAppStore.setState({
+      workspaces: [workspace, alternateWorkspace],
+      conversations: [conversation, alternateConversation],
+      activeWorkspaceId: workspace.id,
+      activeConversationId: conversation.id,
+      messagesByConversation: {
+        [conversation.id]: [userMessage, assistantMessage]
+      }
+    });
+
+    const selectWorkspacePromise = useAppStore.getState().selectWorkspace(alternateWorkspace.id);
+
+    expect(useAppStore.getState().activeWorkspaceId).toBe(alternateWorkspace.id);
+    expect(useAppStore.getState().activeConversationId).toBe(alternateConversation.id);
+
+    await useAppStore.getState().sendPrompt('Explain the latest status.');
+
+    expect(window.ollamaDesktop.chat.start).toHaveBeenCalledWith({
+      conversationId: alternateConversation.id,
+      workspaceId: undefined,
+      prompt: 'Explain the latest status.',
+      attachments: [],
+      model: undefined
+    });
+
+    conversationMessagesDeferred.resolve([]);
+    await selectWorkspacePromise;
   });
 
   it('retries failed generation jobs through the preload bridge and prepends the new job', async () => {

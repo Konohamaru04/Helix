@@ -1076,6 +1076,15 @@ declare global {
       onStatusUpdate: (
         listener: (state: { status: string; detail: string; progress: number | null }) => void
       ) => () => void;
+      checkForUpdates: () => Promise<{
+        currentVersion: string;
+        latestVersion: string | null;
+        hasUpdate: boolean;
+        releaseUrl: string | null;
+        publishedAt: string | null;
+        latestCommit: { sha: string; message: string; date: string; url: string } | null;
+        error: string | null;
+      }>;
     };
   }
 }

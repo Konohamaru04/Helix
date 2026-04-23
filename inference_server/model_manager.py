@@ -204,6 +204,34 @@ class ModelManager:
         gc.collect()
         self._soft_empty_cache()
 
+    def unload_idle_runtimes(self, reason: str) -> bool:
+        with self._lock:
+            active_generation_count = self._active_generation_count
+            has_diffusers_pipeline = self._pipeline is not None
+            has_placeholder_state = self.loaded_backend == "placeholder"
+
+        if active_generation_count > 0:
+            LOGGER.info(
+                "Skipping generation runtime unload while %d job(s) are still active: %s",
+                active_generation_count,
+                reason,
+            )
+            return False
+
+        had_comfyui_runtime = self._comfyui_runner.is_running()
+        had_runtime = (
+            has_diffusers_pipeline or had_comfyui_runtime or has_placeholder_state
+        )
+
+        self._clear_diffusers_runtime(reason)
+        self._shutdown_comfyui_runtime(reason)
+        had_runtime = self._clear_placeholder_runtime(reason) or had_runtime
+
+        if had_runtime:
+            self._soft_empty_cache()
+
+        return had_runtime
+
     def generate_image(
         self,
         request: ImageGenerationRequest,
@@ -868,6 +896,17 @@ class ModelManager:
         if pipeline is not None:
             self._discard_pipeline(pipeline)
             self._soft_empty_cache()
+
+    def _clear_placeholder_runtime(self, reason: str) -> bool:
+        with self._lock:
+            if self.loaded_backend != "placeholder":
+                return False
+
+            self.loaded_model = None
+            self.loaded_backend = None
+
+        LOGGER.info("Clearing placeholder runtime state: %s", reason)
+        return True
 
     def _shutdown_comfyui_runtime(self, reason: str) -> None:
         was_running = self._comfyui_runner.is_running()

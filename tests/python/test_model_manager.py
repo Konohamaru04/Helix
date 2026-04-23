@@ -299,6 +299,41 @@ def test_prepare_runtime_for_diffusers_shuts_down_running_comfyui() -> None:
     assert manager.loaded_backend is None
 
 
+def test_unload_idle_runtimes_releases_comfyui_and_cached_pipeline() -> None:
+    cache_flushes: list[str] = []
+    shutdown_calls: list[str] = []
+    runner_state = {"running": True}
+    manager = ModelManager()
+    manager.loaded_model = "Qwen-Image-Edit.gguf"
+    manager.loaded_backend = "comfyui"
+    manager._pipeline = object()
+    manager._pipeline_key = "cached-pipeline"
+    manager._soft_empty_cache = lambda: cache_flushes.append("cache")
+    manager._comfyui_runner = type(
+        "FakeComfyUIRunner",
+        (),
+        {
+            "is_running": staticmethod(lambda: runner_state["running"]),
+            "shutdown": staticmethod(
+                lambda: (
+                    shutdown_calls.append("shutdown"),
+                    runner_state.__setitem__("running", False),
+                )
+            ),
+        },
+    )()
+
+    released = manager.unload_idle_runtimes("Generation queue became idle")
+
+    assert released is True
+    assert manager.loaded_model is None
+    assert manager.loaded_backend is None
+    assert manager._pipeline is None
+    assert manager._pipeline_key is None
+    assert shutdown_calls == ["shutdown"]
+    assert len(cache_flushes) >= 2
+
+
 def test_build_pipeline_rejects_wan_gguf_in_current_flow(
     monkeypatch, tmp_path: Path
 ) -> None:

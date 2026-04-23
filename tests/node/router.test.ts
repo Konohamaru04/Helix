@@ -446,6 +446,27 @@ describe('ChatRouter', () => {
     expect(decision.reason).toBe('math-intent-tool-routing');
   });
 
+  it('does not misroute plain identity questions into the calculator tool', () => {
+    const router = new ChatRouter(createLogger('router-non-math-identity-test'));
+
+    const decision = router.decide(
+      {
+        prompt: 'What is your name?',
+        attachments: [],
+        recentMessages: [],
+        workspaceHasKnowledge: false,
+        explicitSkillId: null,
+        explicitToolId: null
+      },
+      defaultUserSettings,
+      ['llama3.2:latest']
+    );
+
+    expect(decision.activeToolId).toBeNull();
+    expect(decision.strategy).toBe('chat');
+    expect(decision.useTools).toBe(false);
+  });
+
   it('uses a direct tool route for explicit slash-tool activation', () => {
     const router = new ChatRouter(createLogger('router-explicit-tool-test'));
 

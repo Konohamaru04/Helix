@@ -445,5 +445,6 @@ contextBridge.exposeInMainWorld('helixSplash', {
     return () => {
       ipcRenderer.removeListener(channel, handler);
     };
-  }
+  },
+  checkForUpdates: () => ipcRenderer.invoke('helix:check-updates')
 });

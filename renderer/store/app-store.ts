@@ -34,6 +34,7 @@ import type {
 import { getDesktopApi } from '@renderer/lib/api';
 
 let latestSearchRequest = 0;
+let latestNavigationRequest = 0;
 
 function sortConversations(conversations: ConversationSummary[]) {
   return [...conversations].sort(
@@ -774,6 +775,7 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
 
   selectWorkspace: async (workspaceId) => {
     const state = get();
+    const navigationRequestId = ++latestNavigationRequest;
     const nextConversationId =
       state.activeConversationId &&
       state.conversations.some(
@@ -784,10 +786,13 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
         ? state.activeConversationId
         : getFirstConversationIdForWorkspace(state.conversations, workspaceId);
 
-    if (nextConversationId === null) {
-      set({ activeWorkspaceId: workspaceId, activeConversationId: null });
+    set({
+      activeWorkspaceId: workspaceId,
+      activeConversationId: nextConversationId
+    });
 
-       if (workspaceId && !(workspaceId in state.knowledgeDocumentsByWorkspace)) {
+    if (nextConversationId === null) {
+      if (workspaceId && !(workspaceId in state.knowledgeDocumentsByWorkspace)) {
         void get().refreshWorkspaceKnowledge(workspaceId);
       }
 
@@ -797,11 +802,6 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
     const existingMessages = state.messagesByConversation[nextConversationId];
 
     if (existingMessages) {
-      set({
-        activeWorkspaceId: workspaceId,
-        activeConversationId: nextConversationId
-      });
-
       if (workspaceId && !(workspaceId in state.knowledgeDocumentsByWorkspace)) {
         void get().refreshWorkspaceKnowledge(workspaceId);
       }
@@ -810,9 +810,12 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
     }
 
     const messages = await getDesktopApi().chat.getConversationMessages(nextConversationId);
+
+    if (navigationRequestId !== latestNavigationRequest) {
+      return;
+    }
+
     set((currentState) => ({
-      activeWorkspaceId: workspaceId,
-      activeConversationId: nextConversationId,
       messagesByConversation: {
         ...currentState.messagesByConversation,
         [nextConversationId]: messages
@@ -929,6 +932,8 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
   },
 
   selectConversation: async (conversationId) => {
+    const navigationRequestId = ++latestNavigationRequest;
+
     if (conversationId === null) {
       set({ activeConversationId: null });
       return;
@@ -937,18 +942,22 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
     const existing = get().messagesByConversation[conversationId];
     const conversation = get().conversations.find((item) => item.id === conversationId) ?? null;
 
+    set({
+      activeConversationId: conversationId,
+      activeWorkspaceId: conversation?.workspaceId ?? get().activeWorkspaceId
+    });
+
     if (existing) {
-      set({
-        activeConversationId: conversationId,
-        activeWorkspaceId: conversation?.workspaceId ?? get().activeWorkspaceId
-      });
       return;
     }
 
     const messages = await getDesktopApi().chat.getConversationMessages(conversationId);
+
+    if (navigationRequestId !== latestNavigationRequest) {
+      return;
+    }
+
     set((state) => ({
-      activeConversationId: conversationId,
-      activeWorkspaceId: conversation?.workspaceId ?? state.activeWorkspaceId,
       messagesByConversation: {
         ...state.messagesByConversation,
         [conversationId]: messages
@@ -1129,13 +1138,18 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
 
     const api = getDesktopApi();
     const state = get();
+    const activeConversation =
+      state.activeConversationId === null
+        ? null
+        : state.conversations.find((conversation) => conversation.id === state.activeConversationId) ??
+          null;
+    const useActiveConversation =
+      activeConversation !== null &&
+      (state.activeWorkspaceId === null || activeConversation.workspaceId === state.activeWorkspaceId);
     const selectedThinkMode = normalizeThinkModeSelection(state.selectedThinkMode);
     const accepted = await api.chat.start({
-      conversationId: state.activeConversationId ?? undefined,
-      workspaceId:
-        state.activeConversationId === null
-          ? state.activeWorkspaceId ?? undefined
-          : undefined,
+      conversationId: useActiveConversation ? activeConversation.id : undefined,
+      workspaceId: useActiveConversation ? undefined : state.activeWorkspaceId ?? undefined,
       prompt: trimmedPrompt,
       attachments,
       model: state.selectedModel || undefined,

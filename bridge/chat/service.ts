@@ -3328,6 +3328,12 @@ export class ChatService {
           prompt: input.routePlan.cleanedPrompt,
           workspaceRootPath: workspace?.rootPath ?? null
         });
+      const allowInlineToolCallAutoRecovery =
+        this.shouldAllowInlineToolCallAutoRecovery({
+          prompt: input.routePlan.cleanedPrompt,
+          routeDecision: input.routePlan.routeDecision,
+          workspaceRootPath: workspace?.rootPath ?? null
+        });
       const nativeToolCallRoundLimit = this.resolveNativeToolCallRoundLimit({
         model: accepted.model,
         prompt: input.routePlan.cleanedPrompt,
@@ -3536,7 +3542,8 @@ export class ChatService {
         doneReason: result.doneReason,
         workspaceRootPath: workspace?.rootPath ?? null,
         workspaceId: workspace?.id ?? null,
-        conversationId: accepted.conversation.id
+        conversationId: accepted.conversation.id,
+        allowAutoToolExecution: allowInlineToolCallAutoRecovery
       });
 
       content = inlineToolRecovery.content;
@@ -3680,6 +3687,7 @@ export class ChatService {
     workspaceRootPath: string | null;
     workspaceId: string | null;
     conversationId: string;
+    allowAutoToolExecution?: boolean;
   }): Promise<{
     content: string;
     doneReason: string | null;
@@ -3691,22 +3699,52 @@ export class ChatService {
     let doneReason = input.doneReason;
     const toolInvocations: ToolInvocation[] = [];
     const contextSources: ContextSource[] = [];
+    const allowAutoToolExecution = input.allowAutoToolExecution ?? false;
 
     for (let round = 0; round < INLINE_TOOL_CALL_ROUND_LIMIT; round += 1) {
       let { cleanedContent, toolCalls } = extractInlineMarkupToolCalls(content);
       const allowTextCommandRecovery = shouldRecoverTextCommandToolCalls(messages);
+      const allowRecoveredToolExecution =
+        allowAutoToolExecution || allowTextCommandRecovery;
       const jsonTextToolCallResult =
         toolCalls.length === 0 ? extractJsonTextToolCalls(content) : null;
       const autoRecoverableTextCommandResult =
         toolCalls.length === 0 ? extractTextCommandToolCalls(content) : null;
       const shouldRecoverJsonTextToolCalls =
+        allowRecoveredToolExecution &&
         jsonTextToolCallResult !== null &&
         jsonTextToolCallResult.toolCalls.length > 0 &&
         jsonTextToolCallResult.cleanedContent.length === 0;
       const shouldAutoRecoverTextCommands =
+        allowAutoToolExecution &&
         autoRecoverableTextCommandResult !== null &&
         autoRecoverableTextCommandResult.toolCalls.length > 0 &&
         autoRecoverableTextCommandResult.cleanedContent.length === 0;
+      const suppressedToolCalls =
+        toolCalls.length > 0
+          ? toolCalls
+          : jsonTextToolCallResult?.toolCalls?.length
+            ? jsonTextToolCallResult.toolCalls
+            : autoRecoverableTextCommandResult?.toolCalls ?? [];
+
+      if (!allowRecoveredToolExecution && suppressedToolCalls.length > 0) {
+        this.logger.info(
+          {
+            conversationId: input.conversationId,
+            model: input.model,
+            round: round + 1,
+            toolNames: suppressedToolCalls.map((toolCall) => toolCall.toolName)
+          },
+          'Ignored provider-emitted tool calls because tool use was not expected for this turn'
+        );
+
+        return {
+          content,
+          doneReason,
+          toolInvocations,
+          contextSources
+        };
+      }
 
       if (toolCalls.length === 0 && shouldRecoverJsonTextToolCalls) {
         toolCalls = jsonTextToolCallResult?.toolCalls ?? [];
@@ -3881,6 +3919,31 @@ export class ChatService {
       (input.workspaceRootPath !== null && looksLikeCodingTaskPrompt(input.prompt)) ||
       (input.workspaceRootPath !== null && looksLikeRepositoryAnalysisPrompt(input.prompt)) ||
       NATIVE_TOOL_LOOP_SKILL_IDS.has(input.routeDecision.activeSkillId ?? '')
+    );
+  }
+
+  private shouldAllowInlineToolCallAutoRecovery(input: {
+    prompt: string;
+    routeDecision: RouteDecision;
+    workspaceRootPath: string | null;
+  }): boolean {
+    if (input.routeDecision.useTools) {
+      return true;
+    }
+
+    if (NATIVE_TOOL_LOOP_SKILL_IDS.has(input.routeDecision.activeSkillId ?? '')) {
+      return true;
+    }
+
+    if (input.workspaceRootPath === null) {
+      return false;
+    }
+
+    return (
+      looksLikeNativeFileMutationPrompt(input.prompt) ||
+      looksLikeWorkspaceInspectionPrompt(input.prompt) ||
+      looksLikeRepositoryAnalysisPrompt(input.prompt) ||
+      looksLikeCodingTaskPrompt(input.prompt)
     );
   }
 

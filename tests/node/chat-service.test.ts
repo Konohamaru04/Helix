@@ -1764,6 +1764,7 @@ Must run in Chrome browser`;
             workspaceRootPath: string | null;
             workspaceId: string | null;
             conversationId: string;
+            allowAutoToolExecution?: boolean;
           }) => Promise<{
             content: string;
             doneReason: string | null;
@@ -1832,6 +1833,7 @@ Must run in Chrome browser`;
             workspaceRootPath: string | null;
             workspaceId: string | null;
             conversationId: string;
+            allowAutoToolExecution?: boolean;
           }) => Promise<{
             content: string;
             doneReason: string | null;
@@ -1854,7 +1856,8 @@ Must run in Chrome browser`;
         doneReason: 'stop',
         workspaceRootPath: workspaceRoot,
         workspaceId: null,
-        conversationId: 'conversation-command-only'
+        conversationId: 'conversation-command-only',
+        allowAutoToolExecution: true
       });
 
       expect(result.content).toBe(
@@ -1909,6 +1912,7 @@ Must run in Chrome browser`;
             workspaceRootPath: string | null;
             workspaceId: string | null;
             conversationId: string;
+            allowAutoToolExecution?: boolean;
           }) => Promise<{
             content: string;
             doneReason: string | null;
@@ -1932,7 +1936,8 @@ Must run in Chrome browser`;
         doneReason: 'stop',
         workspaceRootPath: workspaceRoot,
         workspaceId: null,
-        conversationId: 'conversation-json-tool-calls'
+        conversationId: 'conversation-json-tool-calls',
+        allowAutoToolExecution: true
       });
 
       expect(result.content).toBe(
@@ -1943,6 +1948,72 @@ Must run in Chrome browser`;
       ]);
       expect(result.contextSources.length).toBeGreaterThan(0);
       expect(completeChat).toHaveBeenCalledTimes(1);
+    } finally {
+      harness.database.close();
+    }
+  });
+
+  it('does not auto-recover command-only JSON tool_calls output on plain chat turns', async () => {
+    const directory = mkdtempSync(
+      path.join(tmpdir(), 'ollama-desktop-inline-json-tool-calls-plain-chat-')
+    );
+    tempDirectories.push(directory);
+    const workspaceRoot = path.join(directory, 'workspace-root');
+    mkdirSync(workspaceRoot, { recursive: true });
+    writeFileSync(path.join(workspaceRoot, 'README.md'), '# Workspace\n', 'utf8');
+    const completeChat = vi.fn();
+    const harness = createChatServiceHarness({
+      directory,
+      loggerName: 'chat-inline-json-tool-calls-plain-chat-test',
+      models: ['glm-5:cloud'],
+      completeChat
+    });
+
+    try {
+      const result = await (
+        harness.service as unknown as {
+          recoverInlineToolCalls: (input: {
+            backend: 'ollama' | 'nvidia';
+            baseUrl: string;
+            apiKey: string | null;
+            model: string;
+            messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>;
+            content: string;
+            doneReason: string | null;
+            workspaceRootPath: string | null;
+            workspaceId: string | null;
+            conversationId: string;
+            allowAutoToolExecution?: boolean;
+          }) => Promise<{
+            content: string;
+            doneReason: string | null;
+            toolInvocations: Array<{ toolId: string; status: string }>;
+            contextSources: unknown[];
+          }>;
+        }
+      ).recoverInlineToolCalls({
+        backend: 'ollama',
+        baseUrl: 'http://127.0.0.1:11434',
+        apiKey: null,
+        model: 'glm-5:cloud',
+        messages: [
+          {
+            role: 'system',
+            content: 'Normal tool guidance without a recovery marker.'
+          }
+        ],
+        content:
+          'tool_calls\n[{"id":"call_1","type":"function","function":{"name":"read","arguments":"{\\"path\\":\\"README.md\\"}"}}]',
+        doneReason: 'stop',
+        workspaceRootPath: workspaceRoot,
+        workspaceId: null,
+        conversationId: 'conversation-json-tool-calls-plain-chat'
+      });
+
+      expect(result.content).toContain('tool_calls');
+      expect(result.toolInvocations).toHaveLength(0);
+      expect(result.contextSources).toHaveLength(0);
+      expect(completeChat).not.toHaveBeenCalled();
     } finally {
       harness.database.close();
     }
@@ -1984,6 +2055,7 @@ Must run in Chrome browser`;
             workspaceRootPath: string | null;
             workspaceId: string | null;
             conversationId: string;
+            allowAutoToolExecution?: boolean;
           }) => Promise<{
             content: string;
             doneReason: string | null;
@@ -2962,6 +3034,65 @@ Must run in Chrome browser`;
             )
         )
       ).toBe(true);
+    } finally {
+      harness.database.close();
+    }
+  });
+
+  it('keeps plain conversational workspace-backed turns on the direct chat path', async () => {
+    const directory = mkdtempSync(
+      path.join(tmpdir(), 'ollama-desktop-plain-conversation-no-native-tools-')
+    );
+    tempDirectories.push(directory);
+    const streamChat = vi.fn(
+      (input: {
+        onDelta: (delta: string) => void;
+      }) => {
+        input.onDelta('My name is Helix.');
+        return Promise.resolve({
+          content: 'My name is Helix.',
+          doneReason: 'stop',
+          thinking: '',
+          toolCalls: []
+        });
+      }
+    );
+    const completeChat = vi.fn();
+    const harness = createChatServiceHarness({
+      directory,
+      loggerName: 'chat-plain-conversation-no-native-tools-test',
+      models: ['glm-5:cloud'],
+      streamChat,
+      completeChat
+    });
+
+    try {
+      const workspaceRoot = path.join(directory, 'workspace-root');
+      mkdirSync(workspaceRoot, { recursive: true });
+      writeFileSync(path.join(workspaceRoot, 'README.md'), '# Demo workspace\n', 'utf8');
+
+      const workspace = harness.repository.ensureDefaultWorkspace();
+      harness.repository.updateWorkspaceRoot(workspace.id, workspaceRoot);
+
+      const accepted = await harness.service.startChatTurn(
+        {
+          prompt: 'What is your name?',
+          workspaceId: workspace.id
+        },
+        () => undefined
+      );
+
+      await vi.waitFor(() => {
+        const messages = harness.service.listMessages(accepted.conversation.id);
+        expect(messages.at(-1)?.status).toBe('completed');
+      });
+
+      const assistantMessage = harness.service.listMessages(accepted.conversation.id).at(-1);
+
+      expect(assistantMessage?.content).toBe('My name is Helix.');
+      expect(assistantMessage?.toolInvocations ?? []).toHaveLength(0);
+      expect(streamChat).toHaveBeenCalledTimes(1);
+      expect(completeChat).not.toHaveBeenCalled();
     } finally {
       harness.database.close();
     }

@@ -152,6 +152,7 @@ class JobQueue:
         self._workers: dict[str, Thread] = {}
         self._lock = Lock()
         self._execution_lock = Lock()
+        self._model_manager: ModelManager | None = None
         self._state_file_path = (
             None if state_file_path is None else Path(state_file_path)
         )
@@ -239,6 +240,7 @@ class JobQueue:
         self, job: GenerationJobRecord, model_manager: ModelManager
     ) -> dict[str, object]:
         with self._lock:
+            self._model_manager = model_manager
             self._jobs[job.id] = job
             self._persist_state_locked()
 
@@ -262,6 +264,7 @@ class JobQueue:
         restored_count = 0
 
         with self._lock:
+            self._model_manager = model_manager
             for job in restored_jobs:
                 if job.id in self._jobs:
                     continue
@@ -309,6 +312,9 @@ class JobQueue:
                 job.completed_at = timestamp
                 job.updated_at = timestamp
                 self._persist_state_locked()
+                self._maybe_unload_idle_runtimes_locked(
+                    "Generation queue became idle after a queued job was cancelled"
+                )
 
             return job.to_dict()
 
@@ -461,6 +467,7 @@ class JobQueue:
         with self._lock:
             jobs = list(self._jobs.values())
             workers = list(self._workers.values())
+            self._model_manager = model_manager
 
             for job in jobs:
                 if job.status in ("completed", "failed", "cancelled"):
@@ -520,6 +527,9 @@ class JobQueue:
             job.updated_at = timestamp
             job.artifacts = [artifact]
             self._persist_state_locked()
+            self._maybe_unload_idle_runtimes_locked(
+                "Generation queue became idle after a job completed"
+            )
 
     def _mark_cancelled(self, job_id: str) -> None:
         with self._lock:
@@ -531,6 +541,9 @@ class JobQueue:
             job.completed_at = timestamp
             job.updated_at = timestamp
             self._persist_state_locked()
+            self._maybe_unload_idle_runtimes_locked(
+                "Generation queue became idle after a job was cancelled"
+            )
 
     def _mark_failed(self, job_id: str, error_message: str) -> None:
         with self._lock:
@@ -542,6 +555,9 @@ class JobQueue:
             job.completed_at = timestamp
             job.updated_at = timestamp
             self._persist_state_locked()
+            self._maybe_unload_idle_runtimes_locked(
+                "Generation queue became idle after a job failed"
+            )
 
     def _is_cancelled(self, job_id: str) -> bool:
         with self._lock:
@@ -734,3 +750,14 @@ class JobQueue:
             self._state_file_path.unlink(missing_ok=True)
         except Exception:
             return
+
+    def _maybe_unload_idle_runtimes_locked(self, reason: str) -> None:
+        model_manager = self._model_manager
+
+        if model_manager is None:
+            return
+
+        if any(job.status in ("queued", "running") for job in self._jobs.values()):
+            return
+
+        model_manager.unload_idle_runtimes(reason)

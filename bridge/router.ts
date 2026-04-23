@@ -59,10 +59,18 @@ function containsLikelyDirectoryPath(prompt: string): boolean {
 
 function looksLikeMathPrompt(prompt: string): boolean {
   const trimmed = prompt.trim();
+  const hasNumericExpression =
+    /\d/.test(trimmed) ||
+    /(?:^|[\s(])(?:plus|minus|times|multipl(?:y|ied)|divide|divided|mod(?:ulo)?|percent)\b/i.test(
+      trimmed
+    ) ||
+    /\b(?:sqrt|square root|cube root|factorial)\b/i.test(trimmed) ||
+    /[()+\-*/%^]/.test(trimmed);
 
   return (
     /^[0-9+\-*/().,%\s]+$/.test(trimmed) ||
-    /^(calculate|compute|evaluate|what is|what's|solve)\b/i.test(trimmed)
+    /^(calculate|compute|evaluate|solve)\b/i.test(trimmed) ||
+    (/^(what is|what's)\b/i.test(trimmed) && hasNumericExpression)
   );
 }
 
