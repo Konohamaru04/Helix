@@ -12,7 +12,7 @@ import {
   shell
 } from 'electron';
 import { createDesktopAppContext, type DesktopAppContext } from '@bridge/app-context';
-import { APP_DISPLAY_NAME } from '@bridge/branding';
+import { APP_DISPLAY_NAME, APP_WINDOWS_APP_USER_MODEL_ID } from '@bridge/branding';
 import { createLogger } from '@bridge/logging/logger';
 import {
   DeferredPythonRuntimeProvisioner,
@@ -153,6 +153,14 @@ let splashWindow: BrowserWindow | null = null;
 let splashShownAt = 0;
 let startupLogger: Logger | null = null;
 
+function configureAppIdentity() {
+  app.setName(APP_DISPLAY_NAME);
+
+  if (process.platform === 'win32') {
+    app.setAppUserModelId(APP_WINDOWS_APP_USER_MODEL_ID);
+  }
+}
+
 function getPreloadPath() {
   return path.join(currentDir, '../preload/preload.mjs');
 }
@@ -162,8 +170,6 @@ function getRuntimeRootPath() {
 }
 
 function configureAppPaths() {
-  app.setName(APP_DISPLAY_NAME);
-
   const sessionDataPath = path.join(app.getPath('userData'), 'session');
   mkdirSync(sessionDataPath, { recursive: true });
   app.setPath('sessionData', sessionDataPath);
@@ -228,7 +234,7 @@ function delay(ms: number) {
 function pushSplashStatus(state: DeferredPythonSplashState) {
   const window = splashWindow;
 
-  if (!window || window.isDestroyed()) {
+  if (!window || window.isDestroyed() || window.webContents.isDestroyed()) {
     return;
   }
 
@@ -242,6 +248,49 @@ function closeSplashWindow() {
   if (window && !window.isDestroyed()) {
     window.close();
   }
+}
+
+function focusBrowserWindow(window: BrowserWindow) {
+  if (window.isDestroyed()) {
+    return;
+  }
+
+  if (window.isMinimized()) {
+    window.restore();
+  }
+
+  if (!window.isVisible()) {
+    window.show();
+  }
+
+  window.focus();
+}
+
+async function focusOrCreateMainWindow(reason: string) {
+  if (shutdownInProgress) {
+    return;
+  }
+
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    appContext?.logger.info({ reason }, 'Focusing existing main window');
+    focusBrowserWindow(mainWindow);
+    return;
+  }
+
+  const fallbackWindow = BrowserWindow.getAllWindows().find((window) => !window.isDestroyed());
+  if (fallbackWindow) {
+    appContext?.logger.info({ reason }, 'Focusing existing Electron window');
+    focusBrowserWindow(fallbackWindow);
+    return;
+  }
+
+  if (!app.isReady() || !appContext) {
+    appContext?.logger.info({ reason }, 'Window activation deferred until startup completes');
+    return;
+  }
+
+  appContext.logger.info({ reason }, 'Creating main window for app activation');
+  await createMainWindow();
 }
 
 async function createSplashWindow() {
@@ -368,11 +417,75 @@ async function createMainWindow() {
   });
 
   window.webContents.on('did-finish-load', () => {
+    rendererCrashCount = 0;
     void revealMainWindow(window);
   });
 
   window.webContents.on('render-process-gone', (_event, details) => {
     appContext?.logger.error({ details }, 'Renderer process exited unexpectedly');
+
+    if (details.reason === 'crashed' || details.reason === 'killed') {
+      rendererCrashCount++;
+      const RELOAD_DELAY_MS = 2_000;
+
+      if (rendererCrashCount >= RENDERER_CRASH_THRESHOLD) {
+        appContext?.logger.warn(
+          { rendererCrashCount, threshold: RENDERER_CRASH_THRESHOLD },
+          'Renderer crashed too many times — disabling hardware acceleration'
+        );
+        app.disableHardwareAcceleration();
+      }
+
+      appContext?.logger.info(
+        { reason: details.reason, exitCode: details.exitCode, rendererCrashCount, reloadInMs: RELOAD_DELAY_MS },
+        'Attempting renderer reload after crash'
+      );
+      setTimeout(() => {
+        if (window.isDestroyed()) {
+          return;
+        }
+
+        if (!window.webContents.isDestroyed()) {
+          try {
+            window.webContents.reload();
+            appContext?.logger.info('Renderer reloaded after crash');
+          } catch (reloadError) {
+            appContext?.logger.error(
+              { error: reloadError },
+              'Failed to reload renderer after crash — closing and recreating window'
+            );
+            window.close();
+            void createMainWindow();
+          }
+        } else {
+          appContext?.logger.info('WebContents destroyed — closing and recreating window');
+          window.close();
+          void createMainWindow();
+        }
+      }, RELOAD_DELAY_MS);
+    }
+  });
+
+  window.webContents.on('unresponsive', () => {
+    appContext?.logger.warn('Renderer process became unresponsive');
+    const UNRESPONSIVE_KILL_DELAY_MS = 15_000;
+    setTimeout(() => {
+      if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
+        appContext?.logger.warn(
+          { killInMs: UNRESPONSIVE_KILL_DELAY_MS },
+          'Renderer still unresponsive — will force close and recreate'
+        );
+        try {
+          window.webContents.forcefullyCrashRenderer();
+        } catch {
+          // forcefullyCrashRenderer may throw if already gone
+        }
+      }
+    }, UNRESPONSIVE_KILL_DELAY_MS);
+  });
+
+  window.webContents.on('responsive', () => {
+    appContext?.logger.info('Renderer process became responsive again');
   });
 
   if (process.env.ELECTRON_RENDERER_URL) {
@@ -470,37 +583,84 @@ process.on('exit', () => {
   emergencyDisposeAppContext();
 });
 
-void app
-  .whenReady()
-  .then(async () => {
-    configureAppPaths();
-    await createSplashWindow().catch((error: unknown) => {
-      console.warn('Unable to create splash window:', error);
-    });
-    await bootstrap();
+let gpuCrashCount = 0;
+let rendererCrashCount = 0;
+const GPU_CRASH_THRESHOLD = 3;
+const RENDERER_CRASH_THRESHOLD = 3;
 
-    app.on('activate', () => {
-      if (BrowserWindow.getAllWindows().length === 0) {
-        void createMainWindow();
-      }
-    });
-  })
-  .catch((error: unknown) => {
-    closeSplashWindow();
-    if (appContext) {
-      appContext.logger.error({ error }, 'Electron bootstrap failed');
-    } else if (startupLogger) {
-      startupLogger.error({ error }, 'Electron bootstrap failed before app context startup');
-    } else {
-      console.error('Electron bootstrap failed (no app context):', error);
-    }
+app.on('child-process-gone', (_event, details) => {
+  if (details.type !== 'GPU') {
+    return;
+  }
 
-    dialog.showErrorBox(
-      'Startup Error',
-      error instanceof Error ? error.message : 'Electron bootstrap failed.'
+  gpuCrashCount++;
+  appContext?.logger.error({ details, gpuCrashCount }, 'GPU process crashed');
+
+  if (gpuCrashCount >= GPU_CRASH_THRESHOLD) {
+    appContext?.logger.warn(
+      { gpuCrashCount, threshold: GPU_CRASH_THRESHOLD },
+      'GPU process crashed too many times — disabling hardware acceleration and restarting'
     );
-    app.quit();
+    app.disableHardwareAcceleration();
+  }
+
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
+      try {
+        window.webContents.reload();
+        appContext?.logger.info('Reloaded renderer after GPU process crash');
+      } catch {
+        // ignore reload failures
+      }
+    }
+  }
+});
+
+configureAppIdentity();
+
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+
+if (!hasSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', (_event, argv, workingDirectory) => {
+    appContext?.logger.info(
+      { argv, workingDirectory },
+      'Received second app instance request; focusing existing window'
+    );
+    void focusOrCreateMainWindow('second-instance');
   });
+
+  void app
+    .whenReady()
+    .then(async () => {
+      configureAppPaths();
+      await createSplashWindow().catch((error: unknown) => {
+        console.warn('Unable to create splash window:', error);
+      });
+      await bootstrap();
+
+      app.on('activate', () => {
+        void focusOrCreateMainWindow('activate');
+      });
+    })
+    .catch((error: unknown) => {
+      closeSplashWindow();
+      if (appContext) {
+        appContext.logger.error({ error }, 'Electron bootstrap failed');
+      } else if (startupLogger) {
+        startupLogger.error({ error }, 'Electron bootstrap failed before app context startup');
+      } else {
+        console.error('Electron bootstrap failed (no app context):', error);
+      }
+
+      dialog.showErrorBox(
+        'Startup Error',
+        error instanceof Error ? error.message : 'Electron bootstrap failed.'
+      );
+      app.quit();
+    });
+}
 
 app.on('before-quit', (event) => {
   if (shutdownInProgress) {

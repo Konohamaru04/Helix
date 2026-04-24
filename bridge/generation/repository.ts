@@ -379,6 +379,62 @@ export class GenerationRepository {
     return job;
   }
 
+  getArtifact(artifactId: string): GenerationArtifact | null {
+    const row = this.database.connection
+      .prepare(`
+        SELECT
+          id,
+          job_id,
+          kind,
+          file_path,
+          preview_path,
+          mime_type,
+          width,
+          height,
+          created_at
+        FROM generation_artifacts
+        WHERE id = ?
+        LIMIT 1
+      `)
+      .get(artifactId) as GenerationArtifactRow | undefined;
+
+    if (!row) {
+      return null;
+    }
+
+    return generationArtifactSchema.parse({
+      id: row.id,
+      jobId: row.job_id,
+      kind: row.kind,
+      filePath: row.file_path,
+      previewPath: row.preview_path,
+      mimeType: row.mime_type,
+      width: row.width,
+      height: row.height,
+      createdAt: row.created_at
+    });
+  }
+
+  deleteArtifact(artifactId: string): GenerationJob {
+    const artifact = this.getArtifact(artifactId);
+
+    if (!artifact) {
+      throw new Error(`Generation artifact ${artifactId} was not found.`);
+    }
+
+    this.database.connection
+      .prepare('DELETE FROM generation_artifacts WHERE id = ?')
+      .run(artifactId);
+
+    const job = this.getJob(artifact.jobId);
+
+    if (!job) {
+      throw new Error(`Generation job ${artifact.jobId} was not found after artifact delete.`);
+    }
+
+    return job;
+  }
+
   private hydrateJobs(rows: GenerationJobRow[]): GenerationJob[] {
     const jobIds = rows.map((row) => row.id);
     const referenceImagesByJobId = this.listReferenceImagesByJobIds(jobIds);

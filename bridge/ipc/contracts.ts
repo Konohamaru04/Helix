@@ -268,6 +268,24 @@ export const generationJobSchema = z.object({
   artifacts: z.array(generationArtifactSchema)
 });
 
+export const generationGalleryItemSchema = z.object({
+  id: z.string().min(1),
+  artifactId: uuidSchema.nullable(),
+  jobId: uuidSchema.nullable(),
+  kind: generationArtifactKindSchema,
+  filePath: z.string().min(1),
+  previewPath: z.string().min(1).nullable(),
+  mimeType: z.string().min(1),
+  width: z.number().int().positive().nullable(),
+  height: z.number().int().positive().nullable(),
+  frameCount: z.number().int().positive().nullable(),
+  frameRate: z.number().positive().nullable(),
+  prompt: z.string().min(1).nullable(),
+  model: z.string().min(1).nullable(),
+  createdAt: timestampSchema,
+  completedAt: timestampSchema.nullable()
+});
+
 export const storedMessageSchema = z.object({
   id: uuidSchema,
   conversationId: uuidSchema,
@@ -423,6 +441,7 @@ export const userSettingsSchema = z.object({
   videoGenerationLowNoiseModel: z.string(),
   pythonPort: z.number().int().min(1024).max(65535),
   streamingMascotEnabled: z.boolean(),
+  notificationsEnabled: z.boolean(),
   theme: z.enum(['system', 'light', 'dark'])
 });
 
@@ -571,6 +590,13 @@ export const retryGenerationJobInputSchema = z.object({
   jobId: uuidSchema
 });
 
+export const deleteGenerationArtifactInputSchema = z.object({
+  artifactId: uuidSchema.optional(),
+  filePath: z.string().trim().min(1).optional()
+}).refine((input) => Boolean(input.artifactId || input.filePath), {
+  message: 'Either artifactId or filePath is required.'
+});
+
 export const searchConversationsInputSchema = z.object({
   query: z.string().trim().min(1)
 });
@@ -697,6 +723,24 @@ export const editMessageInputSchema = z.object({
   think: ollamaThinkModeSchema.optional()
 });
 
+export const generationConfirmationSelectionSchema = z.enum(['image', 'video', 'chat']);
+
+export const generationConfirmationOptionSchema = z.object({
+  selection: generationConfirmationSelectionSchema,
+  label: z.string().min(1),
+  description: z.string().min(1),
+  recommended: z.boolean().default(false)
+});
+
+export const confirmGenerationIntentInputSchema = z.object({
+  conversationId: uuidSchema,
+  prompt: z.string().trim().min(1),
+  attachments: z.array(messageAttachmentSchema).max(8).optional(),
+  selection: generationConfirmationSelectionSchema,
+  model: z.string().trim().min(1).optional(),
+  think: ollamaThinkModeSchema.optional()
+});
+
 export const regenerateResponseInputSchema = z.object({
   assistantMessageId: uuidSchema,
   model: z.string().trim().min(1).optional(),
@@ -757,6 +801,15 @@ export const chatStartAcceptedSchema = z.discriminatedUnion('kind', [
     conversation: conversationSummarySchema,
     job: generationJobSchema,
     model: z.string().min(1)
+  }),
+  z.object({
+    kind: z.literal('generation-confirmation'),
+    requestId: uuidSchema,
+    conversation: conversationSummarySchema,
+    prompt: z.string().trim().min(1),
+    attachments: z.array(messageAttachmentSchema).max(8),
+    detectedIntent: z.enum(['image', 'video']),
+    options: z.array(generationConfirmationOptionSchema).min(2).max(3)
   })
 ]);
 
@@ -861,6 +914,7 @@ export type MessageUsage = z.infer<typeof messageUsageSchema>;
 export type RouteTrace = z.infer<typeof routeTraceSchema>;
 export type KnowledgeDocument = z.infer<typeof knowledgeDocumentSchema>;
 export type GenerationArtifact = z.infer<typeof generationArtifactSchema>;
+export type GenerationGalleryItem = z.infer<typeof generationGalleryItemSchema>;
 export type GenerationJob = z.infer<typeof generationJobSchema>;
 export type StoredMessage = z.infer<typeof storedMessageSchema>;
 export type ImageGenerationModelOption = z.infer<typeof imageGenerationModelOptionSchema>;
@@ -893,6 +947,15 @@ export type ListImageGenerationModelsInput = z.infer<
 export type ListGenerationJobsInput = z.infer<typeof listGenerationJobsInputSchema>;
 export type CancelGenerationJobInput = z.infer<typeof cancelGenerationJobInputSchema>;
 export type RetryGenerationJobInput = z.infer<typeof retryGenerationJobInputSchema>;
+export type DeleteGenerationArtifactInput = z.infer<
+  typeof deleteGenerationArtifactInputSchema
+>;
+export type GenerationConfirmationSelection = z.infer<
+  typeof generationConfirmationSelectionSchema
+>;
+export type GenerationConfirmationOption = z.infer<
+  typeof generationConfirmationOptionSchema
+>;
 export type ChatTurnAccepted = z.infer<typeof chatTurnAcceptedSchema>;
 export type ChatStartAccepted = z.infer<typeof chatStartAcceptedSchema>;
 export type ChatStreamEvent = z.infer<typeof chatStreamEventSchema>;
@@ -922,6 +985,9 @@ export type ExitWorktreeInput = z.infer<typeof exitWorktreeInputSchema>;
 export type ExportConversationInput = z.infer<typeof exportConversationInputSchema>;
 export type ExportConversationResult = z.infer<typeof exportConversationResultSchema>;
 export type EditMessageInput = z.infer<typeof editMessageInputSchema>;
+export type ConfirmGenerationIntentInput = z.infer<
+  typeof confirmGenerationIntentInputSchema
+>;
 export type RegenerateResponseInput = z.infer<typeof regenerateResponseInputSchema>;
 export type CancelChatTurnInput = z.infer<typeof cancelChatTurnInputSchema>;
 export type DeleteConversationInput = z.infer<typeof deleteConversationInputSchema>;
@@ -951,9 +1017,12 @@ export const IpcChannels = {
   generationStartVideo: 'generation:start-video',
   generationListImageModels: 'generation:list-image-models',
   generationListJobs: 'generation:list-jobs',
+  generationListGallery: 'generation:list-gallery',
   generationCancelJob: 'generation:cancel-job',
   generationRetryJob: 'generation:retry-job',
+  generationDeleteArtifact: 'generation:delete-artifact',
   chatPickAttachments: 'chat:pick-attachments',
+  chatConfirmGeneration: 'chat:confirm-generation',
   chatEditAndResend: 'chat:edit-and-resend',
   chatRegenerateResponse: 'chat:regenerate-response',
   chatCancelTurn: 'chat:cancel-turn',
@@ -1017,12 +1086,15 @@ export interface DesktopApi {
       input?: ListImageGenerationModelsInput
     ) => Promise<ImageGenerationModelCatalog>;
     listJobs: (input?: ListGenerationJobsInput) => Promise<GenerationJob[]>;
+    listGallery: () => Promise<GenerationGalleryItem[]>;
     cancelJob: (input: CancelGenerationJobInput) => Promise<GenerationJob>;
     retryJob: (input: RetryGenerationJobInput) => Promise<ImageGenerationStartResult>;
+    deleteArtifact: (input: DeleteGenerationArtifactInput) => Promise<void>;
     onJobEvent: (listener: (event: GenerationStreamEvent) => void) => Unsubscribe;
   };
   chat: {
     start: (input: ChatTurnRequest) => Promise<ChatStartAccepted>;
+    confirmGenerationIntent: (input: ConfirmGenerationIntentInput) => Promise<ChatStartAccepted>;
     pickAttachments: () => Promise<MessageAttachment[]>;
     editAndResend: (input: EditMessageInput) => Promise<ChatTurnAccepted>;
     regenerateResponse: (input: RegenerateResponseInput) => Promise<ChatTurnAccepted>;

@@ -227,6 +227,98 @@ describe('GenerationService', () => {
     harness.database.close();
   });
 
+  it('lists generated gallery media without duplicate preview companion images', async () => {
+    const harness = createGenerationHarness();
+    const completedAt = '2026-04-08T00:00:01.000Z';
+    const trackedJobId = '930f3926-8321-4e54-9620-46933f5360bd';
+    const orphanJobId = '45000000-0000-4000-8000-000000000001';
+    const imagesDirectory = path.join(harness.directory, 'generated-images', 'images');
+    mkdirSync(imagesDirectory, { recursive: true });
+
+    const trackedImagePath = path.join(imagesDirectory, `${trackedJobId}.png`);
+    const trackedPreviewPath = path.join(imagesDirectory, `${trackedJobId}-preview.png`);
+    const orphanImagePath = path.join(imagesDirectory, `${orphanJobId}.png`);
+    const orphanPreviewPath = path.join(imagesDirectory, `${orphanJobId}-preview.png`);
+
+    writeFileSync(trackedImagePath, 'image');
+    writeFileSync(trackedPreviewPath, 'preview');
+    writeFileSync(orphanImagePath, 'orphan-image');
+    writeFileSync(orphanPreviewPath, 'orphan-preview');
+
+    harness.generationRepository.upsertJob({
+      id: trackedJobId,
+      workspaceId: harness.defaultWorkspace.id,
+      conversationId: harness.conversation.id,
+      kind: 'image',
+      mode: 'text-to-image',
+      workflowProfile: 'default',
+      status: 'completed',
+      prompt: 'Generate a gallery image',
+      negativePrompt: null,
+      model: 'builtin:placeholder',
+      backend: 'placeholder',
+      width: 768,
+      height: 768,
+      steps: 6,
+      guidanceScale: 4,
+      seed: null,
+      progress: 1,
+      stage: 'Completed',
+      errorMessage: null,
+      createdAt: completedAt,
+      updatedAt: completedAt,
+      startedAt: completedAt,
+      completedAt,
+      referenceImages: []
+    });
+    harness.generationRepository.replaceArtifacts(trackedJobId, [
+      {
+        id: '80000000-0000-4000-8000-000000000002',
+        jobId: trackedJobId,
+        kind: 'image',
+        filePath: trackedImagePath,
+        previewPath: trackedPreviewPath,
+        mimeType: 'image/png',
+        width: 768,
+        height: 768,
+        createdAt: completedAt
+      }
+    ]);
+
+    const items = await harness.service.listGalleryItems();
+    const fileNames = items.map((item) => path.basename(item.filePath));
+
+    expect(fileNames).toContain(`${trackedJobId}.png`);
+    expect(fileNames).toContain(`${orphanJobId}.png`);
+    expect(fileNames).not.toContain(`${trackedJobId}-preview.png`);
+    expect(fileNames).not.toContain(`${orphanJobId}-preview.png`);
+
+    harness.database.close();
+  });
+
+  it('deletes filesystem gallery media with preview companion files', async () => {
+    const harness = createGenerationHarness();
+    const orphanJobId = '45000000-0000-4000-8000-000000000002';
+    const imagesDirectory = path.join(harness.directory, 'generated-images', 'images');
+    mkdirSync(imagesDirectory, { recursive: true });
+
+    const orphanImagePath = path.join(imagesDirectory, `${orphanJobId}.png`);
+    const orphanPreviewPath = path.join(imagesDirectory, `${orphanJobId}-preview.png`);
+
+    writeFileSync(orphanImagePath, 'orphan-image');
+    writeFileSync(orphanPreviewPath, 'orphan-preview');
+
+    await harness.service.deleteArtifact({ filePath: orphanImagePath });
+
+    const items = await harness.service.listGalleryItems();
+    const fileNames = items.map((item) => path.basename(item.filePath));
+
+    expect(fileNames).not.toContain(`${orphanJobId}.png`);
+    expect(fileNames).not.toContain(`${orphanJobId}-preview.png`);
+
+    harness.database.close();
+  });
+
   it('marks orphaned pending jobs as failed when the Python worker loses state', async () => {
     const harness = createGenerationHarness();
     const queuedJob = harness.generationRepository.upsertJob({

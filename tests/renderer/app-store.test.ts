@@ -118,8 +118,10 @@ describe('app-store stream buffering', () => {
           warnings: []
         }),
         listJobs: vi.fn().mockResolvedValue([]),
+        listGallery: vi.fn().mockResolvedValue([]),
         cancelJob: vi.fn(),
         retryJob: vi.fn(),
+        deleteArtifact: vi.fn(),
         onJobEvent: vi.fn()
       },
       chat: {
@@ -131,6 +133,7 @@ describe('app-store stream buffering', () => {
           userMessage,
           assistantMessage
         }),
+        confirmGenerationIntent: vi.fn(),
         pickAttachments: vi.fn(),
         editAndResend: vi.fn(),
         regenerateResponse: vi.fn(),
@@ -199,6 +202,7 @@ describe('app-store stream buffering', () => {
         videoGenerationLowNoiseModel: '',
         pythonPort: 8765,
         streamingMascotEnabled: true,
+        notificationsEnabled: true,
         theme: 'system'
       },
       systemStatus: {
@@ -249,6 +253,7 @@ describe('app-store stream buffering', () => {
       workspaces: [workspace],
       conversations: [],
       generationJobs: [],
+      generationGalleryItems: [],
       imageGenerationModelCatalog: null,
       availableTools: [],
       availableSkills: [],
@@ -266,9 +271,11 @@ describe('app-store stream buffering', () => {
       activeWorkspaceId: workspace.id,
       activeConversationId: null,
       messagesByConversation: {},
+      pendingGenerationConfirmation: null,
       selectedModel: '',
       settingsDrawerOpen: false,
       queueDrawerOpen: false,
+      galleryDrawerOpen: false,
       streamingAssistantIds: [],
       pendingStreamEventsByAssistantId: {},
       lastExportPath: null,
@@ -525,7 +532,45 @@ describe('app-store stream buffering', () => {
     });
   });
 
-  it('activates the conversation and appends inline generation jobs when chat start auto-routes to image generation', async () => {
+  it('stores pending generation confirmation when chat start detects a generation turn', async () => {
+    window.ollamaDesktop.chat.start = vi.fn().mockResolvedValue({
+      kind: 'generation-confirmation',
+      requestId: '30000000-0000-4000-8000-000000000002',
+      conversation,
+      prompt: 'Now swap their clothing',
+      attachments: [],
+      detectedIntent: 'image',
+      options: [
+        {
+          selection: 'image',
+          label: 'Generate Image',
+          description: 'Queue this prompt as a new image generation job.',
+          recommended: true
+        },
+        {
+          selection: 'chat',
+          label: 'Continue Chat',
+          description: 'Keep this request in the normal text chat flow.',
+          recommended: false
+        }
+      ]
+    });
+
+    const resultKind = await useAppStore.getState().sendPrompt('Now swap their clothing');
+
+    const state = useAppStore.getState();
+    expect(resultKind).toBe('generation-confirmation');
+    expect(state.activeConversationId).toBe(conversation.id);
+    expect(state.conversations[0]?.id).toBe(conversation.id);
+    expect(state.pendingGenerationConfirmation?.conversation.id).toBe(conversation.id);
+    expect(state.pendingGenerationConfirmation?.options.map((option) => option.label)).toEqual([
+      'Generate Image',
+      'Continue Chat'
+    ]);
+    expect(state.messagesByConversation[conversation.id]).toEqual([]);
+  });
+
+  it('confirms a pending generation selection through the preload bridge', async () => {
     const generationJob = {
       id: '80000000-0000-4000-8000-000000000001',
       workspaceId: workspace.id,
@@ -556,21 +601,50 @@ describe('app-store stream buffering', () => {
       artifacts: []
     };
 
-    window.ollamaDesktop.chat.start = vi.fn().mockResolvedValue({
+    useAppStore.setState({
+      pendingGenerationConfirmation: {
+        kind: 'generation-confirmation',
+        requestId: '30000000-0000-4000-8000-000000000002',
+        conversation,
+        prompt: 'Now swap their clothing',
+        attachments: [],
+        detectedIntent: 'image',
+        options: [
+          {
+            selection: 'image',
+            label: 'Generate Image',
+            description: 'Queue this prompt as a new image generation job.',
+            recommended: true
+          },
+          {
+            selection: 'chat',
+            label: 'Continue Chat',
+            description: 'Keep this request in the normal text chat flow.',
+            recommended: false
+          }
+        ]
+      }
+    });
+    window.ollamaDesktop.chat.confirmGenerationIntent = vi.fn().mockResolvedValue({
       kind: 'generation',
-      requestId: '30000000-0000-4000-8000-000000000002',
+      requestId: '30000000-0000-4000-8000-000000000003',
       conversation,
       job: generationJob,
       model: generationJob.model
     });
 
-    await useAppStore.getState().sendPrompt('Now swap their clothing');
+    const resultKind = await useAppStore.getState().confirmGenerationSelection('image');
 
-    const state = useAppStore.getState();
-    expect(state.activeConversationId).toBe(conversation.id);
-    expect(state.conversations[0]?.id).toBe(conversation.id);
-    expect(state.generationJobs[0]?.id).toBe(generationJob.id);
-    expect(state.messagesByConversation[conversation.id]).toEqual([]);
+    expect(resultKind).toBe('generation');
+    expect(window.ollamaDesktop.chat.confirmGenerationIntent).toHaveBeenCalledWith({
+      conversationId: conversation.id,
+      prompt: 'Now swap their clothing',
+      attachments: [],
+      selection: 'image',
+      model: undefined
+    });
+    expect(useAppStore.getState().pendingGenerationConfirmation).toBeNull();
+    expect(useAppStore.getState().generationJobs[0]?.id).toBe(generationJob.id);
   });
 
   it('does not reuse the previous workspace conversation while the next workspace is still loading', async () => {
@@ -680,5 +754,151 @@ describe('app-store stream buffering', () => {
       jobId: failedJob.id
     });
     expect(useAppStore.getState().generationJobs[0]?.id).toBe(retriedJob.id);
+  });
+
+  it('deletes generation artifacts through the preload bridge and updates the job', async () => {
+    const completedJob = {
+      id: '80000000-0000-4000-8000-000000000012',
+      workspaceId: workspace.id,
+      conversationId: conversation.id,
+      kind: 'image' as const,
+      mode: 'text-to-image' as const,
+      workflowProfile: 'default' as const,
+      status: 'completed' as const,
+      prompt: 'A quiet gallery',
+      negativePrompt: null,
+      model: 'builtin:placeholder',
+      backend: 'placeholder' as const,
+      width: 768,
+      height: 768,
+      steps: 6,
+      guidanceScale: 4,
+      seed: null,
+      frameCount: null,
+      frameRate: null,
+      progress: 1,
+      stage: 'Completed',
+      errorMessage: null,
+      createdAt: '2026-04-08T00:00:00.000Z',
+      updatedAt: '2026-04-08T00:00:00.000Z',
+      startedAt: '2026-04-08T00:00:00.000Z',
+      completedAt: '2026-04-08T00:00:00.000Z',
+      referenceImages: [],
+      artifacts: [
+        {
+          id: '81000000-0000-4000-8000-000000000001',
+          jobId: '80000000-0000-4000-8000-000000000012',
+          kind: 'image' as const,
+          filePath: 'E:/generated/gallery.png',
+          previewPath: null,
+          mimeType: 'image/png',
+          width: 768,
+          height: 768,
+          createdAt: '2026-04-08T00:00:00.000Z'
+        }
+      ]
+    };
+    const updatedJob = {
+      ...completedJob,
+      artifacts: []
+    };
+    const artifactId = completedJob.artifacts[0]?.id;
+
+    window.ollamaDesktop.generation.deleteArtifact = vi.fn().mockResolvedValue(undefined);
+    window.ollamaDesktop.generation.listJobs = vi.fn().mockResolvedValue([updatedJob]);
+    window.ollamaDesktop.generation.listGallery = vi.fn().mockResolvedValue([]);
+    useAppStore.setState({
+      generationJobs: [completedJob],
+      generationGalleryItems: [
+        {
+          id: artifactId ?? '',
+          artifactId: artifactId ?? null,
+          jobId: completedJob.id,
+          kind: 'image',
+          filePath: 'E:/generated/gallery.png',
+          previewPath: null,
+          mimeType: 'image/png',
+          width: 768,
+          height: 768,
+          frameCount: null,
+          frameRate: null,
+          prompt: completedJob.prompt,
+          model: completedJob.model,
+          createdAt: '2026-04-08T00:00:00.000Z',
+          completedAt: '2026-04-08T00:00:00.000Z'
+        }
+      ]
+    });
+
+    expect(artifactId).toBeDefined();
+    await useAppStore.getState().deleteGenerationArtifact(artifactId ?? '');
+
+    expect(window.ollamaDesktop.generation.deleteArtifact).toHaveBeenCalledWith({
+      artifactId
+    });
+    expect(useAppStore.getState().generationJobs[0]?.artifacts).toEqual([]);
+  });
+
+  it('refreshes the gallery when opening the gallery drawer', async () => {
+    const galleryItem = {
+      id: 'file:gallery-image',
+      artifactId: null,
+      jobId: null,
+      kind: 'image' as const,
+      filePath: 'E:/generated/gallery.png',
+      previewPath: null,
+      mimeType: 'image/png',
+      width: null,
+      height: null,
+      frameCount: null,
+      frameRate: null,
+      prompt: 'gallery.png',
+      model: null,
+      createdAt: '2026-04-08T00:00:00.000Z',
+      completedAt: '2026-04-08T00:00:00.000Z'
+    };
+
+    window.ollamaDesktop.generation.listGallery = vi.fn().mockResolvedValue([galleryItem]);
+
+    useAppStore.getState().toggleGalleryDrawer(true);
+
+    await vi.waitFor(() => {
+      expect(window.ollamaDesktop.generation.listGallery).toHaveBeenCalled();
+    });
+    expect(useAppStore.getState().generationGalleryItems).toEqual([galleryItem]);
+  });
+
+  it('deletes filesystem gallery items by file path when no artifact row exists', async () => {
+    const galleryItem = {
+      id: 'file:gallery-image',
+      artifactId: null,
+      jobId: null,
+      kind: 'image' as const,
+      filePath: 'E:/generated/gallery.png',
+      previewPath: 'E:/generated/gallery-preview.png',
+      mimeType: 'image/png',
+      width: null,
+      height: null,
+      frameCount: null,
+      frameRate: null,
+      prompt: 'gallery.png',
+      model: null,
+      createdAt: '2026-04-08T00:00:00.000Z',
+      completedAt: '2026-04-08T00:00:00.000Z'
+    };
+
+    window.ollamaDesktop.generation.deleteArtifact = vi.fn().mockResolvedValue(undefined);
+    window.ollamaDesktop.generation.listJobs = vi.fn().mockResolvedValue([]);
+    window.ollamaDesktop.generation.listGallery = vi.fn().mockResolvedValue([]);
+    useAppStore.setState({
+      generationGalleryItems: [galleryItem]
+    });
+
+    await useAppStore.getState().deleteGenerationArtifact(galleryItem.id);
+
+    expect(window.ollamaDesktop.generation.deleteArtifact).toHaveBeenCalledWith({
+      filePath: galleryItem.filePath
+    });
+    expect(useAppStore.getState().generationGalleryItems).toEqual([]);
   });
 });

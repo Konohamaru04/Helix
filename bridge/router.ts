@@ -118,16 +118,6 @@ function looksLikeFileReadPrompt(prompt: string): boolean {
   );
 }
 
-function looksLikeDirectoryListPrompt(prompt: string): boolean {
-  return (
-    /^(ls|dir)\b/i.test(prompt.trim()) ||
-    (/\b(list|show|browse|display|inspect|print)\b/i.test(prompt) &&
-      /\b(files?|folders?|directories?|tree|structure|project|repo|repository|workspace)\b/i.test(
-        prompt
-      ))
-  );
-}
-
 function requiresWorkspaceRootTool(toolId: string | null | undefined): boolean {
   return ['workspace-lister', 'workspace-opener', 'workspace-search'].includes(
     toolId ?? ''
@@ -189,14 +179,28 @@ function looksLikeBuildPrompt(prompt: string): boolean {
   return /\b(create|build|implement|design|generate|write|make)\b/i.test(prompt);
 }
 
-function shouldSuppressModelWorkspaceTool(
+function looksLikePromptAuthoringRequest(prompt: string): boolean {
+  return (
+    /\b(prompt|instructions?|template)\b/i.test(prompt) &&
+    /\b(write|rewrite|create|generate|make|craft|draft|refine|improve|optimi[sz]e|adapt|convert|turn|suggest|give)\b/i.test(
+      prompt
+    )
+  );
+}
+
+function shouldSuppressModelToolRouting(
   toolId: string | null | undefined,
   prompt: string
 ): boolean {
-  if (
-    !toolId ||
-    !['workspace-search', 'workspace-lister', 'file-reader', 'read'].includes(toolId)
-  ) {
+  if (!toolId) {
+    return false;
+  }
+
+  if (looksLikePromptAuthoringRequest(prompt)) {
+    return true;
+  }
+
+  if (!['workspace-search', 'workspace-lister', 'file-reader', 'read'].includes(toolId)) {
     return false;
   }
 
@@ -493,6 +497,10 @@ function detectHeuristicToolIntent(
   workspaceHasKnowledge: boolean,
   workspaceRootConnected: boolean
 ): ToolIntent | null {
+  if (looksLikePromptAuthoringRequest(prompt)) {
+    return null;
+  }
+
   if (looksLikeKnowledgeSearchPrompt(prompt) && workspaceHasKnowledge) {
     return {
       toolId: 'knowledge-search',
@@ -525,13 +533,6 @@ function detectHeuristicToolIntent(
     return {
       toolId: 'file-reader',
       reason: 'file-reader-tool-routing'
-    };
-  }
-
-  if (workspaceRootConnected && looksLikeDirectoryListPrompt(prompt)) {
-    return {
-      toolId: 'workspace-lister',
-      reason: 'workspace-lister-tool-routing'
     };
   }
 
@@ -588,7 +589,7 @@ export class ChatRouter {
       ? input.modelAnalysis
       : null;
     const suppressedModelToolId =
-      shouldSuppressModelWorkspaceTool(trustedModelAnalysis?.toolId, input.prompt)
+      shouldSuppressModelToolRouting(trustedModelAnalysis?.toolId, input.prompt)
         ? trustedModelAnalysis?.toolId ?? null
         : null;
     const latestAssistantRoute =
@@ -636,7 +637,7 @@ export class ChatRouter {
           confidence: trustedModelAnalysis?.confidence ?? null,
           classifierReason: trustedModelAnalysis?.reason ?? null
         },
-        'Ignored model-assisted workspace inspection tool for a code modification prompt'
+        'Ignored model-assisted tool routing for a prompt that should stay on the chat path'
       );
     }
     const activeSkillIntent =

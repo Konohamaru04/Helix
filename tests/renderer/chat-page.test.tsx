@@ -76,6 +76,16 @@ const imageAttachment = {
   createdAt: '2026-04-08T00:00:00.000Z'
 };
 
+const secondImageAttachment = {
+  id: '70000000-0000-4000-8000-000000000003',
+  fileName: 'reference-2.png',
+  filePath: 'E:/images/reference-2.png',
+  mimeType: 'image/png',
+  sizeBytes: 1024,
+  extractedText: null,
+  createdAt: '2026-04-08T00:00:00.000Z'
+};
+
 const generationJob = {
   id: '80000000-0000-4000-8000-000000000001',
   workspaceId: workspace.id,
@@ -121,6 +131,7 @@ const baseSettings = {
   videoGenerationLowNoiseModel: '',
   pythonPort: 8765,
   streamingMascotEnabled: true,
+  notificationsEnabled: true,
   theme: 'system' as const
 };
 
@@ -194,12 +205,15 @@ const mockApi = {
     startVideo: vi.fn().mockResolvedValue({ job: undefined, conversation: undefined }),
     listImageModels: vi.fn(),
     listJobs: vi.fn(),
+    listGallery: vi.fn(),
     cancelJob: vi.fn(),
     retryJob: vi.fn(),
+    deleteArtifact: vi.fn(),
     onJobEvent: vi.fn()
   },
   chat: {
     start: vi.fn(),
+    confirmGenerationIntent: vi.fn(),
     pickAttachments: vi.fn(),
     editAndResend: vi.fn(),
     regenerateResponse: vi.fn(),
@@ -274,6 +288,7 @@ describe('ChatPage', () => {
       workspaces: [],
       conversations: [],
       generationJobs: [],
+      generationGalleryItems: [],
       imageGenerationModelCatalog: null,
       availableTools: [],
       availableSkills: [],
@@ -283,9 +298,11 @@ describe('ChatPage', () => {
       activeWorkspaceId: null,
       activeConversationId: null,
       messagesByConversation: {},
+      pendingGenerationConfirmation: null,
       selectedModel: '',
       settingsDrawerOpen: false,
       queueDrawerOpen: false,
+      galleryDrawerOpen: false,
       streamingAssistantIds: [],
       pendingStreamEventsByAssistantId: {},
       lastExportPath: null,
@@ -342,6 +359,7 @@ describe('ChatPage', () => {
       warnings: []
     });
     mockApi.generation.listJobs.mockResolvedValue([]);
+    mockApi.generation.listGallery.mockResolvedValue([]);
     mockApi.generation.startImage.mockResolvedValue({ job: generationJob, conversation: undefined });
     mockApi.chat.listTools.mockResolvedValue([
       {
@@ -601,10 +619,32 @@ describe('ChatPage', () => {
     });
   });
 
-  it('renders an inline image job when normal chat submit auto-routes to generation', async () => {
+  it('shows confirmation buttons before starting an auto-detected generation turn', async () => {
     mockApi.chat.start.mockResolvedValue({
-      kind: 'generation',
+      kind: 'generation-confirmation',
       requestId: '30000000-0000-4000-8000-000000000010',
+      conversation,
+      prompt: 'Now swap their clothing',
+      attachments: [],
+      detectedIntent: 'image',
+      options: [
+        {
+          selection: 'image',
+          label: 'Generate Image',
+          description: 'Queue this prompt as a new image generation job.',
+          recommended: true
+        },
+        {
+          selection: 'chat',
+          label: 'Continue Chat',
+          description: 'Keep this request in the normal text chat flow.',
+          recommended: false
+        }
+      ]
+    });
+    mockApi.chat.confirmGenerationIntent.mockResolvedValue({
+      kind: 'generation',
+      requestId: '30000000-0000-4000-8000-000000000011',
       conversation,
       job: {
         ...generationJob,
@@ -635,8 +675,224 @@ describe('ChatPage', () => {
       });
     });
 
+    expect(await screen.findByText('Confirm Generation')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Generate Image' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Continue Chat' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Generate Video' })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Generate Image' }));
+
+    await waitFor(() => {
+      expect(mockApi.chat.confirmGenerationIntent).toHaveBeenCalledWith({
+        conversationId: conversation.id,
+        prompt: 'Now swap their clothing',
+        attachments: [],
+        selection: 'image',
+        model: undefined
+      });
+    });
+
     await screen.findByText('Now swap their clothing');
     expect(screen.getByText('Image generation')).toBeInTheDocument();
+    expect(screen.getAllByText('Queued').length).toBeGreaterThan(0);
+  });
+
+  it('shows edit, video, and chat confirmation buttons when one image is attached', async () => {
+    const confirmedVideoJob = {
+      ...generationJob,
+      id: '80000000-0000-4000-8000-000000000031',
+      kind: 'video' as const,
+      mode: 'image-to-video' as const,
+      workflowProfile: 'wan-image-to-video' as const,
+      prompt: 'Animate this portrait with a slow dolly-in.',
+      model: 'E:/LocalModels/diffusion_models/DasiwaWAN22I2V14BSynthseduction_q8High.gguf',
+      width: 528,
+      height: 704,
+      steps: 8,
+      guidanceScale: 1,
+      frameCount: 81,
+      frameRate: 16,
+      progress: 0,
+      stage: 'Queued'
+    };
+
+    mockApi.chat.pickAttachments.mockResolvedValue([imageAttachment]);
+    mockApi.chat.start.mockResolvedValue({
+      kind: 'generation-confirmation',
+      requestId: '30000000-0000-4000-8000-000000000012',
+      conversation,
+      prompt: 'Animate this portrait with a slow dolly-in.',
+      attachments: [imageAttachment],
+      detectedIntent: 'video',
+      options: [
+        {
+          selection: 'image',
+          label: 'Edit Image',
+          description: 'Use the attached image as the edit reference.',
+          recommended: false
+        },
+        {
+          selection: 'video',
+          label: 'Generate Video',
+          description: 'Use the attached image as the starting frame for a video job.',
+          recommended: true
+        },
+        {
+          selection: 'chat',
+          label: 'Continue Chat',
+          description: 'Keep this request in the normal text chat flow.',
+          recommended: false
+        }
+      ]
+    });
+    mockApi.chat.confirmGenerationIntent.mockResolvedValue({
+      kind: 'generation',
+      requestId: '30000000-0000-4000-8000-000000000013',
+      conversation,
+      job: confirmedVideoJob,
+      model: confirmedVideoJob.model
+    });
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Open add menu' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Attach files' }));
+    await screen.findByText('reference.png');
+
+    const textarea = screen.getByLabelText('Message prompt');
+    fireEvent.change(textarea, {
+      target: { value: 'Animate this portrait with a slow dolly-in.' }
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    await waitFor(() => {
+      expect(mockApi.chat.start).toHaveBeenCalledWith({
+        conversationId: undefined,
+        workspaceId: workspace.id,
+        prompt: 'Animate this portrait with a slow dolly-in.',
+        attachments: [imageAttachment],
+        model: undefined
+      });
+    });
+
+    expect(await screen.findByText('Confirm Generation')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Edit Image' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Generate Video' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Continue Chat' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Generate Video' }));
+
+    await waitFor(() => {
+      expect(mockApi.chat.confirmGenerationIntent).toHaveBeenCalledWith({
+        conversationId: conversation.id,
+        prompt: 'Animate this portrait with a slow dolly-in.',
+        attachments: [imageAttachment],
+        selection: 'video',
+        model: undefined
+      });
+    });
+
+    await screen.findByText('Video generation');
+    expect(screen.getAllByText('Queued').length).toBeGreaterThan(0);
+  });
+
+  it('shows edit, video, and chat confirmation options for multiple attached images', async () => {
+    const confirmedVideoJob = {
+      ...generationJob,
+      id: '80000000-0000-4000-8000-000000000004',
+      kind: 'video' as const,
+      mode: 'image-to-video' as const,
+      workflowProfile: 'wan-image-to-video' as const,
+      prompt: 'Animate these references into a short reveal shot.',
+      model: 'E:/LocalModels/diffusion_models/DasiwaWAN22I2V14BSynthseduction_q8High.gguf',
+      width: 528,
+      height: 704,
+      steps: 8,
+      guidanceScale: 1,
+      frameCount: 81,
+      frameRate: 16,
+      progress: 0,
+      stage: 'Queued'
+    };
+
+    mockApi.chat.pickAttachments.mockResolvedValue([imageAttachment, secondImageAttachment]);
+    mockApi.chat.start.mockResolvedValue({
+      kind: 'generation-confirmation',
+      requestId: '30000000-0000-4000-8000-000000000014',
+      conversation,
+      prompt: 'Animate these references into a short reveal shot.',
+      attachments: [imageAttachment, secondImageAttachment],
+      detectedIntent: 'video',
+      options: [
+        {
+          selection: 'image',
+          label: 'Edit Images',
+          description: 'Use the attached images as references for an image edit job.',
+          recommended: false
+        },
+        {
+          selection: 'video',
+          label: 'Generate Video',
+          description: 'Use the first attached image as the starting frame for a video job.',
+          recommended: true
+        },
+        {
+          selection: 'chat',
+          label: 'Continue Chat',
+          description: 'Keep this request in the normal text chat flow.',
+          recommended: false
+        }
+      ]
+    });
+    mockApi.chat.confirmGenerationIntent.mockResolvedValue({
+      kind: 'generation',
+      requestId: '30000000-0000-4000-8000-000000000015',
+      conversation,
+      job: confirmedVideoJob,
+      model: confirmedVideoJob.model
+    });
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Open add menu' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Attach files' }));
+    await screen.findByText('reference.png');
+    await screen.findByText('reference-2.png');
+
+    const textarea = screen.getByLabelText('Message prompt');
+    fireEvent.change(textarea, {
+      target: { value: 'Animate these references into a short reveal shot.' }
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    await waitFor(() => {
+      expect(mockApi.chat.start).toHaveBeenCalledWith({
+        conversationId: undefined,
+        workspaceId: workspace.id,
+        prompt: 'Animate these references into a short reveal shot.',
+        attachments: [imageAttachment, secondImageAttachment],
+        model: undefined
+      });
+    });
+
+    expect(await screen.findByText('Confirm Generation')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Edit Images' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Generate Video' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Continue Chat' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Generate Video' }));
+
+    await waitFor(() => {
+      expect(mockApi.chat.confirmGenerationIntent).toHaveBeenCalledWith({
+        conversationId: conversation.id,
+        prompt: 'Animate these references into a short reveal shot.',
+        attachments: [imageAttachment, secondImageAttachment],
+        selection: 'video',
+        model: undefined
+      });
+    });
+
+    await screen.findByText('Video generation');
     expect(screen.getAllByText('Queued').length).toBeGreaterThan(0);
   });
 

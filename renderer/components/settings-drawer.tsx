@@ -928,6 +928,56 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                 </div>
               </div>
             </section>
+
+            <section className="motion-card rounded-[1.75rem] border border-white/10 bg-slate-900/60 px-5 py-5">
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div className="min-w-0 flex-1">
+                  <h3 className="text-sm font-semibold text-slate-100">
+                    Desktop notifications
+                  </h3>
+                  <p className="mt-2 text-sm leading-6 text-slate-400">
+                    Show a Windows notification when an image or video generation job
+                    finishes or fails.
+                  </p>
+                </div>
+                <div className="flex shrink-0 items-center gap-3">
+                  <span
+                    className={`text-xs font-semibold uppercase tracking-[0.18em] ${
+                      draft.notificationsEnabled ? 'text-cyan-100' : 'text-slate-500'
+                    }`}
+                  >
+                    {draft.notificationsEnabled ? 'On' : 'Off'}
+                  </span>
+                  <button
+                    aria-checked={draft.notificationsEnabled}
+                    aria-label="Desktop notifications"
+                    className={`relative h-8 w-14 shrink-0 rounded-full border transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 ${
+                      draft.notificationsEnabled
+                        ? 'border-cyan-300/40 bg-cyan-400/25'
+                        : 'border-white/10 bg-slate-950'
+                    }`}
+                    onClick={() =>
+                      setDraft((current) =>
+                        current
+                          ? {
+                              ...current,
+                              notificationsEnabled: !current.notificationsEnabled
+                            }
+                          : current
+                      )
+                    }
+                    role="switch"
+                    type="button"
+                  >
+                    <span
+                      className={`absolute left-1 top-1 h-6 w-6 rounded-full bg-slate-100 shadow-sm transition-transform ${
+                        draft.notificationsEnabled ? 'translate-x-6' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
+                </div>
+              </div>
+            </section>
           </div>
 
           <button

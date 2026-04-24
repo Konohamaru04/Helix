@@ -36,7 +36,7 @@ The routed chat flow is:
 1. The user submits a prompt from the React renderer.
 2. Zustand calls the typed preload API.
 3. Electron main validates the payload and forwards it to `ChatService`.
-4. `ChatService` first decides whether the submit should become an inline image-generation job in `Auto` mode, then otherwise persists the turn in SQLite, resolves explicit `/tool` and `@skill` directives, and asks `ChatRouter` for the route decision.
+4. `ChatService` first decides whether the submit looks like a generation request in normal chat mode. Instead of dispatching immediately, the bridge can now return a typed `generation-confirmation` result so the renderer shows attachment-aware action buttons such as `Generate Image`, `Edit Image`, `Generate Video`, `Edit Images`, or `Continue Chat`. If the user continues with chat, the normal routed turn path runs; if the user confirms image or video generation, the bridge starts the corresponding job through the same typed IPC layer. Explicit `/tool` and `@skill` directives still bypass this confirmation gate.
 5. Optional workspace knowledge import happens for text-like attachments.
 6. Optional tool execution runs inside the bridge layer.
 7. `buildConversationContext` assembles the system base prompt, workspace prompt, active skill prompt, pinned memory, retrieved knowledge, and recent turns.
@@ -289,6 +289,7 @@ Current behavior:
 Generation architecture today:
 
 1. The renderer enters image or video mode from the shared composer and submits a typed generation request.
+   Normal chat-mode submits can also detect generation intent, but those now stop at a typed confirmation gate before any job is started.
 2. Electron main validates the request and calls `GenerationService`.
 3. `GenerationService` creates a durable `generation_jobs` row plus any later `generation_artifacts`, with `frame_count` and `frame_rate` persisted for video jobs.
 4. Electron main starts the job on the managed FastAPI worker through `PythonServerManager`.
@@ -305,7 +306,12 @@ Current image backends:
 - a dedicated `wan-image-to-video` workflow profile that persists one start image plus frame metadata from renderer -> Electron -> FastAPI worker -> SQLite
 - Qwen Image Edit 2511 jobs reuse the shared composer attachments as reference images and apply workflow-specific defaults such as `1664x1248`, `4` steps, and the negative-prompt baseline captured from the vendored ComfyUI workflow
 - Wan 2.2 jobs run through the vendored embedded ComfyUI blueprint path and require both a high-noise and low-noise GGUF checkpoint; the bridge derives the paired checkpoint automatically from the selected Video Gen model
-- when the chat header stays on `Auto`, normal text submit can auto-route clear image creation prompts into text-to-image jobs and follow-up edit prompts such as `Now swap their clothing` into image-to-image jobs that reuse the latest generated artifact as the reference input
+- when the chat header stays on `Auto`, normal text submit can detect clear image or image-to-video prompts and return a confirmation card instead of starting generation immediately; the available actions depend on attached-image count:
+  - no attached images: `Generate Image` or `Continue Chat`
+  - one attached image: `Edit Image`, `Generate Video`, or `Continue Chat`
+  - multiple attached images: `Edit Images`, `Generate Video`, or `Continue Chat`
+- when multiple images are attached and the user confirms `Generate Video`, the bridge uses the first attached image as the video start frame
+- once the user confirms image generation, follow-up edit prompts such as `Now swap their clothing` can still reuse the latest generated artifact as the reference input
 - attached-image analysis prompts such as `Describe this image` stay on the multimodal chat path after leaving image mode, so they route to the Vision model instead of being mistaken for image generation
 
 Current GGUF behavior:

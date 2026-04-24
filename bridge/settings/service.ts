@@ -22,6 +22,7 @@ export const defaultUserSettings: UserSettings = {
   videoGenerationLowNoiseModel: '',
   pythonPort: 8765,
   streamingMascotEnabled: true,
+  notificationsEnabled: true,
   theme: 'system'
 };
 

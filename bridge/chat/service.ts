@@ -14,6 +14,7 @@ import type {
   CancelChatTurnInput,
   CapabilityTask,
   ChatStartAccepted,
+  ConfirmGenerationIntentInput,
   ContextSource,
   ConversationExportPayload,
   CreateSkillInput,
@@ -24,6 +25,7 @@ import type {
   ChatTurnAccepted,
   ChatTurnRequest,
   GenerationJob,
+  GenerationConfirmationOption,
   ImageGenerationRequest,
   ImportWorkspaceKnowledgeResult,
   KnowledgeDocument,
@@ -97,6 +99,8 @@ const IMAGE_GENERATION_PATTERN =
   /\b(generate|create|make|draw|render|design|illustrate|paint|produce|imagine|craft)\b/i;
 const IMAGE_EDIT_PATTERN =
   /\b(edit|modify|change|swap|replace|remove|add|turn|transform|restyle|recolor|repaint|retouch|upscale|enhance|extend|outpaint|inpaint|background|foreground|outfit|clothing|clothes|hair|face|expression|pose)\b/i;
+const IMAGE_COMPOSITE_PATTERN =
+  /\b(blend|combine|merge|mix|composite|collage|fuse|layer)\b/i;
 const IMAGE_OBJECT_PATTERN =
   /\b(image|photo|picture|portrait|art|artwork|illustration|poster|wallpaper|logo|icon|avatar|scene|character|texture|background|person|people|subject|look|style|outfit|clothing)\b/i;
 const IMAGE_FOLLOW_UP_PATTERN =
@@ -107,8 +111,15 @@ const IMAGE_PROMPT_AUTHORING_PATTERN =
   /\b(?:image generation|text-to-image|diffusion|midjourney|stable diffusion|sdxl|flux|dall[- ]?e)\b[\s\S]{0,32}\bprompt\b|\bprompt\b[\s\S]{0,32}\b(?:image generation|text-to-image|diffusion|midjourney|stable diffusion|sdxl|flux|dall[- ]?e)\b/i;
 const PROMPT_AUTHORING_VERB_PATTERN =
   /\b(write|rewrite|create|generate|make|craft|draft|refine|improve|optimi[sz]e|adapt|convert|turn|suggest|give)\b/i;
+const VIDEO_PROMPT_AUTHORING_PATTERN =
+  /\b(?:video generation|video prompt|image(?:\s|-)?to(?:\s|-)?video|wan(?:\s*2(?:\.?2)?)?)\b[\s\S]{0,32}\bprompt\b|\bprompt\b[\s\S]{0,32}\b(?:video generation|video prompt|image(?:\s|-)?to(?:\s|-)?video|wan(?:\s*2(?:\.?2)?)?)\b/i;
 const IMAGE_RESTORE_PATTERN =
   /\b(?:back to (?:the )?original|change (?:it|them|this) back|restore(?: (?:it|them|this))?|revert(?: (?:it|them|this))?|undo(?: (?:the )?edit)?|same as before|as before|like before|original (?:look|clothing|clothes|outfit|style)|previous (?:look|clothing|clothes|outfit|style))\b/i;
+const VIDEO_GENERATION_VERB_PATTERN =
+  /\b(generate|create|make|render|produce|turn|convert|animate|bring|add)\b/i;
+const VIDEO_OUTPUT_PATTERN = /\b(video|movie|clip|animation|animated|motion)\b/i;
+const VIDEO_CAMERA_PATTERN =
+  /\b(camera move(?:ment)?|camera path|dolly|pan|zoom|orbit|tracking shot)\b/i;
 const CODE_IMPLEMENTATION_STACK_PATTERN =
   /\b(?:html|css|javascript|typescript|react|vue|svelte|node(?:\.js)?|three(?:\.js)?|webgl|canvas)\b/i;
 const CODE_IMPLEMENTATION_RUNTIME_PATTERN =
@@ -230,6 +241,18 @@ const CODING_VERIFICATION_TOOL_IDS = new Set([
   'lsp'
 ]);
 const NATIVE_TOOL_LOOP_SKILL_IDS = new Set(['builder', 'debugger', 'grounded']);
+const LLM_ONLY_TOOL_IDS = new Set([
+  'workspace-lister',
+  'workspace-search',
+  'workspace-opener',
+  'file-reader',
+  'read',
+  'glob',
+  'grep',
+  'edit',
+  'write',
+  'lsp'
+]);
 const NATIVE_TOOL_LOOP_ESCALATION_TOOL_IDS = new Set([
   'read',
   'file-reader',
@@ -292,6 +315,10 @@ function isImageAttachment(attachment: MessageAttachment): boolean {
   return attachment.mimeType?.startsWith('image/') === true || isImageFilePath(attachment.fileName);
 }
 
+function isVisionCapableChatModel(model: string): boolean {
+  return /(vl|vision|llava)/i.test(model);
+}
+
 function looksLikeImageAnalysisPrompt(prompt: string): boolean {
   return IMAGE_ANALYSIS_PATTERN.test(prompt);
 }
@@ -318,7 +345,11 @@ function looksLikeTextToImagePrompt(prompt: string): boolean {
 }
 
 function looksLikeImageEditPrompt(prompt: string): boolean {
-  return IMAGE_EDIT_PATTERN.test(prompt);
+  return (
+    IMAGE_EDIT_PATTERN.test(prompt) ||
+    (IMAGE_COMPOSITE_PATTERN.test(prompt) &&
+      /\b(reference|references|image|images|photo|photos|picture|pictures)\b/i.test(prompt))
+  );
 }
 
 function looksLikeImageFollowUpPrompt(prompt: string): boolean {
@@ -332,8 +363,38 @@ function looksLikeImagePromptAuthoringRequest(prompt: string): boolean {
   );
 }
 
+function looksLikeVideoPromptAuthoringRequest(prompt: string): boolean {
+  return (
+    VIDEO_PROMPT_AUTHORING_PATTERN.test(prompt) ||
+    (/\bprompt\b/i.test(prompt) &&
+      /\b(video|animation|image(?:\s|-)?to(?:\s|-)?video|wan(?:\s*2(?:\.?2)?)?)\b/i.test(
+        prompt
+      ) &&
+      PROMPT_AUTHORING_VERB_PATTERN.test(prompt))
+  );
+}
+
 function looksLikeImageRestorePrompt(prompt: string): boolean {
   return IMAGE_RESTORE_PATTERN.test(prompt);
+}
+
+function looksLikeVideoGenerationPrompt(prompt: string): boolean {
+  if (
+    looksLikeVideoPromptAuthoringRequest(prompt) ||
+    looksLikeImagePromptAuthoringRequest(prompt) ||
+    looksLikeCodeImplementationPrompt(prompt)
+  ) {
+    return false;
+  }
+
+  return (
+    (VIDEO_GENERATION_VERB_PATTERN.test(prompt) &&
+      (VIDEO_OUTPUT_PATTERN.test(prompt) || VIDEO_CAMERA_PATTERN.test(prompt))) ||
+    (/\banimate\b/i.test(prompt) &&
+      (/\b(image|photo|picture|portrait|subject|scene|it|this)\b/i.test(prompt) ||
+        VIDEO_CAMERA_PATTERN.test(prompt))) ||
+    (VIDEO_CAMERA_PATTERN.test(prompt) && VIDEO_OUTPUT_PATTERN.test(prompt))
+  );
 }
 
 function looksLikeRepositoryAnalysisPrompt(prompt: string): boolean {
@@ -1095,6 +1156,18 @@ interface AutomaticGenerationPlan {
   referenceImages: MessageAttachment[];
 }
 
+interface ConfirmedVideoGenerationPlan {
+  prompt: string;
+  reason: string;
+  referenceImages: MessageAttachment[];
+}
+
+interface GenerationConfirmationPlan {
+  prompt: string;
+  detectedIntent: 'image' | 'video';
+  options: GenerationConfirmationOption[];
+}
+
 interface ActiveAssistantTurn {
   abortController: AbortController;
   cancelled: boolean;
@@ -1718,7 +1791,11 @@ export class ChatService {
     private readonly toolDispatcher: ToolDispatcher,
     private readonly skillRegistry: SkillRegistry,
     private readonly generationRepository?: GenerationRepository,
-    private readonly generationService?: Pick<GenerationService, 'startImageJob'>,
+    private readonly generationService?: Pick<
+      GenerationService,
+      'startImageJob' | 'startVideoJob'
+    > &
+      Partial<Pick<GenerationService, 'isManagedGeneratedFilePath'>>,
     private readonly readFreeMemoryBytes: () => number = () => os.freemem()
   ) {}
 
@@ -2050,48 +2127,33 @@ export class ChatService {
       },
       'Received user prompt'
     );
-    const automaticGenerationPlan = await this.resolveAutomaticGenerationPlan({
+    const generationConfirmation = await this.resolveGenerationConfirmation({
       prompt: request.prompt,
       requestedModel: request.model,
       attachments: request.attachments ?? [],
       conversationId: conversation.id
     });
 
-    if (automaticGenerationPlan) {
-      if (!this.generationService) {
-        throw new Error('Image generation is not available in this app context.');
-      }
-
-      const startedJob = await this.generationService.startImageJob({
-        conversationId: conversation.id,
-        prompt: automaticGenerationPlan.prompt,
-        mode: automaticGenerationPlan.mode,
-        referenceImages: automaticGenerationPlan.referenceImages
-      });
-      const startedGenerationJob = (
-        typeof startedJob === 'object' && startedJob !== null && 'job' in startedJob
-          ? startedJob.job
-          : startedJob
-      ) as GenerationJob;
+    if (generationConfirmation) {
       const touchedConversation = this.repository.touchConversation(conversation.id);
       const accepted = chatStartAcceptedSchema.parse({
-        kind: 'generation',
+        kind: 'generation-confirmation',
         requestId: randomUUID(),
         conversation: touchedConversation,
-        job: startedGenerationJob,
-        model: startedGenerationJob.model
+        prompt: generationConfirmation.prompt,
+        attachments: request.attachments ?? [],
+        detectedIntent: generationConfirmation.detectedIntent,
+        options: generationConfirmation.options
       });
 
       this.logger.info(
         {
           conversationId: touchedConversation.id,
-          jobId: startedGenerationJob.id,
-          mode: startedGenerationJob.mode,
-          model: startedGenerationJob.model,
-          reason: automaticGenerationPlan.reason,
-          referenceImageCount: automaticGenerationPlan.referenceImages.length
+          detectedIntent: generationConfirmation.detectedIntent,
+          options: generationConfirmation.options.map((option) => option.selection),
+          attachmentCount: (request.attachments ?? []).length
         },
-        'Automatically routed prompt to inline image generation'
+        'Prompt requires generation confirmation before dispatch'
       );
 
       return accepted;
@@ -2107,6 +2169,76 @@ export class ChatService {
         conversation,
         emitEvent
       ))
+    });
+  }
+
+  async confirmGenerationIntent(
+    input: ConfirmGenerationIntentInput,
+    emitEvent: (event: ChatStreamEvent) => void
+  ): Promise<ChatStartAccepted> {
+    const conversation = this.repository.getConversation(input.conversationId);
+
+    if (!conversation) {
+      throw new Error(`Conversation ${input.conversationId} was not found.`);
+    }
+
+    const attachments = input.attachments ?? [];
+
+    this.logger.info(
+      {
+        conversationId: conversation.id,
+        workspaceId: conversation.workspaceId,
+        selection: input.selection,
+        requestedModel: input.model ?? null,
+        requestedThinkMode: input.think ?? null,
+        attachmentCount: attachments.length,
+        attachments: summarizeLoggedAttachments(attachments),
+        prompt: clipLoggedText(input.prompt)
+      },
+      'Received confirmed generation intent selection'
+    );
+
+    if (input.selection === 'chat') {
+      return chatStartAcceptedSchema.parse({
+        kind: 'chat',
+        ...(await this.startChatTurnInternal(
+          {
+            conversationId: conversation.id,
+            prompt: input.prompt,
+            attachments,
+            ...(input.model ? { model: input.model } : {}),
+            ...(input.think ? { think: input.think } : {})
+          },
+          conversation,
+          emitEvent
+        ))
+      });
+    }
+
+    if (!this.generationService) {
+      throw new Error('Generation is not available in this app context.');
+    }
+
+    const startedGenerationJob =
+      input.selection === 'video'
+        ? await this.startConfirmedVideoGenerationJob({
+            conversationId: conversation.id,
+            prompt: input.prompt,
+            attachments
+          })
+        : await this.startConfirmedImageGenerationJob({
+            conversationId: conversation.id,
+            prompt: input.prompt,
+            attachments
+          });
+    const touchedConversation = this.repository.touchConversation(conversation.id);
+
+    return chatStartAcceptedSchema.parse({
+      kind: 'generation',
+      requestId: randomUUID(),
+      conversation: touchedConversation,
+      job: startedGenerationJob,
+      model: startedGenerationJob.model
     });
   }
 
@@ -2443,6 +2575,218 @@ export class ChatService {
       ...(input.think === undefined ? {} : { think: input.think }),
       ...(input.signal ? { signal: input.signal } : {})
     });
+  }
+
+  private async resolveGenerationConfirmation(input: {
+    prompt: string;
+    requestedModel?: string | undefined;
+    attachments: MessageAttachment[];
+    conversationId: string;
+  }): Promise<GenerationConfirmationPlan | null> {
+    if (!this.generationRepository || !this.generationService) {
+      return null;
+    }
+
+    const directives = this.parsePromptDirectives(input.prompt);
+
+    if (directives.explicitSkillId || directives.explicitToolId) {
+      return null;
+    }
+
+    const cleanedPrompt = directives.cleanedPrompt;
+
+    if (
+      looksLikeImagePromptAuthoringRequest(cleanedPrompt) ||
+      looksLikeVideoPromptAuthoringRequest(cleanedPrompt)
+    ) {
+      return null;
+    }
+
+    const automaticImagePlan = await this.resolveAutomaticGenerationPlan(input);
+    const wantsVideo = looksLikeVideoGenerationPrompt(cleanedPrompt);
+
+    if (!automaticImagePlan && !wantsVideo) {
+      return null;
+    }
+
+    const imageAttachmentCount = input.attachments.filter(isImageAttachment).length;
+    const detectedIntent: 'image' | 'video' =
+      wantsVideo && imageAttachmentCount === 1 ? 'video' : 'image';
+
+    return {
+      prompt: cleanedPrompt,
+      detectedIntent,
+      options: this.buildGenerationConfirmationOptions({
+        imageAttachmentCount,
+        detectedIntent
+      })
+    };
+  }
+
+  private buildGenerationConfirmationOptions(input: {
+    imageAttachmentCount: number;
+    detectedIntent: 'image' | 'video';
+  }): GenerationConfirmationOption[] {
+    if (input.imageAttachmentCount === 0) {
+      return [
+        {
+          selection: 'image',
+          label: 'Generate Image',
+          description: 'Queue this prompt as a new image generation job.',
+          recommended: true
+        },
+        {
+          selection: 'chat',
+          label: 'Continue Chat',
+          description: 'Keep this request in the normal text chat flow.',
+          recommended: false
+        }
+      ];
+    }
+
+    if (input.imageAttachmentCount === 1) {
+      return [
+        {
+          selection: 'image',
+          label: 'Edit Image',
+          description: 'Use the attached image as the edit reference.',
+          recommended: input.detectedIntent !== 'video'
+        },
+        {
+          selection: 'video',
+          label: 'Generate Video',
+          description: 'Use the attached image as the starting frame for a video job.',
+          recommended: input.detectedIntent === 'video'
+        },
+        {
+          selection: 'chat',
+          label: 'Continue Chat',
+          description: 'Keep this request in the normal text chat flow.',
+          recommended: false
+        }
+      ];
+    }
+
+    return [
+      {
+        selection: 'image',
+        label: 'Edit Images',
+        description: 'Use the attached images as references for an image edit job.',
+        recommended: input.detectedIntent !== 'video'
+      },
+      {
+        selection: 'video',
+        label: 'Generate Video',
+        description:
+          'Use the first attached image as the starting frame for a video job.',
+        recommended: input.detectedIntent === 'video'
+      },
+      {
+        selection: 'chat',
+        label: 'Continue Chat',
+        description: 'Keep this request in the normal text chat flow.',
+        recommended: false
+      }
+    ];
+  }
+
+  private async startConfirmedImageGenerationJob(input: {
+    conversationId: string;
+    prompt: string;
+    attachments: MessageAttachment[];
+  }): Promise<GenerationJob> {
+    if (!this.generationService) {
+      throw new Error('Generation is not available in this app context.');
+    }
+
+    const plan = await this.resolveConfirmedImageGenerationPlan({
+      prompt: input.prompt,
+      attachments: input.attachments,
+      conversationId: input.conversationId
+    });
+    const startedJob = await this.generationService.startImageJob({
+      conversationId: input.conversationId,
+      prompt: plan.prompt,
+      mode: plan.mode,
+      referenceImages: plan.referenceImages
+    });
+
+    return startedJob.job;
+  }
+
+  private async startConfirmedVideoGenerationJob(input: {
+    conversationId: string;
+    prompt: string;
+    attachments: MessageAttachment[];
+  }): Promise<GenerationJob> {
+    if (!this.generationService) {
+      throw new Error('Generation is not available in this app context.');
+    }
+
+    const plan = this.resolveConfirmedVideoGenerationPlan({
+      prompt: input.prompt,
+      attachments: input.attachments
+    });
+    const startedJob = await this.generationService.startVideoJob({
+      conversationId: input.conversationId,
+      prompt: plan.prompt,
+      mode: 'image-to-video',
+      workflowProfile: 'wan-image-to-video',
+      referenceImages: plan.referenceImages
+    });
+
+    return startedJob.job;
+  }
+
+  private async resolveConfirmedImageGenerationPlan(input: {
+    prompt: string;
+    attachments: MessageAttachment[];
+    conversationId: string;
+  }): Promise<AutomaticGenerationPlan> {
+    const automaticPlan = await this.resolveAutomaticGenerationPlan(input);
+
+    if (automaticPlan) {
+      return automaticPlan;
+    }
+
+    const cleanedPrompt = this.parsePromptDirectives(input.prompt).cleanedPrompt;
+    const currentReferenceImages = input.attachments.filter(isImageAttachment).slice(0, 3);
+
+    if (currentReferenceImages.length > 0) {
+      return {
+        prompt: cleanedPrompt,
+        mode: 'image-to-image',
+        reason: 'confirmed-image-edit',
+        referenceImages: currentReferenceImages
+      };
+    }
+
+    return {
+      prompt: cleanedPrompt,
+      mode: 'text-to-image',
+      reason: 'confirmed-image-generation',
+      referenceImages: []
+    };
+  }
+
+  private resolveConfirmedVideoGenerationPlan(input: {
+    prompt: string;
+    attachments: MessageAttachment[];
+  }): ConfirmedVideoGenerationPlan {
+    const cleanedPrompt = this.parsePromptDirectives(input.prompt).cleanedPrompt;
+    const referenceImages = input.attachments.filter(isImageAttachment).slice(0, 1);
+
+    if (referenceImages.length === 0) {
+      throw new Error(
+        'Generate Video requires at least one attached image so the bridge can seed the first frame.'
+      );
+    }
+
+    return {
+      prompt: cleanedPrompt,
+      reason: 'confirmed-video-generation',
+      referenceImages
+    };
   }
 
   private async resolveAutomaticGenerationPlan(input: {
@@ -3251,38 +3595,34 @@ export class ChatService {
     };
 
     try {
-      if (
-        input.routePlan.backend === 'nvidia' &&
-        context.messages.some((message) => message.imageAttachments.length > 0)
-      ) {
-        throw new Error(
-          'NVIDIA text chat is enabled, but image attachments in the conversation context still require the Ollama backend in this build.'
-        );
-      }
+      const canSendImageBytes =
+        input.routePlan.backend === 'ollama' && isVisionCapableChatModel(accepted.model);
 
       const ollamaMessages = await Promise.all(
         context.messages.map(async (message) => {
           const images = await Promise.all(
-            message.imageAttachments
-              .filter((attachment) => attachment.filePath)
-              .map(async (attachment) => {
-                try {
-                  const fileBuffer = await readFile(attachment.filePath as string);
-                  return fileBuffer.toString('base64');
-                } catch (error) {
-                  this.logger.warn(
-                    {
-                      conversationId: accepted.conversation.id,
-                      requestId: accepted.requestId,
-                      filePath: attachment.filePath,
-                      error: error instanceof Error ? error.message : String(error)
-                    },
-                    'Unable to load image attachment for multimodal input'
-                  );
+            canSendImageBytes
+              ? message.imageAttachments
+                  .filter((attachment) => attachment.filePath)
+                  .map(async (attachment) => {
+                    try {
+                      const fileBuffer = await readFile(attachment.filePath as string);
+                      return fileBuffer.toString('base64');
+                    } catch (error) {
+                      this.logger.warn(
+                        {
+                          conversationId: accepted.conversation.id,
+                          requestId: accepted.requestId,
+                          filePath: attachment.filePath,
+                          error: error instanceof Error ? error.message : String(error)
+                        },
+                        'Unable to load image attachment for multimodal input'
+                      );
 
-                  return null;
-                }
-              })
+                      return null;
+                    }
+                  })
+              : []
           );
 
           return {
@@ -4953,7 +5293,7 @@ export class ChatService {
       if (token?.startsWith('/')) {
         const tool = this.toolDispatcher.findByCommand(token);
 
-        if (!tool || explicitToolId) {
+        if (!tool || explicitToolId || LLM_ONLY_TOOL_IDS.has(tool.id)) {
           break;
         }
 
@@ -5165,7 +5505,8 @@ export class ChatService {
     return (
       this.previewAllowedPaths.has(normalizedPath) ||
       this.repository.hasAttachmentPath(normalizedPath) ||
-      this.generationRepository?.hasKnownFilePath(normalizedPath) === true
+      this.generationRepository?.hasKnownFilePath(normalizedPath) === true ||
+      this.generationService?.isManagedGeneratedFilePath?.(normalizedPath) === true
     );
   }
 }

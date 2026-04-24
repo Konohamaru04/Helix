@@ -356,7 +356,14 @@ export class OllamaClient {
       },
       stream: true
     });
-
+    this.logger.info({ body: this.buildChatRequestBody({
+            model: input.model,
+            stream: true,
+            messages: input.messages,
+            ...(input.numCtx === undefined ? {} : { numCtx: input.numCtx }),
+            ...(input.tools && input.tools.length > 0 ? { tools: input.tools } : {}),
+            ...(input.think !== undefined ? { think: input.think } : {})
+          }) }, 'Created user skill');
     if (!response.ok || !response.body) {
       const errorBody = await response.text();
       throw new Error(

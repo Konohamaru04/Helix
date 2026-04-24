@@ -1,8 +1,11 @@
 import { existsSync, mkdirSync } from 'node:fs';
+import { readdir, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type {
   CancelGenerationJobInput,
+  DeleteGenerationArtifactInput,
+  GenerationGalleryItem,
   GenerationJob,
   GenerationStartResult,
   ImageGenerationModelCatalog,
@@ -52,6 +55,8 @@ const PER_MEGAPIXEL_HEADROOM_MB = 256;
 const HIGH_STEP_THRESHOLD = 20;
 const HIGH_STEP_EXTRA_HEADROOM_MB = 128;
 const MAX_HEADROOM_MB = 2048;
+const GALLERY_IMAGE_EXTENSION_PATTERN = /\.(avif|bmp|gif|jpe?g|png|webp)$/i;
+const GALLERY_VIDEO_EXTENSION_PATTERN = /\.(mp4|webm|mov|mkv)$/i;
 
 interface WorkspaceScopedGenerationInput {
   conversationId?: string | undefined;
@@ -77,6 +82,53 @@ function nowIso() {
 
 function isTerminalJobStatus(status: GenerationJob['status']) {
   return status === 'completed' || status === 'failed' || status === 'cancelled';
+}
+
+function inferGeneratedMimeType(filePath: string, kind: GenerationGalleryItem['kind']): string {
+  const extension = path.extname(filePath).toLowerCase();
+
+  if (extension === '.jpg' || extension === '.jpeg') return 'image/jpeg';
+  if (extension === '.webp') return 'image/webp';
+  if (extension === '.gif') return 'image/gif';
+  if (extension === '.avif') return 'image/avif';
+  if (extension === '.bmp') return 'image/bmp';
+  if (extension === '.webm') return 'video/webm';
+  if (extension === '.mov') return 'video/quicktime';
+  if (extension === '.mkv') return 'video/x-matroska';
+  if (extension === '.mp4') return 'video/mp4';
+
+  return kind === 'video' ? 'video/mp4' : 'image/png';
+}
+
+function galleryItemId(filePath: string): string {
+  return `file:${createHash('sha256').update(path.normalize(filePath)).digest('hex')}`;
+}
+
+function galleryPathKey(filePath: string): string {
+  const normalizedPath = path.normalize(filePath);
+  return process.platform === 'win32' ? normalizedPath.toLowerCase() : normalizedPath;
+}
+
+function previewCompanionPath(filePath: string): string | null {
+  const extension = path.extname(filePath);
+  const basename = path.basename(filePath, extension);
+
+  if (!basename.toLowerCase().endsWith('-preview')) {
+    return null;
+  }
+
+  return path.join(path.dirname(filePath), `${basename.slice(0, -'-preview'.length)}${extension}`);
+}
+
+function previewSiblingPath(filePath: string): string | null {
+  const extension = path.extname(filePath);
+  const basename = path.basename(filePath, extension);
+
+  if (!extension || basename.toLowerCase().endsWith('-preview')) {
+    return null;
+  }
+
+  return path.join(path.dirname(filePath), `${basename}-preview${extension}`);
 }
 
 function isPathLikeModelId(model: string): boolean {
@@ -133,6 +185,94 @@ export class GenerationService {
       ...(input?.conversationId ? { conversationId: input.conversationId } : {}),
       ...(typeof input?.limit === 'number' ? { limit: input.limit } : {})
     });
+  }
+
+  async listGalleryItems(): Promise<GenerationGalleryItem[]> {
+    const jobs = this.repository.listJobs({ limit: 100 });
+    const itemsByPath = new Map<string, GenerationGalleryItem>();
+    const reservedPaths = new Set<string>();
+
+    for (const job of jobs) {
+      for (const artifact of job.artifacts) {
+        const normalizedPath = path.normalize(artifact.filePath);
+        reservedPaths.add(galleryPathKey(normalizedPath));
+
+        if (artifact.previewPath) {
+          reservedPaths.add(galleryPathKey(artifact.previewPath));
+        }
+
+        itemsByPath.set(galleryPathKey(normalizedPath), {
+          id: artifact.id,
+          artifactId: artifact.id,
+          jobId: job.id,
+          kind: artifact.kind,
+          filePath: normalizedPath,
+          previewPath: artifact.previewPath ? path.normalize(artifact.previewPath) : null,
+          mimeType: artifact.mimeType,
+          width: artifact.width,
+          height: artifact.height,
+          frameCount: job.frameCount,
+          frameRate: job.frameRate,
+          prompt: job.prompt,
+          model: job.model,
+          createdAt: artifact.createdAt,
+          completedAt: job.completedAt
+        });
+      }
+    }
+
+    for (const directoryKind of ['image', 'video'] as const) {
+      const directory = path.join(
+        this.assetRootPath,
+        directoryKind === 'video' ? 'videos' : 'images'
+      );
+      const files = await this.listGeneratedFiles(directory, directoryKind);
+      const scannedFilePaths = new Set(files.map((filePath) => galleryPathKey(filePath)));
+
+      for (const filePath of files) {
+        const normalizedPath = path.normalize(filePath);
+        const normalizedPathKey = galleryPathKey(normalizedPath);
+
+        if (reservedPaths.has(normalizedPathKey) || itemsByPath.has(normalizedPathKey)) {
+          continue;
+        }
+
+        const companionPath = previewCompanionPath(normalizedPath);
+
+        if (
+          companionPath &&
+          (reservedPaths.has(galleryPathKey(companionPath)) ||
+            scannedFilePaths.has(galleryPathKey(companionPath)))
+        ) {
+          continue;
+        }
+
+        const fileStat = await stat(normalizedPath);
+        itemsByPath.set(normalizedPathKey, {
+          id: galleryItemId(normalizedPath),
+          artifactId: null,
+          jobId: null,
+          kind: directoryKind,
+          filePath: normalizedPath,
+          previewPath: null,
+          mimeType: inferGeneratedMimeType(normalizedPath, directoryKind),
+          width: null,
+          height: null,
+          frameCount: null,
+          frameRate: null,
+          prompt: path.basename(normalizedPath),
+          model: null,
+          createdAt: fileStat.birthtime.toISOString(),
+          completedAt: fileStat.mtime.toISOString()
+        });
+      }
+    }
+
+    return [...itemsByPath.values()].sort(
+      (left, right) =>
+        new Date(right.completedAt ?? right.createdAt).getTime() -
+        new Date(left.completedAt ?? left.createdAt).getTime()
+    );
   }
 
   listImageModels(additionalModelsDirectory?: string | null): ImageGenerationModelCatalog {
@@ -295,7 +435,7 @@ export class GenerationService {
     const steps = input.steps ?? DEFAULT_VIDEO_STEPS;
     const guidanceScale = input.guidanceScale ?? DEFAULT_VIDEO_GUIDANCE_SCALE;
     const frameCount = input.frameCount ?? DEFAULT_VIDEO_FRAME_COUNT;
-    const frameRate = input.frameRate ?? DEFAULT_VIDEO_FRAME_RATE;
+    const frameRate = DEFAULT_VIDEO_FRAME_RATE;
 
     this.validateVideoWorkflowInput({
       referenceImages
@@ -453,6 +593,43 @@ export class GenerationService {
     const job = this.applySnapshot(snapshot);
     this.ensurePolling(job.id);
     return job;
+  }
+
+  async deleteArtifact(input: DeleteGenerationArtifactInput): Promise<void> {
+    if (!input.artifactId) {
+      if (!input.filePath) {
+        throw new Error('Either artifactId or filePath is required.');
+      }
+
+      await this.deleteManagedArtifactFiles(this.resolveDeleteCompanionPaths(input.filePath));
+      this.logger.info({ filePath: input.filePath }, 'Deleted generated media file');
+      return;
+    }
+
+    const artifact = this.repository.getArtifact(input.artifactId);
+
+    if (!artifact) {
+      throw new Error(`Generation artifact ${input.artifactId} was not found.`);
+    }
+
+    await this.deleteManagedArtifactFiles(this.resolveDeleteCompanionPaths(artifact.filePath));
+
+    if (artifact.previewPath && artifact.previewPath !== artifact.filePath) {
+      await this.deleteManagedArtifactFile(artifact.previewPath);
+    }
+
+    const job = this.repository.deleteArtifact(input.artifactId);
+    this.emit(job);
+
+    this.logger.info(
+      {
+        artifactId: artifact.id,
+        jobId: artifact.jobId,
+        kind: artifact.kind
+      },
+      'Deleted generated media artifact'
+    );
+
   }
 
   subscribe(listener: (event: GenerationStreamEvent) => void): () => void {
@@ -786,6 +963,62 @@ export class GenerationService {
     const extension = kind === 'video' ? '.mp4' : '.png';
     mkdirSync(directory, { recursive: true });
     return path.join(directory, `${jobId}${extension}`);
+  }
+
+  private async deleteManagedArtifactFile(filePath: string): Promise<void> {
+    const resolvedAssetRoot = path.resolve(this.assetRootPath);
+    const resolvedFilePath = path.resolve(filePath);
+    const relativePath = path.relative(resolvedAssetRoot, resolvedFilePath);
+
+    if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+      throw new Error('Generated media outside the managed gallery directory cannot be deleted here.');
+    }
+
+    await rm(resolvedFilePath, { force: true });
+  }
+
+  private async deleteManagedArtifactFiles(filePaths: string[]): Promise<void> {
+    const uniqueFilePaths = [...new Set(filePaths.map((filePath) => path.normalize(filePath)))];
+
+    for (const filePath of uniqueFilePaths) {
+      await this.deleteManagedArtifactFile(filePath);
+    }
+  }
+
+  private resolveDeleteCompanionPaths(filePath: string): string[] {
+    const companionPath = previewCompanionPath(filePath);
+    const siblingPath = previewSiblingPath(filePath);
+
+    return [
+      filePath,
+      ...(companionPath ? [companionPath] : []),
+      ...(siblingPath ? [siblingPath] : [])
+    ];
+  }
+
+  isManagedGeneratedFilePath(filePath: string): boolean {
+    const resolvedAssetRoot = path.resolve(this.assetRootPath);
+    const resolvedFilePath = path.resolve(filePath);
+    const relativePath = path.relative(resolvedAssetRoot, resolvedFilePath);
+
+    return !relativePath.startsWith('..') && !path.isAbsolute(relativePath);
+  }
+
+  private async listGeneratedFiles(
+    directory: string,
+    kind: GenerationGalleryItem['kind']
+  ): Promise<string[]> {
+    try {
+      const entries = await readdir(directory, { withFileTypes: true });
+      const pattern =
+        kind === 'video' ? GALLERY_VIDEO_EXTENSION_PATTERN : GALLERY_IMAGE_EXTENSION_PATTERN;
+
+      return entries
+        .filter((entry) => entry.isFile() && pattern.test(entry.name))
+        .map((entry) => path.join(directory, entry.name));
+    } catch {
+      return [];
+    }
   }
 
   private async assertImageJobCanStart(input: {

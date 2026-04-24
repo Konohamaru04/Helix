@@ -4,10 +4,12 @@ import { ThemedSelect } from '@renderer/components/themed-select';
 interface StatusBarProps {
   systemStatus: SystemStatus | null;
   queueOpen?: boolean;
+  galleryOpen?: boolean;
   planOpen?: boolean;
   agentsOpen?: boolean;
   skillsOpen?: boolean;
   onOpenQueue: () => void;
+  onOpenGallery: () => void;
   onOpenPlan: () => void;
   onOpenAgents: () => void;
   onOpenSkills: () => void;
@@ -215,6 +217,13 @@ export function StatusBar(props: StatusBarProps) {
           type="button"
         >
           Queue
+        </button>
+        <button
+          className={`motion-interactive rounded-full border px-3 py-1.5 text-xs font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 ${props.galleryOpen ? activeButtonClass : idleButtonClass}`}
+          onClick={props.onOpenGallery}
+          type="button"
+        >
+          Gallery
         </button>
       </div>
     </footer>

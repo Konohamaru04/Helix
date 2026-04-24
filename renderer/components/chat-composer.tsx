@@ -5,6 +5,7 @@ import { AttachmentCard } from '@renderer/components/attachment-card';
 
 interface ChatComposerProps {
   disabled: boolean;
+  submitDisabled?: boolean;
   editing: boolean;
   streaming: boolean;
   submitting?: boolean;
@@ -402,7 +403,12 @@ export function ChatComposer(props: ChatComposerProps) {
             ) : (
               <button
                 className="composer-submit-button motion-cta motion-interactive inline-flex h-12 shrink-0 items-center justify-center rounded-2xl px-5 text-sm font-semibold transition disabled:cursor-not-allowed focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-300"
-                disabled={props.disabled || props.submitting || !props.prompt.trim()}
+                disabled={
+                  props.submitDisabled ||
+                  props.disabled ||
+                  props.submitting ||
+                  !props.prompt.trim()
+                }
                 type="submit"
               >
                 {props.submitting

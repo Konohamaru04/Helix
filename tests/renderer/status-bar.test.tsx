@@ -12,6 +12,7 @@ describe('StatusBar', () => {
         onOpenAgents={vi.fn()}
         onOpenPlan={vi.fn()}
         onOpenQueue={vi.fn()}
+        onOpenGallery={vi.fn()}
         onOpenSkills={vi.fn()}
         onOpenSettings={vi.fn()}
         activeTextBackend="ollama"
@@ -82,6 +83,7 @@ describe('StatusBar', () => {
         onOpenAgents={vi.fn()}
         onOpenPlan={vi.fn()}
         onOpenQueue={vi.fn()}
+        onOpenGallery={vi.fn()}
         onOpenSkills={vi.fn()}
         onOpenSettings={vi.fn()}
         activeTextBackend="ollama"
@@ -140,6 +142,7 @@ describe('StatusBar', () => {
         onOpenAgents={onOpenAgents}
         onOpenPlan={vi.fn()}
         onOpenQueue={vi.fn()}
+        onOpenGallery={vi.fn()}
         onOpenSkills={vi.fn()}
         onOpenSettings={vi.fn()}
         activeTextBackend="ollama"
@@ -158,6 +161,33 @@ describe('StatusBar', () => {
     expect(onOpenAgents).toHaveBeenCalledTimes(1);
   });
 
+  it('opens the gallery from the status bar', () => {
+    const onOpenGallery = vi.fn();
+
+    render(
+      <StatusBar
+        onOpenAgents={vi.fn()}
+        onOpenPlan={vi.fn()}
+        onOpenQueue={vi.fn()}
+        onOpenGallery={onOpenGallery}
+        onOpenSkills={vi.fn()}
+        onOpenSettings={vi.fn()}
+        activeTextBackend="ollama"
+        onTextBackendChange={vi.fn()}
+        selectedModel=""
+        availableModels={[]}
+        onSelectedModelChange={vi.fn()}
+        selectedThinkMode=""
+        onSelectedThinkModeChange={vi.fn()}
+        systemStatus={null}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Gallery' }));
+
+    expect(onOpenGallery).toHaveBeenCalledTimes(1);
+  });
+
   it('uses themed dropdowns for footer model controls', () => {
     const onTextBackendChange = vi.fn();
     const onSelectedModelChange = vi.fn();
@@ -168,6 +198,7 @@ describe('StatusBar', () => {
         onOpenAgents={vi.fn()}
         onOpenPlan={vi.fn()}
         onOpenQueue={vi.fn()}
+        onOpenGallery={vi.fn()}
         onOpenSkills={vi.fn()}
         onOpenSettings={vi.fn()}
         activeTextBackend="ollama"

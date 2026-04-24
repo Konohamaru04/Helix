@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  type GenerationArtifact,
+  type GenerationGalleryItem,
   type MessageAttachment,
   type StoredMessage,
   type UserSettings
@@ -7,6 +9,7 @@ import {
 import { AgentsDrawer } from '@renderer/components/agents-drawer';
 import { ChatComposer } from '@renderer/components/chat-composer';
 import { DesktopOnlyNotice } from '@renderer/components/desktop-only-notice';
+import { GalleryDrawer } from '@renderer/components/gallery-drawer';
 import { MessageList } from '@renderer/components/message-list';
 import { PlanDrawer } from '@renderer/components/plan-drawer';
 import { QueueDrawer } from '@renderer/components/queue-drawer';
@@ -44,6 +47,24 @@ function mergeAttachments(
   }
 
   return merged.slice(0, 8);
+}
+
+function getFileNameFromPath(filePath: string): string {
+  return filePath.split(/[\\/]/).pop()?.trim() || filePath;
+}
+
+function createGeneratedMediaAttachment(
+  artifact: Pick<GenerationArtifact, 'filePath' | 'mimeType' | 'createdAt'>
+): MessageAttachment {
+  return {
+    id: crypto.randomUUID(),
+    fileName: getFileNameFromPath(artifact.filePath),
+    filePath: artifact.filePath,
+    mimeType: artifact.mimeType,
+    sizeBytes: null,
+    extractedText: null,
+    createdAt: new Date().toISOString()
+  };
 }
 
 type SubmitPhase = 'chat' | 'image' | 'video' | 'edit';
@@ -124,6 +145,7 @@ export function ChatPage() {
   const workspaces = useAppStore((state) => state.workspaces);
   const conversations = useAppStore((state) => state.conversations);
   const generationJobs = useAppStore((state) => state.generationJobs);
+  const generationGalleryItems = useAppStore((state) => state.generationGalleryItems);
   const imageGenerationModelCatalog = useAppStore(
     (state) => state.imageGenerationModelCatalog
   );
@@ -145,10 +167,14 @@ export function ChatPage() {
   const activeWorkspaceId = useAppStore((state) => state.activeWorkspaceId);
   const activeConversationId = useAppStore((state) => state.activeConversationId);
   const messagesByConversation = useAppStore((state) => state.messagesByConversation);
+  const pendingGenerationConfirmation = useAppStore(
+    (state) => state.pendingGenerationConfirmation
+  );
   const selectedModel = useAppStore((state) => state.selectedModel);
   const selectedThinkMode = useAppStore((state) => state.selectedThinkMode);
   const settingsDrawerOpen = useAppStore((state) => state.settingsDrawerOpen);
   const queueDrawerOpen = useAppStore((state) => state.queueDrawerOpen);
+  const galleryDrawerOpen = useAppStore((state) => state.galleryDrawerOpen);
   const agentsDrawerOpen = useAppStore((state) => state.agentsDrawerOpen);
   const skillsDrawerOpen = useAppStore((state) => state.skillsDrawerOpen);
   const streamingAssistantIds = useAppStore((state) => state.streamingAssistantIds);
@@ -160,11 +186,13 @@ export function ChatPage() {
   const refreshWorkspaceKnowledge = useAppStore((state) => state.refreshWorkspaceKnowledge);
   const refreshCapabilitySurface = useAppStore((state) => state.refreshCapabilitySurface);
   const refreshSkills = useAppStore((state) => state.refreshSkills);
+  const refreshGenerationGallery = useAppStore((state) => state.refreshGenerationGallery);
   const loadMessageArtifacts = useAppStore((state) => state.loadMessageArtifacts);
   const setSearchQuery = useAppStore((state) => state.setSearchQuery);
   const selectConversation = useAppStore((state) => state.selectConversation);
   const toggleSettingsDrawer = useAppStore((state) => state.toggleSettingsDrawer);
   const toggleQueueDrawer = useAppStore((state) => state.toggleQueueDrawer);
+  const toggleGalleryDrawer = useAppStore((state) => state.toggleGalleryDrawer);
   const togglePlanDrawer = useAppStore((state) => state.togglePlanDrawer);
   const toggleAgentsDrawer = useAppStore((state) => state.toggleAgentsDrawer);
   const toggleSkillsDrawer = useAppStore((state) => state.toggleSkillsDrawer);
@@ -189,6 +217,12 @@ export function ChatPage() {
   const startImageGeneration = useAppStore((state) => state.startImageGeneration);
   const startVideoGeneration = useAppStore((state) => state.startVideoGeneration);
   const sendPrompt = useAppStore((state) => state.sendPrompt);
+  const confirmGenerationSelection = useAppStore(
+    (state) => state.confirmGenerationSelection
+  );
+  const dismissGenerationConfirmation = useAppStore(
+    (state) => state.dismissGenerationConfirmation
+  );
   const editMessageAndResend = useAppStore((state) => state.editMessageAndResend);
   const regenerateResponse = useAppStore((state) => state.regenerateResponse);
   const cancelChatTurn = useAppStore((state) => state.cancelChatTurn);
@@ -197,6 +231,9 @@ export function ChatPage() {
   const importWorkspaceKnowledge = useAppStore((state) => state.importWorkspaceKnowledge);
   const cancelGenerationJob = useAppStore((state) => state.cancelGenerationJob);
   const retryGenerationJob = useAppStore((state) => state.retryGenerationJob);
+  const deleteGenerationArtifact = useAppStore(
+    (state) => state.deleteGenerationArtifact
+  );
 
   const activeMessages =
     activeConversationId === null
@@ -258,6 +295,11 @@ export function ChatPage() {
       : legacyVideoGenerationModelLabel;
   const submitFeedback = getSubmitFeedback(submitPhase);
   const submitInFlight = submitPhase !== null;
+  const submitBlockedByConfirmation =
+    pendingGenerationConfirmation !== null &&
+    composerMode === 'chat' &&
+    editingMessageId === null &&
+    !submitInFlight;
   const selectedImageGenerationModelOption =
     imageGenerationModelCatalog?.options.find(
       (option) => option.id === settings?.imageGenerationModel
@@ -275,11 +317,6 @@ export function ChatPage() {
   );
   const cancelTargetAssistantMessageId =
     activeStreamingAssistantMessageId ?? streamingAssistantIds[0] ?? null;
-  const headerEyebrow = activeWorkspace ? 'Workspace' : 'Local chat';
-  const headerTitle = activeWorkspace?.name ?? 'General';
-  const headerSubtitle = activeConversation
-    ? `Active chat: ${activeConversation.title}`
-    : 'Start a new conversation or import workspace knowledge to ground the next turn.';
 
   useEffect(() => {
     const root = document.documentElement;
@@ -351,11 +388,68 @@ export function ChatPage() {
     void refreshSkills();
   }, [refreshSkills, skillsDrawerOpen]);
 
+  useEffect(() => {
+    if (!galleryDrawerOpen) {
+      return;
+    }
+
+    void refreshGenerationGallery();
+    const refreshHandle = window.setInterval(() => {
+      void refreshGenerationGallery();
+    }, 3_000);
+
+    return () => window.clearInterval(refreshHandle);
+  }, [galleryDrawerOpen, refreshGenerationGallery]);
+
   function resetComposer() {
     setComposerDraft('');
     setComposerAttachments([]);
     setComposerMode('chat');
     setEditingMessageId(null);
+    dismissGenerationConfirmation();
+  }
+
+  function handleComposerDraftChange(nextPrompt: string) {
+    setComposerDraft(nextPrompt);
+    dismissGenerationConfirmation();
+  }
+
+  function updateComposerAttachments(
+    updater: (current: MessageAttachment[]) => MessageAttachment[]
+  ) {
+    setComposerAttachments((current) => updater(current));
+    dismissGenerationConfirmation();
+  }
+
+  async function handleGenerationConfirmationSelection(
+    selection: 'image' | 'video' | 'chat'
+  ) {
+    if (submitLockRef.current) {
+      return;
+    }
+
+    const nextSubmitPhase: SubmitPhase =
+      selection === 'image'
+        ? 'image'
+        : selection === 'video'
+          ? 'video'
+          : 'chat';
+
+    submitLockRef.current = true;
+    setSubmitPhase(nextSubmitPhase);
+
+    try {
+      setSubmissionError(null);
+      await confirmGenerationSelection(selection);
+      resetComposer();
+    } catch (error) {
+      setSubmissionError(
+        error instanceof Error ? error.message : 'Unable to continue with the selected action.'
+      );
+    } finally {
+      submitLockRef.current = false;
+      setSubmitPhase(null);
+    }
   }
 
   function toggleWorkspaceCreator() {
@@ -376,7 +470,12 @@ export function ChatPage() {
   }
 
   async function handleSubmit() {
-    if (submitLockRef.current) {
+    if (
+      submitLockRef.current ||
+      (pendingGenerationConfirmation !== null &&
+        composerMode === 'chat' &&
+        editingMessageId === null)
+    ) {
       return;
     }
 
@@ -435,7 +534,11 @@ export function ChatPage() {
           referenceImages: composerAttachments.slice(0, 1)
         });
       } else {
-        await sendPrompt(composerDraft, composerAttachments);
+        const resultKind = await sendPrompt(composerDraft, composerAttachments);
+
+        if (resultKind === 'generation-confirmation') {
+          return;
+        }
       }
 
       resetComposer();
@@ -453,7 +556,7 @@ export function ChatPage() {
     try {
       setSubmissionError(null);
       const attachments = await getDesktopApi().chat.pickAttachments();
-      setComposerAttachments((current) => mergeAttachments(current, attachments));
+      updateComposerAttachments((current) => mergeAttachments(current, attachments));
     } catch (error) {
       setSubmissionError(
         error instanceof Error ? error.message : 'Unable to attach files.'
@@ -467,6 +570,7 @@ export function ChatPage() {
     setComposerDraft(message.content);
     setComposerAttachments(message.attachments);
     setComposerMode('chat');
+    dismissGenerationConfirmation();
   }
 
   async function handleRegenerateMessage(message: StoredMessage) {
@@ -491,30 +595,6 @@ export function ChatPage() {
     } catch (error) {
       setSubmissionError(
         error instanceof Error ? error.message : 'Unable to stop the current reply.'
-      );
-    }
-  }
-
-  async function handleDeleteConversation() {
-    if (!activeConversation || streaming) {
-      return;
-    }
-
-    const confirmed = window.confirm(
-      `Delete "${activeConversation.title}"? This removes the conversation and its messages from local storage.`
-    );
-
-    if (!confirmed) {
-      return;
-    }
-
-    try {
-      setSubmissionError(null);
-      resetComposer();
-      await deleteConversation(activeConversation.id);
-    } catch (error) {
-      setSubmissionError(
-        error instanceof Error ? error.message : 'Unable to delete conversation.'
       );
     }
   }
@@ -550,6 +630,38 @@ export function ChatPage() {
         error instanceof Error ? error.message : 'Unable to retry the generation job.'
       );
     }
+  }
+
+  async function handleDeleteGenerationArtifact(artifactId: string) {
+    try {
+      setSubmissionError(null);
+      await deleteGenerationArtifact(artifactId);
+    } catch (error) {
+      setSubmissionError(
+        error instanceof Error ? error.message : 'Unable to delete the generated media.'
+      );
+      throw error;
+    }
+  }
+
+  function handleEditGeneratedImage(item: GenerationGalleryItem) {
+    setSubmissionError(null);
+    setEditingMessageId(null);
+    setComposerDraft(item.prompt ?? '');
+    setComposerAttachments([createGeneratedMediaAttachment(item)]);
+    setComposerMode('image');
+    dismissGenerationConfirmation();
+    toggleGalleryDrawer(false);
+  }
+
+  function handleCreateVideoFromGeneratedImage(item: GenerationGalleryItem) {
+    setSubmissionError(null);
+    setEditingMessageId(null);
+    setComposerDraft(item.prompt ?? '');
+    setComposerAttachments([createGeneratedMediaAttachment(item)]);
+    setComposerMode('video');
+    dismissGenerationConfirmation();
+    toggleGalleryDrawer(false);
   }
 
   async function handleImportKnowledge() {
@@ -781,38 +893,6 @@ export function ChatPage() {
           )}
 
           <div className="flex min-w-0 flex-1 flex-col">
-            {/* <header className="border-b border-white/10 px-6 py-4">
-              <div className="mx-auto flex w-full min-w-0 max-w-[88rem] flex-col gap-3">
-                <div className="flex items-center gap-3">
-                  <button
-                    aria-expanded={sidebarOpen}
-                    aria-label={sidebarOpen ? 'Close sidebar' : 'Open sidebar'}
-                    className="lg:hidden flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-white/10 text-slate-200 transition hover:border-white/20 hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
-                    onClick={() => toggleSidebar()}
-                    type="button"
-                  >
-                    <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
-                      <path d="M2 4.5h14M2 9h14M2 13.5h14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-                    </svg>
-                  </button>
-                  <div className="min-w-0">
-                    <p className="text-xs uppercase tracking-[0.3em] text-cyan-200/70">
-                      {headerEyebrow}
-                    </p>
-                    <h2 className="mt-2 text-[1.95rem] font-semibold leading-none text-white">
-                      {headerTitle}
-                    </h2>
-                    <p
-                      className="mt-1 truncate text-sm text-slate-400"
-                      title={headerSubtitle}
-                    >
-                      {headerSubtitle}
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </header> */}
-
             {!initialized ? (
               <div className="flex flex-1 items-center justify-center px-6 text-sm text-slate-400">
                 <div
@@ -935,6 +1015,58 @@ export function ChatPage() {
                   streaming={streaming}
                 />
 
+                {pendingGenerationConfirmation ? (
+                  <section className="motion-panel mx-6 mb-3 rounded-[1.75rem] border border-amber-300/20 bg-amber-500/10 px-4 py-4 shadow-panel">
+                    <div className="flex flex-col gap-4">
+                      <div>
+                        <p className="text-xs uppercase tracking-[0.24em] text-amber-100/75">
+                          Confirm Generation
+                        </p>
+                        <p className="mt-2 text-sm text-amber-50">
+                          This prompt looks like a{' '}
+                          {pendingGenerationConfirmation.detectedIntent === 'video'
+                            ? 'generation-ready video'
+                            : 'generation-ready image'}{' '}
+                          request. Choose how to handle it before the bridge starts anything.
+                        </p>
+                        <p className="mt-2 rounded-2xl border border-white/10 bg-slate-950/45 px-3 py-3 text-sm text-slate-200">
+                          {pendingGenerationConfirmation.prompt}
+                        </p>
+                      </div>
+
+                      <div className="flex flex-wrap gap-2">
+                        {pendingGenerationConfirmation.options.map((option) => (
+                          <button
+                            key={option.selection}
+                            className={
+                              option.recommended
+                                ? 'motion-interactive rounded-2xl bg-amber-300 px-4 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-amber-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-200'
+                                : 'motion-interactive rounded-2xl border border-white/10 px-4 py-2.5 text-sm font-medium text-slate-100 transition hover:border-white/20 hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-200'
+                            }
+                            onClick={() => {
+                              void handleGenerationConfirmationSelection(option.selection);
+                            }}
+                            type="button"
+                          >
+                            {option.label}
+                          </button>
+                        ))}
+                      </div>
+
+                      <div className="flex flex-wrap gap-2 text-xs text-amber-100/75">
+                        {pendingGenerationConfirmation.options.map((option) => (
+                          <span
+                            key={`${option.selection}-description`}
+                            className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5"
+                          >
+                            {option.label}: {option.description}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  </section>
+                ) : null}
+
                 {submissionError ? (
                   <div className="motion-panel mx-6 mb-3 rounded-2xl border border-rose-400/20 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
                     {submissionError}
@@ -951,6 +1083,7 @@ export function ChatPage() {
                         ? !videoGenerationAvailable || streaming || submitInFlight
                       : !settings || !textBackendReady || streaming || submitInFlight
                   }
+                  submitDisabled={submitBlockedByConfirmation}
                   editing={editingMessageId !== null}
                   generationMode={composerMode}
                   imageGenerationAvailable={imageGenerationAvailable}
@@ -964,22 +1097,26 @@ export function ChatPage() {
                     setSubmissionError(null);
                     setEditingMessageId(null);
                     setComposerMode('image');
+                    dismissGenerationConfirmation();
                   }}
                   onEnterVideoMode={() => {
                     setSubmissionError(null);
                     setEditingMessageId(null);
                     setComposerMode('video');
+                    dismissGenerationConfirmation();
                   }}
                   onExitImageMode={() => {
                     setComposerMode('chat');
+                    dismissGenerationConfirmation();
                   }}
                   onExitVideoMode={() => {
                     setComposerMode('chat');
+                    dismissGenerationConfirmation();
                   }}
                   onImportWorkspaceKnowledge={handleImportKnowledge}
-                  onPromptChange={setComposerDraft}
+                  onPromptChange={handleComposerDraftChange}
                   onRemoveAttachment={(attachmentId) => {
-                    setComposerAttachments((current) =>
+                    updateComposerAttachments((current) =>
                       current.filter((attachment) => attachment.id !== attachmentId)
                     );
                   }}
@@ -1004,11 +1141,13 @@ export function ChatPage() {
           activeTextBackend={activeTextBackend}
           availableModels={availableModels}
           onOpenAgents={() => toggleAgentsDrawer()}
+          onOpenGallery={() => toggleGalleryDrawer()}
           onOpenPlan={() => togglePlanDrawer()}
           onOpenQueue={() => toggleQueueDrawer()}
           onOpenSkills={() => toggleSkillsDrawer()}
           onOpenSettings={() => toggleSettingsDrawer(true)}
           agentsOpen={agentsDrawerOpen}
+          galleryOpen={galleryDrawerOpen}
           onSelectedModelChange={setSelectedModel}
           onSelectedThinkModeChange={(value) => setSelectedThinkMode(value as '' | 'off' | 'on' | 'low' | 'medium' | 'high')}
           onTextBackendChange={(backend) => void handleTextBackendChange(backend)}
@@ -1026,7 +1165,7 @@ export function ChatPage() {
       <SettingsDrawer
         key={
           settings
-            ? `${settings.textInferenceBackend}-${settings.ollamaBaseUrl}-${settings.nvidiaBaseUrl}-${settings.defaultModel}-${settings.codingModel}-${settings.visionModel}-${settings.imageGenerationModel}-${settings.additionalModelsDirectory ?? 'none'}-${settings.videoGenerationModel}-${settings.videoGenerationHighNoiseModel}-${settings.videoGenerationLowNoiseModel}-${settings.pythonPort}-${String(settings.streamingMascotEnabled)}-${settings.theme}-${String(settingsDrawerOpen)}`
+            ? `${settings.textInferenceBackend}-${settings.ollamaBaseUrl}-${settings.nvidiaBaseUrl}-${settings.defaultModel}-${settings.codingModel}-${settings.visionModel}-${settings.imageGenerationModel}-${settings.additionalModelsDirectory ?? 'none'}-${settings.videoGenerationModel}-${settings.videoGenerationHighNoiseModel}-${settings.videoGenerationLowNoiseModel}-${settings.pythonPort}-${String(settings.streamingMascotEnabled)}-${String(settings.notificationsEnabled)}-${settings.theme}-${String(settingsDrawerOpen)}`
             : 'settings-empty'
         }
         capabilities={availableTools}
@@ -1064,6 +1203,15 @@ export function ChatPage() {
         }}
         open={queueDrawerOpen}
         pendingRequestCount={systemStatus?.pendingRequestCount ?? 0}
+      />
+
+      <GalleryDrawer
+        galleryItems={generationGalleryItems}
+        onCreateVideoFromImage={handleCreateVideoFromGeneratedImage}
+        onClose={() => toggleGalleryDrawer()}
+        onDeleteArtifact={(artifactId) => handleDeleteGenerationArtifact(artifactId)}
+        onEditImage={handleEditGeneratedImage}
+        open={galleryDrawerOpen}
       />
 
       <PlanDrawer

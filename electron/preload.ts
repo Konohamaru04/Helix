@@ -16,12 +16,14 @@ import {
   chatTurnRequestSchema,
   chatStreamEventSchema,
   chatTurnAcceptedSchema,
+  confirmGenerationIntentInputSchema,
   conversationIdSchema,
   createSkillInputSchema,
   deleteConversationInputSchema,
   deleteSkillInputSchema,
   editMessageInputSchema,
   generationJobSchema,
+  generationGalleryItemSchema,
   generationStreamEventSchema,
   imageGenerationRequestSchema,
   imageGenerationStartResultSchema,
@@ -34,6 +36,7 @@ import {
   deleteWorkspaceInputSchema,
   exportConversationInputSchema,
   exportConversationResultSchema,
+  deleteGenerationArtifactInputSchema,
   imageGenerationModelCatalogSchema,
     importWorkspaceKnowledgeResultSchema,
     messageAttachmentSchema,
@@ -118,6 +121,13 @@ const desktopApi: DesktopApi = {
 
       return payload.map((job) => generationJobSchema.parse(job));
     },
+    listGallery: async () => {
+      const payload = (await ipcRenderer.invoke(
+        IpcChannels.generationListGallery
+      )) as unknown[];
+
+      return payload.map((item) => generationGalleryItemSchema.parse(item));
+    },
     cancelJob: async (input) =>
       generationJobSchema.parse(
         await ipcRenderer.invoke(
@@ -132,6 +142,12 @@ const desktopApi: DesktopApi = {
           retryGenerationJobInputSchema.parse(input)
         )
       ),
+    deleteArtifact: async (input) => {
+      await ipcRenderer.invoke(
+        IpcChannels.generationDeleteArtifact,
+        deleteGenerationArtifactInputSchema.parse(input)
+      );
+    },
     onJobEvent: (listener) => {
       const handler = (
         _event: Electron.IpcRendererEvent,
@@ -153,6 +169,13 @@ const desktopApi: DesktopApi = {
         await ipcRenderer.invoke(
           IpcChannels.chatStart,
           chatTurnRequestSchema.parse(input)
+        )
+      ),
+    confirmGenerationIntent: async (input) =>
+      chatStartAcceptedSchema.parse(
+        await ipcRenderer.invoke(
+          IpcChannels.chatConfirmGeneration,
+          confirmGenerationIntentInputSchema.parse(input)
         )
       ),
     pickAttachments: async () => {

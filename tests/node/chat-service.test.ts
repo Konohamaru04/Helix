@@ -82,9 +82,7 @@ function createChatServiceHarness(options: {
   nvidiaStreamChat?: ReturnType<typeof vi.fn>;
   nvidiaCompleteChat?: ReturnType<typeof vi.fn>;
   openWorkspacePath?: WorkspacePathLauncher;
-  generationService?: {
-    startImageJob: ReturnType<typeof vi.fn>;
-  };
+  generationService?: Partial<Pick<GenerationService, 'startImageJob' | 'startVideoJob'>>;
   readFreeMemoryBytes?: () => number;
 }) {
   const logger = createLogger(options.loggerName);
@@ -180,6 +178,21 @@ function createChatServiceHarness(options: {
     undefined,
     capabilityService
   );
+  const generationService =
+    options.generationService === undefined
+      ? undefined
+      : ({
+          startImageJob:
+            options.generationService.startImageJob ??
+            ((vi.fn(() =>
+              Promise.reject(new Error('startImageJob was not mocked for this test.'))
+            ) as unknown) as GenerationService['startImageJob']),
+          startVideoJob:
+            options.generationService.startVideoJob ??
+            ((vi.fn(() =>
+              Promise.reject(new Error('startVideoJob was not mocked for this test.'))
+            ) as unknown) as GenerationService['startVideoJob'])
+        } satisfies Pick<GenerationService, 'startImageJob' | 'startVideoJob'>);
   const service = new ChatService(
     repository,
     turnMetadataService,
@@ -194,7 +207,7 @@ function createChatServiceHarness(options: {
     toolDispatcher,
     skillRegistry,
     generationRepository,
-    options.generationService as Pick<GenerationService, 'startImageJob'> | undefined,
+    generationService,
     options.readFreeMemoryBytes
   );
 
@@ -277,7 +290,7 @@ describe('ChatService', () => {
     }
   });
 
-  it('returns lightweight UI messages with artifact counts while keeping full details in SQLite', async () => {
+  it('returns lightweight UI messages with artifact counts while keeping full details in SQLite', () => {
     const directory = mkdtempSync(path.join(tmpdir(), 'ollama-desktop-chat-ui-metadata-'));
     tempDirectories.push(directory);
     const harness = createChatServiceHarness({
@@ -428,6 +441,89 @@ describe('ChatService', () => {
       expect(capturedInput.model).toBe('qwen3-vl:8b');
       expect(userMessage?.content).toContain('Who is in this image?');
       expect(userMessage?.images).toEqual([imageBytes.toString('base64')]);
+    } finally {
+      harness.database.close();
+    }
+  });
+
+  it('omits prior image bytes when a follow-up turn uses a non-vision model', async () => {
+    const directory = mkdtempSync(path.join(tmpdir(), 'ollama-desktop-chat-vision-follow-up-'));
+    tempDirectories.push(directory);
+
+    const capturedInputs: VisionStreamCall[] = [];
+    const streamChat = vi.fn(
+      (input: {
+        baseUrl: string;
+        model: string;
+        messages: Array<{
+          role: 'system' | 'user' | 'assistant';
+          content: string;
+          images?: string[];
+        }>;
+        onDelta: (delta: string) => void;
+      }) => {
+        capturedInputs.push({
+          model: input.model,
+          messages: input.messages
+        });
+        input.onDelta(input.model.includes('vl') ? 'Vision reply.' : 'Text reply.');
+
+        return Promise.resolve({
+          content: input.model.includes('vl') ? 'Vision reply.' : 'Text reply.',
+          doneReason: 'stop',
+          thinking: '',
+          toolCalls: []
+        });
+      }
+    );
+    const harness = createChatServiceHarness({
+      directory,
+      loggerName: 'chat-vision-follow-up-test',
+      models: ['qwen3-vl:8b', 'llama3.2:latest'],
+      streamChat
+    });
+
+    try {
+      const imagePath = path.join(directory, 'scene.png');
+      writeFileSync(imagePath, Buffer.from([5, 6, 7, 8]));
+
+      const attachments = await harness.service.prepareAttachments([imagePath]);
+      const firstAccepted = await harness.service.startChatTurn(
+        {
+          prompt: 'Describe this image.',
+          model: 'qwen3-vl:8b',
+          attachments
+        },
+        () => undefined
+      );
+
+      await vi.waitFor(() => {
+        const latestMessages = harness.repository.listMessages(firstAccepted.conversation.id);
+        expect(latestMessages.at(-1)?.status).toBe('completed');
+      });
+
+      await harness.service.startChatTurn(
+        {
+          conversationId: firstAccepted.conversation.id,
+          prompt: 'Summarize your previous answer in one sentence.',
+          model: 'llama3.2:latest'
+        },
+        () => undefined
+      );
+
+      await vi.waitFor(() => {
+        expect(capturedInputs).toHaveLength(2);
+      });
+
+      const followUpInput = capturedInputs[1];
+
+      expect(followUpInput?.model).toBe('llama3.2:latest');
+      expect(
+        followUpInput?.messages.flatMap((message) => message.images ?? [])
+      ).toEqual([]);
+      expect(
+        followUpInput?.messages.some((message) => message.content.includes('Attached image'))
+      ).toBe(true);
     } finally {
       harness.database.close();
     }
@@ -774,42 +870,41 @@ describe('ChatService', () => {
     }
   });
 
-  it('auto-routes text-to-image prompts to inline generation jobs when base routing is active', async () => {
+  it('asks for confirmation before dispatching text-to-image prompts with no image attachments', async () => {
     const directory = mkdtempSync(path.join(tmpdir(), 'ollama-desktop-auto-image-'));
     tempDirectories.push(directory);
     const startImageJob = vi.fn(
-      (input: {
-        conversationId?: string;
-        prompt: string;
-        mode?: 'text-to-image' | 'image-to-image';
-        referenceImages?: Array<{ filePath: string | null }>;
-      }) =>
+      (input: Parameters<GenerationService['startImageJob']>[0]) =>
         Promise.resolve({
-          id: '81000000-0000-4000-8000-000000000001',
-          workspaceId: null,
-          conversationId: input.conversationId ?? null,
-          kind: 'image' as const,
-          mode: input.mode ?? 'text-to-image',
-          workflowProfile: 'default' as const,
-          status: 'queued' as const,
-          prompt: input.prompt,
-          negativePrompt: null,
-          model: 'builtin:placeholder',
-          backend: 'placeholder' as const,
-          width: 768,
-          height: 768,
-          steps: 6,
-          guidanceScale: 4,
-          seed: null,
-          progress: 0,
-          stage: 'Queued',
-          errorMessage: null,
-          createdAt: '2026-04-09T00:00:00.000Z',
-          updatedAt: '2026-04-09T00:00:00.000Z',
-          startedAt: null,
-          completedAt: null,
-          referenceImages: [],
-          artifacts: []
+          job: {
+            id: '81000000-0000-4000-8000-000000000001',
+            workspaceId: null,
+            conversationId: input.conversationId ?? null,
+            kind: 'image' as const,
+            mode: input.mode ?? 'text-to-image',
+            workflowProfile: 'default' as const,
+            status: 'queued' as const,
+            prompt: input.prompt,
+            negativePrompt: null,
+            model: 'builtin:placeholder',
+            backend: 'placeholder' as const,
+            width: 768,
+            height: 768,
+            steps: 6,
+            guidanceScale: 4,
+            seed: null,
+            frameCount: null,
+            frameRate: null,
+            progress: 0,
+            stage: 'Queued',
+            errorMessage: null,
+            createdAt: '2026-04-09T00:00:00.000Z',
+            updatedAt: '2026-04-09T00:00:00.000Z',
+            startedAt: null,
+            completedAt: null,
+            referenceImages: [],
+            artifacts: []
+          }
         })
     );
     const harness = createChatServiceHarness({
@@ -826,6 +921,29 @@ describe('ChatService', () => {
         () => undefined
       );
 
+      expect(startImageJob).not.toHaveBeenCalled();
+      expect(accepted.kind).toBe('generation-confirmation');
+
+      if (accepted.kind !== 'generation-confirmation') {
+        throw new Error('Expected a generation confirmation result.');
+      }
+
+      expect(accepted.options.map((option) => option.label)).toEqual([
+        'Generate Image',
+        'Continue Chat'
+      ]);
+      expect(accepted.conversation.title).toContain('Generate an image');
+
+      const confirmed = await harness.service.confirmGenerationIntent(
+        {
+          conversationId: accepted.conversation.id,
+          prompt: accepted.prompt,
+          attachments: accepted.attachments,
+          selection: 'image'
+        },
+        () => undefined
+      );
+
       expect(startImageJob).toHaveBeenCalledWith(
         expect.objectContaining({
           prompt: 'Generate an image of a neon cat wearing armor',
@@ -833,55 +951,47 @@ describe('ChatService', () => {
           referenceImages: []
         })
       );
-      expect(accepted.kind).toBe('generation');
-
-      if (accepted.kind !== 'generation') {
-        throw new Error('Expected an inline generation acceptance result.');
-      }
-
-      expect(accepted.job.mode).toBe('text-to-image');
-      expect(accepted.conversation.title).toContain('Generate an image');
+      expect(confirmed.kind).toBe('generation');
     } finally {
       harness.database.close();
     }
   });
 
-  it('auto-routes image-generation prompts even when a general chat model is selected', async () => {
+  it('still asks for generation confirmation when a general chat model is selected', async () => {
     const directory = mkdtempSync(path.join(tmpdir(), 'ollama-desktop-auto-image-selected-'));
     tempDirectories.push(directory);
     const startImageJob = vi.fn(
-      (input: {
-        conversationId?: string;
-        prompt: string;
-        mode?: 'text-to-image' | 'image-to-image';
-        referenceImages?: Array<{ filePath: string | null }>;
-      }) =>
+      (input: Parameters<GenerationService['startImageJob']>[0]) =>
         Promise.resolve({
-          id: '81000000-0000-4000-8000-000000000011',
-          workspaceId: null,
-          conversationId: input.conversationId ?? null,
-          kind: 'image' as const,
-          mode: input.mode ?? 'text-to-image',
-          workflowProfile: 'default' as const,
-          status: 'queued' as const,
-          prompt: input.prompt,
-          negativePrompt: null,
-          model: 'builtin:placeholder',
-          backend: 'placeholder' as const,
-          width: 768,
-          height: 768,
-          steps: 6,
-          guidanceScale: 4,
-          seed: null,
-          progress: 0,
-          stage: 'Queued',
-          errorMessage: null,
-          createdAt: '2026-04-09T00:00:00.000Z',
-          updatedAt: '2026-04-09T00:00:00.000Z',
-          startedAt: null,
-          completedAt: null,
-          referenceImages: [],
-          artifacts: []
+          job: {
+            id: '81000000-0000-4000-8000-000000000011',
+            workspaceId: null,
+            conversationId: input.conversationId ?? null,
+            kind: 'image' as const,
+            mode: input.mode ?? 'text-to-image',
+            workflowProfile: 'default' as const,
+            status: 'queued' as const,
+            prompt: input.prompt,
+            negativePrompt: null,
+            model: 'builtin:placeholder',
+            backend: 'placeholder' as const,
+            width: 768,
+            height: 768,
+            steps: 6,
+            guidanceScale: 4,
+            seed: null,
+            frameCount: null,
+            frameRate: null,
+            progress: 0,
+            stage: 'Queued',
+            errorMessage: null,
+            createdAt: '2026-04-09T00:00:00.000Z',
+            updatedAt: '2026-04-09T00:00:00.000Z',
+            startedAt: null,
+            completedAt: null,
+            referenceImages: [],
+            artifacts: []
+          }
         })
     );
     const harness = createChatServiceHarness({
@@ -899,14 +1009,8 @@ describe('ChatService', () => {
         () => undefined
       );
 
-      expect(startImageJob).toHaveBeenCalledWith(
-        expect.objectContaining({
-          prompt: 'Generate an image of a neon cat wearing armor',
-          mode: 'text-to-image',
-          referenceImages: []
-        })
-      );
-      expect(accepted.kind).toBe('generation');
+      expect(startImageJob).not.toHaveBeenCalled();
+      expect(accepted.kind).toBe('generation-confirmation');
     } finally {
       harness.database.close();
     }
@@ -1004,50 +1108,49 @@ Must run in Chrome browser`;
     }
   });
 
-  it('reuses the latest generated image as the reference input for follow-up edit prompts', async () => {
+  it('asks for confirmation, then reuses the latest generated image for follow-up edit prompts without new attachments', async () => {
     const directory = mkdtempSync(path.join(tmpdir(), 'ollama-desktop-auto-image-edit-'));
     tempDirectories.push(directory);
     const startImageJob = vi.fn(
-      (input: {
-        conversationId?: string;
-        prompt: string;
-        mode?: 'text-to-image' | 'image-to-image';
-        referenceImages?: Array<{ filePath: string | null }>;
-      }) =>
+      (input: Parameters<GenerationService['startImageJob']>[0]) =>
         Promise.resolve({
-          id: '81000000-0000-4000-8000-000000000002',
-          workspaceId: null,
-          conversationId: input.conversationId ?? null,
-          kind: 'image' as const,
-          mode: input.mode ?? 'text-to-image',
-          workflowProfile: 'qwen-image-edit-2511' as const,
-          status: 'queued' as const,
-          prompt: input.prompt,
-          negativePrompt: null,
-          model: 'E:/LocalModels/diffusion_models/Qwen-Image-Edit-2511-Q8_0.gguf',
-          backend: 'comfyui' as const,
-          width: 1664,
-          height: 1248,
-          steps: 4,
-          guidanceScale: 1,
-          seed: null,
-          progress: 0,
-          stage: 'Queued',
-          errorMessage: null,
-          createdAt: '2026-04-09T00:00:00.000Z',
-          updatedAt: '2026-04-09T00:00:00.000Z',
-          startedAt: null,
-          completedAt: null,
-          referenceImages: (input.referenceImages ?? []).map((attachment, index) => ({
-            id: `83000000-0000-4000-8000-00000000000${index + 1}`,
-            fileName: path.basename(attachment.filePath ?? `reference-${index}.png`),
-            filePath: attachment.filePath,
-            mimeType: 'image/png',
-            sizeBytes: 4,
-            extractedText: null,
-            createdAt: '2026-04-09T00:00:00.000Z'
-          })),
-          artifacts: []
+          job: {
+            id: '81000000-0000-4000-8000-000000000002',
+            workspaceId: null,
+            conversationId: input.conversationId ?? null,
+            kind: 'image' as const,
+            mode: input.mode ?? 'text-to-image',
+            workflowProfile: 'qwen-image-edit-2511' as const,
+            status: 'queued' as const,
+            prompt: input.prompt,
+            negativePrompt: null,
+            model: 'E:/LocalModels/diffusion_models/Qwen-Image-Edit-2511-Q8_0.gguf',
+            backend: 'comfyui' as const,
+            width: 1664,
+            height: 1248,
+            steps: 4,
+            guidanceScale: 1,
+            seed: null,
+            frameCount: null,
+            frameRate: null,
+            progress: 0,
+            stage: 'Queued',
+            errorMessage: null,
+            createdAt: '2026-04-09T00:00:00.000Z',
+            updatedAt: '2026-04-09T00:00:00.000Z',
+            startedAt: null,
+            completedAt: null,
+            referenceImages: (input.referenceImages ?? []).map((attachment, index) => ({
+              id: `83000000-0000-4000-8000-00000000000${index + 1}`,
+              fileName: path.basename(attachment.filePath ?? `reference-${index}.png`),
+              filePath: attachment.filePath,
+              mimeType: 'image/png',
+              sizeBytes: 4,
+              extractedText: null,
+              createdAt: '2026-04-09T00:00:00.000Z'
+            })),
+            artifacts: []
+          }
         })
     );
     const harness = createChatServiceHarness({
@@ -1113,6 +1216,28 @@ Must run in Chrome browser`;
         () => undefined
       );
 
+      expect(startImageJob).not.toHaveBeenCalled();
+      expect(accepted.kind).toBe('generation-confirmation');
+
+      if (accepted.kind !== 'generation-confirmation') {
+        throw new Error('Expected a generation confirmation result for the follow-up edit.');
+      }
+
+      expect(accepted.options.map((option) => option.label)).toEqual([
+        'Generate Image',
+        'Continue Chat'
+      ]);
+
+      const confirmed = await harness.service.confirmGenerationIntent(
+        {
+          conversationId: accepted.conversation.id,
+          prompt: accepted.prompt,
+          attachments: accepted.attachments,
+          selection: 'image'
+        },
+        () => undefined
+      );
+
       expect(startImageJob).toHaveBeenCalledWith(
         expect.objectContaining({
           conversationId: conversation.id,
@@ -1124,62 +1249,55 @@ Must run in Chrome browser`;
       const firstCall = startImageJob.mock.calls[0]?.[0];
       expect(firstCall?.referenceImages ?? []).toHaveLength(1);
       expect(firstCall?.referenceImages?.[0]?.filePath).toBe(generatedImagePath);
-      expect(accepted.kind).toBe('generation');
-
-      if (accepted.kind !== 'generation') {
-        throw new Error('Expected a generation acceptance result for the follow-up edit.');
-      }
-
-      expect(accepted.job.mode).toBe('image-to-image');
+      expect(confirmed.kind).toBe('generation');
     } finally {
       harness.database.close();
     }
   });
 
-  it('carries the earlier original reference image into restore-style image edit follow-ups', async () => {
+  it('shows edit and video confirmation options when exactly one image is attached', async () => {
     const directory = mkdtempSync(path.join(tmpdir(), 'ollama-desktop-auto-image-restore-'));
     tempDirectories.push(directory);
     const startImageJob = vi.fn(
-      (input: {
-        conversationId?: string;
-        prompt: string;
-        mode?: 'text-to-image' | 'image-to-image';
-        referenceImages?: Array<{ filePath: string | null }>;
-      }) =>
+      (input: Parameters<GenerationService['startImageJob']>[0]) =>
         Promise.resolve({
-          id: '81000000-0000-4000-8000-000000000021',
-          workspaceId: null,
-          conversationId: input.conversationId ?? null,
-          kind: 'image' as const,
-          mode: input.mode ?? 'text-to-image',
-          workflowProfile: 'qwen-image-edit-2511' as const,
-          status: 'queued' as const,
-          prompt: input.prompt,
-          negativePrompt: null,
-          model: 'E:/LocalModels/diffusion_models/Qwen-Image-Edit-2511-Q8_0.gguf',
-          backend: 'comfyui' as const,
-          width: 1664,
-          height: 1248,
-          steps: 4,
-          guidanceScale: 1,
-          seed: null,
-          progress: 0,
-          stage: 'Queued',
-          errorMessage: null,
-          createdAt: '2026-04-09T00:00:00.000Z',
-          updatedAt: '2026-04-09T00:00:00.000Z',
-          startedAt: null,
-          completedAt: null,
-          referenceImages: (input.referenceImages ?? []).map((attachment, index) => ({
-            id: `83000000-0000-4000-8000-00000000001${index + 1}`,
-            fileName: path.basename(attachment.filePath ?? `reference-${index}.png`),
-            filePath: attachment.filePath,
-            mimeType: 'image/png',
-            sizeBytes: 4,
-            extractedText: null,
-            createdAt: '2026-04-09T00:00:00.000Z'
-          })),
-          artifacts: []
+          job: {
+            id: '81000000-0000-4000-8000-000000000021',
+            workspaceId: null,
+            conversationId: input.conversationId ?? null,
+            kind: 'image' as const,
+            mode: input.mode ?? 'text-to-image',
+            workflowProfile: 'qwen-image-edit-2511' as const,
+            status: 'queued' as const,
+            prompt: input.prompt,
+            negativePrompt: null,
+            model: 'E:/LocalModels/diffusion_models/Qwen-Image-Edit-2511-Q8_0.gguf',
+            backend: 'comfyui' as const,
+            width: 1664,
+            height: 1248,
+            steps: 4,
+            guidanceScale: 1,
+            seed: null,
+            frameCount: null,
+            frameRate: null,
+            progress: 0,
+            stage: 'Queued',
+            errorMessage: null,
+            createdAt: '2026-04-09T00:00:00.000Z',
+            updatedAt: '2026-04-09T00:00:00.000Z',
+            startedAt: null,
+            completedAt: null,
+            referenceImages: (input.referenceImages ?? []).map((attachment, index) => ({
+              id: `83000000-0000-4000-8000-00000000001${index + 1}`,
+              fileName: path.basename(attachment.filePath ?? `reference-${index}.png`),
+              filePath: attachment.filePath,
+              mimeType: 'image/png',
+              sizeBytes: 4,
+              extractedText: null,
+              createdAt: '2026-04-09T00:00:00.000Z'
+            })),
+            artifacts: []
+          }
         })
     );
     const harness = createChatServiceHarness({
@@ -1250,6 +1368,29 @@ Must run in Chrome browser`;
         () => undefined
       );
 
+      expect(startImageJob).not.toHaveBeenCalled();
+      expect(accepted.kind).toBe('generation-confirmation');
+
+      if (accepted.kind !== 'generation-confirmation') {
+        throw new Error('Expected a generation confirmation result for the restore-style edit.');
+      }
+
+      expect(accepted.options.map((option) => option.label)).toEqual([
+        'Edit Image',
+        'Generate Video',
+        'Continue Chat'
+      ]);
+
+      const confirmed = await harness.service.confirmGenerationIntent(
+        {
+          conversationId: accepted.conversation.id,
+          prompt: accepted.prompt,
+          attachments: accepted.attachments,
+          selection: 'image'
+        },
+        () => undefined
+      );
+
       expect(startImageJob).toHaveBeenCalledWith(
         expect.objectContaining({
           conversationId: conversation.id,
@@ -1264,7 +1405,208 @@ Must run in Chrome browser`;
       expect(firstCall?.referenceImages ?? []).toHaveLength(2);
       expect(firstCall?.referenceImages?.[0]?.filePath).toBe(editedImagePath);
       expect(firstCall?.referenceImages?.[1]?.filePath).toBe(originalImagePath);
-      expect(accepted.kind).toBe('generation');
+      expect(confirmed.kind).toBe('generation');
+    } finally {
+      harness.database.close();
+    }
+  });
+
+  it('starts a video job after the user confirms the single-image video option', async () => {
+    const directory = mkdtempSync(path.join(tmpdir(), 'ollama-desktop-confirm-video-'));
+    tempDirectories.push(directory);
+    const startVideoJob = vi.fn(
+      (input: Parameters<GenerationService['startVideoJob']>[0]) =>
+        Promise.resolve({
+          job: {
+            id: '81000000-0000-4000-8000-000000000031',
+            workspaceId: null,
+            conversationId: input.conversationId ?? null,
+            kind: 'video' as const,
+            mode: 'image-to-video' as const,
+            workflowProfile: 'wan-image-to-video' as const,
+            status: 'queued' as const,
+            prompt: input.prompt,
+            negativePrompt: null,
+            model: 'E:/LocalModels/diffusion_models/wan-high.gguf',
+            backend: 'comfyui' as const,
+            width: 528,
+            height: 704,
+            steps: 8,
+            guidanceScale: 1,
+            seed: null,
+            frameCount: 81,
+            frameRate: 16,
+            progress: 0,
+            stage: 'Queued',
+            errorMessage: null,
+            createdAt: '2026-04-09T00:00:00.000Z',
+            updatedAt: '2026-04-09T00:00:00.000Z',
+            startedAt: null,
+            completedAt: null,
+            referenceImages: input.referenceImages.map((attachment, index) => ({
+              id: `83000000-0000-4000-8000-00000000002${index + 1}`,
+              fileName: path.basename(attachment.filePath ?? `reference-${index}.png`),
+              filePath: attachment.filePath,
+              mimeType: 'image/png',
+              sizeBytes: 4,
+              extractedText: null,
+              createdAt: '2026-04-09T00:00:00.000Z'
+            })),
+            artifacts: []
+          }
+        })
+    );
+    const harness = createChatServiceHarness({
+      directory,
+      loggerName: 'confirm-video-generation-test',
+      generationService: { startVideoJob }
+    });
+
+    try {
+      const imagePath = path.join(directory, 'portrait.png');
+      writeFileSync(imagePath, Buffer.from([1, 2, 3, 4]));
+      const attachments = await harness.service.prepareAttachments([imagePath]);
+
+      const accepted = await harness.service.submitPrompt(
+        {
+          prompt: 'Animate this portrait with a slow dolly-in.',
+          attachments
+        },
+        () => undefined
+      );
+
+      expect(accepted.kind).toBe('generation-confirmation');
+
+      if (accepted.kind !== 'generation-confirmation') {
+        throw new Error('Expected a generation confirmation result for the video prompt.');
+      }
+
+      const confirmed = await harness.service.confirmGenerationIntent(
+        {
+          conversationId: accepted.conversation.id,
+          prompt: accepted.prompt,
+          attachments: accepted.attachments,
+          selection: 'video'
+        },
+        () => undefined
+      );
+
+      expect(startVideoJob).toHaveBeenCalledWith(
+        expect.objectContaining({
+          conversationId: accepted.conversation.id,
+          prompt: 'Animate this portrait with a slow dolly-in.'
+        })
+      );
+      expect(startVideoJob.mock.calls[0]?.[0]?.referenceImages).toHaveLength(1);
+      expect(startVideoJob.mock.calls[0]?.[0]?.referenceImages?.[0]?.filePath).toBe(imagePath);
+      expect(confirmed.kind).toBe('generation');
+    } finally {
+      harness.database.close();
+    }
+  });
+
+  it('offers edit, video, and chat options for multi-image confirmations and seeds video from the first image', async () => {
+    const directory = mkdtempSync(path.join(tmpdir(), 'ollama-desktop-confirm-multi-image-'));
+    tempDirectories.push(directory);
+    const startVideoJob = vi.fn(
+      (input: Parameters<GenerationService['startVideoJob']>[0]) =>
+        Promise.resolve({
+          job: {
+            id: '81000000-0000-4000-8000-000000000032',
+            workspaceId: null,
+            conversationId: input.conversationId ?? null,
+            kind: 'video' as const,
+            mode: 'image-to-video' as const,
+            workflowProfile: 'wan-image-to-video' as const,
+            status: 'queued' as const,
+            prompt: input.prompt,
+            negativePrompt: null,
+            model: 'E:/LocalModels/diffusion_models/wan-high.gguf',
+            backend: 'comfyui' as const,
+            width: 528,
+            height: 704,
+            steps: 8,
+            guidanceScale: 1,
+            seed: null,
+            frameCount: 81,
+            frameRate: 16,
+            progress: 0,
+            stage: 'Queued',
+            errorMessage: null,
+            createdAt: '2026-04-09T00:00:00.000Z',
+            updatedAt: '2026-04-09T00:00:00.000Z',
+            startedAt: null,
+            completedAt: null,
+            referenceImages: input.referenceImages.map((attachment, index) => ({
+              id: `83000000-0000-4000-8000-00000000003${index + 1}`,
+              fileName: path.basename(attachment.filePath ?? `reference-${index}.png`),
+              filePath: attachment.filePath,
+              mimeType: 'image/png',
+              sizeBytes: 4,
+              extractedText: null,
+              createdAt: '2026-04-09T00:00:00.000Z'
+            })),
+            artifacts: []
+          }
+        })
+    );
+    const harness = createChatServiceHarness({
+      directory,
+      loggerName: 'confirm-multi-image-test',
+      generationService: { startImageJob: vi.fn(), startVideoJob }
+    });
+
+    try {
+      const imagePaths = [
+        path.join(directory, 'reference-a.png'),
+        path.join(directory, 'reference-b.png')
+      ];
+      for (const imagePath of imagePaths) {
+        writeFileSync(imagePath, Buffer.from([1, 2, 3, 4]));
+      }
+      const attachments = await harness.service.prepareAttachments(imagePaths);
+
+      const accepted = await harness.service.submitPrompt(
+        {
+          prompt: 'Blend these references into one polished result.',
+          attachments
+        },
+        () => undefined
+      );
+
+      expect(accepted.kind).toBe('generation-confirmation');
+
+      if (accepted.kind !== 'generation-confirmation') {
+        throw new Error('Expected a generation confirmation result for multiple references.');
+      }
+
+      expect(accepted.options.map((option) => option.label)).toEqual([
+        'Edit Images',
+        'Generate Video',
+        'Continue Chat'
+      ]);
+
+      const confirmed = await harness.service.confirmGenerationIntent(
+        {
+          conversationId: accepted.conversation.id,
+          prompt: accepted.prompt,
+          attachments: accepted.attachments,
+          selection: 'video'
+        },
+        () => undefined
+      );
+
+      expect(startVideoJob).toHaveBeenCalledWith(
+        expect.objectContaining({
+          conversationId: accepted.conversation.id,
+          prompt: 'Blend these references into one polished result.'
+        })
+      );
+      expect(startVideoJob.mock.calls[0]?.[0]?.referenceImages).toHaveLength(1);
+      expect(startVideoJob.mock.calls[0]?.[0]?.referenceImages?.[0]?.filePath).toBe(
+        imagePaths[0]
+      );
+      expect(confirmed.kind).toBe('generation');
     } finally {
       harness.database.close();
     }
@@ -1356,6 +1698,159 @@ Must run in Chrome browser`;
         const messages = harness.service.listMessages(accepted.conversation.id);
         expect(messages.at(-1)?.status).toBe('completed');
       });
+    } finally {
+      harness.database.close();
+    }
+  });
+
+  it('keeps Wan 2.2 prompt-authoring requests on the chat path instead of direct workspace opener routing', async () => {
+    const directory = mkdtempSync(path.join(tmpdir(), 'ollama-desktop-wan-prompt-routing-'));
+    tempDirectories.push(directory);
+    const streamChat = vi.fn(
+      (input: {
+        baseUrl: string;
+        model: string;
+        messages: Array<{
+          role: 'system' | 'user' | 'assistant';
+          content: string;
+          images?: string[];
+        }>;
+        onDelta: (delta: string) => void;
+      }) => {
+        input.onDelta(
+          'Wan 2.2 prompt: cinematic subject motion, anchored camera move, detailed environment, coherent temporal action.'
+        );
+        return Promise.resolve({ doneReason: 'stop' });
+      }
+    );
+    const openWorkspacePath = vi.fn<WorkspacePathLauncher>().mockResolvedValue('');
+    const harness = createChatServiceHarness({
+      directory,
+      loggerName: 'wan-prompt-chat-route-test',
+      models: ['llama3.2:latest'],
+      streamChat,
+      openWorkspacePath
+    });
+
+    try {
+      const workspaceRoot = path.join(directory, 'workspace-root');
+      mkdirSync(workspaceRoot, { recursive: true });
+
+      const workspace = harness.repository.ensureDefaultWorkspace();
+      harness.repository.updateWorkspaceRoot(workspace.id, workspaceRoot);
+
+      const accepted = await harness.service.submitPrompt(
+        {
+          workspaceId: workspace.id,
+          prompt:
+            'Generate a prompt for Wan 2.2 image to video model. Start with a dynamic orbit shot.'
+        },
+        () => undefined
+      );
+
+      expect(accepted.kind).toBe('chat');
+
+      if (accepted.kind !== 'chat') {
+        throw new Error('Expected the Wan prompt request to stay on the chat path.');
+      }
+
+      await vi.waitFor(() => {
+        const messages = harness.service.listMessages(accepted.conversation.id);
+        const assistantMessage = messages.at(-1);
+
+        expect(assistantMessage?.status).toBe('completed');
+        expect(assistantMessage?.routeTrace?.activeToolId).toBeNull();
+        expect(assistantMessage?.routeTrace?.strategy).toBe('chat');
+      });
+
+      const messages = harness.service.listMessages(accepted.conversation.id);
+      const assistantMessage = messages.at(-1);
+
+      expect(streamChat).toHaveBeenCalledTimes(1);
+      expect(openWorkspacePath).not.toHaveBeenCalled();
+      expect(assistantMessage?.content).toContain('Wan 2.2 prompt: cinematic subject motion');
+      expect(assistantMessage?.model).toBe('llama3.2:latest');
+    } finally {
+      harness.database.close();
+    }
+  });
+
+  it('keeps attached-image Wan 2.2 prompt-authoring requests on the chat path', async () => {
+    const directory = mkdtempSync(path.join(tmpdir(), 'ollama-desktop-wan-image-prompt-routing-'));
+    tempDirectories.push(directory);
+    const streamChat = vi.fn(
+      (input: {
+        baseUrl: string;
+        model: string;
+        messages: Array<{
+          role: 'system' | 'user' | 'assistant';
+          content: string;
+          images?: string[];
+        }>;
+        onDelta: (delta: string) => void;
+      }) => {
+        input.onDelta(
+          'Wan 2.2 image-to-video prompt with subject continuity, grounded motion cues, and camera path guidance.'
+        );
+        return Promise.resolve({ doneReason: 'stop' });
+      }
+    );
+    const openWorkspacePath = vi.fn<WorkspacePathLauncher>().mockResolvedValue('');
+    const harness = createChatServiceHarness({
+      directory,
+      loggerName: 'wan-image-prompt-chat-route-test',
+      models: ['llama3.2:latest', 'qwen3-vl:8b'],
+      streamChat,
+      openWorkspacePath
+    });
+
+    try {
+      harness.settingsService.update({
+        visionModel: 'qwen3-vl:8b'
+      });
+
+      const workspaceRoot = path.join(directory, 'workspace-root');
+      mkdirSync(workspaceRoot, { recursive: true });
+      const imagePath = path.join(directory, 'reference-image.png');
+      writeFileSync(imagePath, Buffer.from([1, 2, 3, 4]));
+
+      const attachments = await harness.service.prepareAttachments([imagePath]);
+      const workspace = harness.repository.ensureDefaultWorkspace();
+      harness.repository.updateWorkspaceRoot(workspace.id, workspaceRoot);
+
+      const accepted = await harness.service.submitPrompt(
+        {
+          workspaceId: workspace.id,
+          prompt: 'for this image generate a prompt for wan2.2 image to video model.',
+          attachments
+        },
+        () => undefined
+      );
+
+      expect(accepted.kind).toBe('chat');
+
+      if (accepted.kind !== 'chat') {
+        throw new Error('Expected the attached-image Wan prompt request to stay on the chat path.');
+      }
+
+      await vi.waitFor(() => {
+        const messages = harness.service.listMessages(accepted.conversation.id);
+        const assistantMessage = messages.at(-1);
+
+        expect(assistantMessage?.status).toBe('completed');
+        expect(assistantMessage?.routeTrace?.activeToolId).toBeNull();
+        expect(assistantMessage?.routeTrace?.strategy).toBe('chat');
+      });
+
+      const messages = harness.service.listMessages(accepted.conversation.id);
+      const assistantMessage = messages.at(-1);
+      const userMessage = messages.find((message) => message.role === 'user');
+
+      expect(streamChat).toHaveBeenCalledTimes(1);
+      expect(openWorkspacePath).not.toHaveBeenCalled();
+      expect(assistantMessage?.content).toContain('Wan 2.2 image-to-video prompt');
+      expect(assistantMessage?.model).toBe('qwen3-vl:8b');
+      expect(userMessage?.attachments).toHaveLength(1);
     } finally {
       harness.database.close();
     }
@@ -4580,63 +5075,6 @@ Must run in Chrome browser`;
     }
   });
 
-  it('completes workspace-listing turns for natural-language directory prompts', async () => {
-    const directory = mkdtempSync(path.join(tmpdir(), 'ollama-desktop-workspace-listing-'));
-    tempDirectories.push(directory);
-    const streamChat = vi.fn(
-      (input: {
-        baseUrl: string;
-        model: string;
-        messages: Array<{
-          role: 'system' | 'user' | 'assistant';
-          content: string;
-          images?: string[];
-        }>;
-        onDelta: (delta: string) => void;
-      }) => {
-        input.onDelta('Here is the workspace listing.');
-        return Promise.resolve({ doneReason: 'stop' });
-      }
-    );
-    const harness = createChatServiceHarness({
-      directory,
-      loggerName: 'chat-workspace-listing-test',
-      models: ['glm-4.7-flash:latest'],
-      streamChat
-    });
-
-    try {
-      const workspaceRoot = path.join(directory, 'workspace-root');
-      mkdirSync(path.join(workspaceRoot, 'videos'), { recursive: true });
-      writeFileSync(path.join(workspaceRoot, 'README.md'), '# hello', 'utf8');
-
-      const workspace = harness.repository.ensureDefaultWorkspace();
-      harness.repository.updateWorkspaceRoot(workspace.id, workspaceRoot);
-
-      const accepted = await harness.service.startChatTurn(
-        {
-          prompt: 'List all the files in this directory',
-          workspaceId: workspace.id
-        },
-        () => undefined
-      );
-
-      await vi.waitFor(() => {
-        const messages = harness.service.listMessages(accepted.conversation.id);
-        const assistantMessage = messages.at(-1);
-
-        expect(assistantMessage?.status).toBe('completed');
-        expect(assistantMessage?.toolInvocations?.[0]?.status).toBe('completed');
-        expect(assistantMessage?.toolInvocations?.[0]?.toolId).toBe('workspace-lister');
-        expect(assistantMessage?.toolInvocations?.[0]?.inputSummary).toBe('.');
-      });
-
-      expect(streamChat).toHaveBeenCalledTimes(1);
-    } finally {
-      harness.database.close();
-    }
-  });
-
   it('recovers from a path-only write tool call by demanding full file content', async () => {
     const directory = mkdtempSync(path.join(tmpdir(), 'ollama-desktop-write-recovery-'));
     tempDirectories.push(directory);
@@ -4871,79 +5309,6 @@ Must run in Chrome browser`;
 
       expect(openWorkspacePath).toHaveBeenCalledWith(videoPath);
       expect(streamChat).not.toHaveBeenCalled();
-    } finally {
-      harness.database.close();
-    }
-  });
-
-  it('retries workspace listing with a corrected directory path follow-up', async () => {
-    const directory = mkdtempSync(path.join(tmpdir(), 'ollama-desktop-workspace-listing-correction-'));
-    tempDirectories.push(directory);
-    const streamChat = vi.fn(
-      (input: {
-        baseUrl: string;
-        model: string;
-        messages: Array<{
-          role: 'system' | 'user' | 'assistant';
-          content: string;
-          images?: string[];
-        }>;
-        onDelta: (delta: string) => void;
-      }) => {
-        input.onDelta('Here is the workspace listing.');
-        return Promise.resolve({ doneReason: 'stop' });
-      }
-    );
-    const harness = createChatServiceHarness({
-      directory,
-      loggerName: 'chat-workspace-listing-correction-test',
-      models: ['glm-4.7-flash:latest'],
-      streamChat
-    });
-
-    try {
-      const workspaceRoot = path.join(directory, 'workspace-root');
-      mkdirSync(path.join(workspaceRoot, 'clips'), { recursive: true });
-      writeFileSync(path.join(workspaceRoot, 'Readme.txt'), 'hello', 'utf8');
-
-      const workspace = harness.repository.ensureDefaultWorkspace();
-      harness.repository.updateWorkspaceRoot(workspace.id, workspaceRoot);
-
-      const firstAccepted = await harness.service.startChatTurn(
-        {
-          prompt: 'List out all the files in missing-folder',
-          workspaceId: workspace.id
-        },
-        () => undefined
-      );
-
-      await vi.waitFor(() => {
-        const messages = harness.service.listMessages(firstAccepted.conversation.id);
-        expect(messages.at(-1)?.status).toBe('completed');
-        expect(messages.at(-1)?.toolInvocations?.[0]?.status).toBe('failed');
-      });
-
-      const secondAccepted = await harness.service.startChatTurn(
-        {
-          conversationId: firstAccepted.conversation.id,
-          prompt: `${workspaceRoot} is the correct directory`
-        },
-        () => undefined
-      );
-
-      await vi.waitFor(() => {
-        const messages = harness.service.listMessages(firstAccepted.conversation.id);
-        const latestMessage = messages.at(-1);
-
-        expect(latestMessage?.id).toBe(secondAccepted.assistantMessage.id);
-        expect(latestMessage?.status).toBe('completed');
-        expect(latestMessage?.routeTrace?.reason).toBe('follow-up-tool-carry-forward');
-        expect(latestMessage?.toolInvocations?.[0]?.status).toBe('completed');
-        expect(latestMessage?.toolInvocations?.[0]?.toolId).toBe('workspace-lister');
-        expect(latestMessage?.toolInvocations?.[0]?.inputSummary).toBe('.');
-      });
-
-      expect(streamChat).toHaveBeenCalledTimes(2);
     } finally {
       harness.database.close();
     }

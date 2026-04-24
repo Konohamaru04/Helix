@@ -20,6 +20,7 @@ const settings = {
   videoGenerationLowNoiseModel: '',
   pythonPort: 8765,
   streamingMascotEnabled: true,
+  notificationsEnabled: true,
   theme: 'system' as const
 };
 
@@ -266,6 +267,7 @@ describe('SettingsDrawer', () => {
         videoGenerationLowNoiseModel: '',
         pythonPort: 8765,
         streamingMascotEnabled: true,
+        notificationsEnabled: true,
         theme: 'system'
       });
     });
@@ -313,6 +315,7 @@ describe('SettingsDrawer', () => {
         videoGenerationLowNoiseModel: '',
         pythonPort: 8765,
         streamingMascotEnabled: false,
+        notificationsEnabled: true,
         theme: 'system'
       });
     });
@@ -363,6 +366,7 @@ describe('SettingsDrawer', () => {
         videoGenerationLowNoiseModel: '',
         pythonPort: 8765,
         streamingMascotEnabled: true,
+        notificationsEnabled: true,
         theme: 'system'
       });
     });

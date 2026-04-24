@@ -338,6 +338,77 @@ describe('ChatRouter', () => {
     expect(decision.selectedModel).toBe('qwen2.5-coder:latest');
   });
 
+  it('keeps Wan 2.2 prompt-authoring requests on the chat path even with a connected workspace', () => {
+    const router = new ChatRouter(createLogger('router-wan-prompt-authoring-test'));
+
+    const decision = router.decide(
+      {
+        prompt: 'Generate a prompt for Wan 2.2 image to video model.',
+        attachments: [],
+        recentMessages: [],
+        workspaceHasKnowledge: false,
+        workspaceRootConnected: true,
+        explicitSkillId: null,
+        explicitToolId: null
+      },
+      defaultUserSettings,
+      ['llama3.2:latest']
+    );
+
+    expect(decision.activeToolId).toBeNull();
+    expect(decision.strategy).toBe('chat');
+    expect(decision.reason).toBe('first-available-model');
+    expect(decision.selectedModel).toBe('llama3.2:latest');
+  });
+
+  it('does not treat "start with" inside prompt-authoring text as a workspace opener request', () => {
+    const router = new ChatRouter(createLogger('router-prompt-authoring-start-with-test'));
+
+    const decision = router.decide(
+      {
+        prompt:
+          'Generate a prompt for Wan 2.2 image to video model. Start with a dynamic orbit shot.',
+        attachments: [],
+        recentMessages: [],
+        workspaceHasKnowledge: false,
+        workspaceRootConnected: true,
+        explicitSkillId: null,
+        explicitToolId: null
+      },
+      defaultUserSettings,
+      ['llama3.2:latest']
+    );
+
+    expect(decision.activeToolId).toBeNull();
+    expect(decision.strategy).toBe('chat');
+    expect(decision.reason).toBe('first-available-model');
+  });
+
+  it('keeps attached-image prompt-authoring requests on the chat path', () => {
+    const router = new ChatRouter(createLogger('router-image-prompt-authoring-test'));
+
+    const decision = router.decide(
+      {
+        prompt: 'for this image generate a prompt for wan2.2 image to video model.',
+        attachments: [imageAttachment],
+        recentMessages: [],
+        workspaceHasKnowledge: false,
+        workspaceRootConnected: true,
+        explicitSkillId: null,
+        explicitToolId: null
+      },
+      {
+        ...defaultUserSettings,
+        visionModel: 'qwen3-vl:8b'
+      },
+      ['llama3.2:latest', 'qwen3-vl:8b']
+    );
+
+    expect(decision.activeToolId).toBeNull();
+    expect(decision.strategy).toBe('chat');
+    expect(decision.selectedModel).toBe('qwen3-vl:8b');
+  });
+
   it('does not route file mutation prompts to the file reader heuristically', () => {
     const router = new ChatRouter(createLogger('router-file-mutation-heuristic-test'));
 
@@ -489,12 +560,12 @@ describe('ChatRouter', () => {
     expect(decision.reason).toBe('explicit-tool-command');
   });
 
-  it('routes workspace structure prompts to the workspace lister tool', () => {
+  it('does not heuristically route workspace structure prompts — the model decides via native tool-calls', () => {
     const router = new ChatRouter(createLogger('router-workspace-lister-test'));
 
     const decision = router.decide(
       {
-        prompt: 'Show me the project structure',
+        prompt: 'List files in this workspace',
         attachments: [],
         recentMessages: [],
         workspaceHasKnowledge: false,
@@ -505,9 +576,8 @@ describe('ChatRouter', () => {
       ['llama3.2:latest']
     );
 
-    expect(decision.activeToolId).toBe('workspace-lister');
-    expect(decision.strategy).toBe('tool-chat');
-    expect(decision.reason).toBe('workspace-lister-tool-routing');
+    expect(decision.activeToolId).toBeNull();
+    expect(decision.strategy).toBe('chat');
   });
 
   it('suppresses workspace inspection tools when no workspace folder is connected', () => {

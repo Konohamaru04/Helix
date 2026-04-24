@@ -1,5 +1,5 @@
 import { writeFileSync } from 'node:fs';
-import { BrowserWindow, Notification, dialog, ipcMain, shell } from 'electron';
+import { BrowserWindow, Notification, app, dialog, ipcMain, shell } from 'electron';
 import type { DesktopAppContext } from '@bridge/app-context';
 import {
   agentSessionSchema,
@@ -17,17 +17,20 @@ import {
   chatStartAcceptedSchema,
   chatTurnAcceptedSchema,
   chatTurnRequestSchema,
+  confirmGenerationIntentInputSchema,
   conversationIdSchema,
   conversationSearchResultSchema,
   conversationSummarySchema,
   createSkillInputSchema,
   createWorkspaceInputSchema,
+  deleteGenerationArtifactInputSchema,
   deleteSkillInputSchema,
   deleteWorkspaceInputSchema,
   deleteConversationInputSchema,
   editMessageInputSchema,
   exportConversationInputSchema,
   exportConversationResultSchema,
+  generationGalleryItemSchema,
   generationJobSchema,
   generationStreamEventSchema,
   imageGenerationModelCatalogSchema,
@@ -105,6 +108,28 @@ export function registerIpcHandlers(context: DesktopAppContext): void {
 
   const lastGenerationStatuses = new Map<string, GenerationJob['status']>();
 
+  function focusAppFromNotification(jobId: string): void {
+    const targetWindow = BrowserWindow.getAllWindows().find(
+      (window) => !window.isDestroyed()
+    );
+
+    if (!targetWindow) {
+      context.logger.info({ jobId }, 'Notification clicked but no app window is available');
+      return;
+    }
+
+    if (targetWindow.isMinimized()) {
+      targetWindow.restore();
+    }
+
+    if (!targetWindow.isVisible()) {
+      targetWindow.show();
+    }
+
+    targetWindow.focus();
+    context.logger.info({ jobId }, 'Focused app window from desktop notification click');
+  }
+
   function maybeShowGenerationNotification(job: GenerationJob): void {
     const previousStatus = lastGenerationStatuses.get(job.id);
     lastGenerationStatuses.set(job.id, job.status);
@@ -121,6 +146,10 @@ export function registerIpcHandlers(context: DesktopAppContext): void {
       return;
     }
 
+    if (!context.settingsService.get().notificationsEnabled) {
+      return;
+    }
+
     const promptPreview =
       job.prompt.length > 72 ? `${job.prompt.slice(0, 69).trimEnd()}...` : job.prompt;
     const body =
@@ -129,13 +158,20 @@ export function registerIpcHandlers(context: DesktopAppContext): void {
         : `${promptPreview}\n${job.errorMessage ?? `${job.kind === 'video' ? 'Video' : 'Image'} generation failed.`}`;
 
     try {
-      new Notification({
+      const notification = new Notification({
         title:
           job.status === 'completed'
             ? `${job.kind === 'video' ? 'Video' : 'Image'} generation complete`
             : `${job.kind === 'video' ? 'Video' : 'Image'} generation failed`,
         body
-      }).show();
+      });
+
+      notification.on('click', () => {
+        app.focus({ steal: true });
+        focusAppFromNotification(job.id);
+      });
+
+      notification.show();
     } catch (error) {
       context.logger.warn(
         {
@@ -155,7 +191,7 @@ export function registerIpcHandlers(context: DesktopAppContext): void {
     }
 
     for (const window of BrowserWindow.getAllWindows()) {
-      if (!window.isDestroyed()) {
+      if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
         window.webContents.send(IpcChannels.generationStreamEvent, event);
       }
     }
@@ -228,6 +264,12 @@ export function registerIpcHandlers(context: DesktopAppContext): void {
       .map((job) => generationJobSchema.parse(job))
   );
 
+  ipcMain.handle(IpcChannels.generationListGallery, async () =>
+    (await context.generationService.listGalleryItems()).map((item) =>
+      generationGalleryItemSchema.parse(item)
+    )
+  );
+
   ipcMain.handle(IpcChannels.generationCancelJob, async (_event, payload) =>
     generationJobSchema.parse(
       await context.generationService.cancelJob(
@@ -244,12 +286,33 @@ export function registerIpcHandlers(context: DesktopAppContext): void {
     )
   );
 
+  ipcMain.handle(IpcChannels.generationDeleteArtifact, async (_event, payload) => {
+    await context.generationService.deleteArtifact(
+      deleteGenerationArtifactInputSchema.parse(payload)
+    );
+  });
+
   ipcMain.handle(IpcChannels.chatStart, async (event, payload) => {
     const request = chatTurnRequestSchema.parse(payload);
     const accepted = await context.chatService.submitPrompt(
       request,
       (streamEvent: ChatStreamEvent) => {
-        event.sender.send(IpcChannels.chatStreamEvent, streamEvent);
+        if (!event.sender.isDestroyed()) {
+          event.sender.send(IpcChannels.chatStreamEvent, streamEvent);
+        }
+      }
+    );
+
+    return chatStartAcceptedSchema.parse(accepted);
+  });
+
+  ipcMain.handle(IpcChannels.chatConfirmGeneration, async (event, payload) => {
+    const accepted = await context.chatService.confirmGenerationIntent(
+      confirmGenerationIntentInputSchema.parse(payload),
+      (streamEvent: ChatStreamEvent) => {
+        if (!event.sender.isDestroyed()) {
+          event.sender.send(IpcChannels.chatStreamEvent, streamEvent);
+        }
       }
     );
 
@@ -306,7 +369,9 @@ export function registerIpcHandlers(context: DesktopAppContext): void {
     const accepted = await context.chatService.editMessageAndResend(
       editMessageInputSchema.parse(payload),
       (streamEvent: ChatStreamEvent) => {
-        event.sender.send(IpcChannels.chatStreamEvent, streamEvent);
+        if (!event.sender.isDestroyed()) {
+          event.sender.send(IpcChannels.chatStreamEvent, streamEvent);
+        }
       }
     );
 
@@ -317,7 +382,9 @@ export function registerIpcHandlers(context: DesktopAppContext): void {
     const accepted = await context.chatService.regenerateResponse(
       regenerateResponseInputSchema.parse(payload),
       (streamEvent: ChatStreamEvent) => {
-        event.sender.send(IpcChannels.chatStreamEvent, streamEvent);
+        if (!event.sender.isDestroyed()) {
+          event.sender.send(IpcChannels.chatStreamEvent, streamEvent);
+        }
       }
     );
 

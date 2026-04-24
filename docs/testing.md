@@ -62,8 +62,15 @@ The current suite covers:
 - local image-model discovery from additional models directories, including ComfyUI-style diffusers/checkpoint layouts and GGUF discovery from `diffusion_models`
 - GGUF model surfacing rules, including selectable Qwen Image text checkpoints, selectable Qwen Image Edit 2511 workflow checkpoints, and disabled video GGUF families
 - workflow-aware generation payloads that preserve mode, workflow profile, reference-image metadata, and Wan frame/high-noise/low-noise settings across SQLite persistence and Python transport
+- attachment-aware generation confirmation gating in normal chat mode, including:
+  - no-image prompts showing `Generate Image` and `Continue Chat`
+  - single-image prompts showing `Edit Image`, `Generate Video`, and `Continue Chat`
+  - multi-image prompts showing `Edit Images`, `Generate Video`, and `Continue Chat`
+  - confirmed multi-image video selections using the first attached image as the video seed frame
+  - confirmed selections flowing back through typed IPC before chat or generation starts
 - attached-image analysis prompts continue through chat and multimodal Vision routing after exiting image mode, instead of incorrectly starting image generation
 - image-prompt authoring requests such as `create an image generation prompt for the same clothing` stay on the chat path instead of auto-starting image generation
+- prompt-authoring requests such as `generate a prompt for Wan 2.2 image to video model` stay on the chat path even when a workspace folder is connected, instead of misrouting to the direct workspace opener tool
 - immediate submit feedback while bridge-side routing/classification starts, including duplicate-send suppression during the pre-stream startup window
 - attachment reuse across message sends and edits without SQLite primary-key collisions in `message_attachments`
 - restore-style image-edit follow-ups such as `change it back to original` carry both the current edited image and the earlier original reference image into the next generation request

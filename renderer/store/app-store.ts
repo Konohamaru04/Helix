@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type {
   AgentSession,
+  ChatStartAccepted,
   AuditEventRecord,
   ChatTurnAccepted,
   ChatStreamEvent,
@@ -10,6 +11,8 @@ import type {
   ConversationSearchResult,
   ConversationSummary,
   DeleteSkillInput,
+  GenerationConfirmationSelection,
+  GenerationGalleryItem,
   GenerationJob,
   GenerationStreamEvent,
   ImageGenerationModelCatalog,
@@ -400,6 +403,7 @@ function integrateAcceptedTurn(
       state.pendingStreamEventsByAssistantId,
       accepted.assistantMessage.id
     ),
+    pendingGenerationConfirmation: null,
     lastImportPath: null,
     systemStatus: state.systemStatus
       ? {
@@ -409,6 +413,27 @@ function integrateAcceptedTurn(
             : state.systemStatus.pendingRequestCount + 1
         }
       : state.systemStatus
+  };
+}
+
+function integrateGenerationConfirmation(
+  state: AppStoreState,
+  accepted: PendingGenerationConfirmation
+) {
+  return {
+    activeConversationId: accepted.conversation.id,
+    activeWorkspaceId: accepted.conversation.workspaceId ?? state.activeWorkspaceId,
+    conversations: upsertConversation(state.conversations, accepted.conversation),
+    messagesByConversation:
+      accepted.conversation.id in state.messagesByConversation
+        ? state.messagesByConversation
+        : {
+            ...state.messagesByConversation,
+            [accepted.conversation.id]: []
+          },
+    pendingGenerationConfirmation: accepted,
+    lastImportPath: null,
+    lastExportPath: null
   };
 }
 
@@ -434,6 +459,11 @@ function findConversationIdByAssistantMessage(
   );
 }
 
+type PendingGenerationConfirmation = Extract<
+  ChatStartAccepted,
+  { kind: 'generation-confirmation' }
+>;
+
 interface AppStoreState {
   initialized: boolean;
   bootstrapError: string | null;
@@ -442,6 +472,7 @@ interface AppStoreState {
   workspaces: WorkspaceSummary[];
   conversations: ConversationSummary[];
   generationJobs: GenerationJob[];
+  generationGalleryItems: GenerationGalleryItem[];
   imageGenerationModelCatalog: ImageGenerationModelCatalog | null;
   availableTools: ToolDefinition[];
   availableSkills: SkillDefinition[];
@@ -459,10 +490,12 @@ interface AppStoreState {
   activeWorkspaceId: string | null;
   activeConversationId: string | null;
   messagesByConversation: Record<string, StoredMessage[]>;
+  pendingGenerationConfirmation: PendingGenerationConfirmation | null;
   selectedModel: string;
   selectedThinkMode: ChatThinkModeSelection;
   settingsDrawerOpen: boolean;
   queueDrawerOpen: boolean;
+  galleryDrawerOpen: boolean;
   planDrawerOpen: boolean;
   agentsDrawerOpen: boolean;
   skillsDrawerOpen: boolean;
@@ -473,6 +506,7 @@ interface AppStoreState {
   lastImportPath: string | null;
   loadInitialData: () => Promise<void>;
   refreshGenerationJobs: () => Promise<void>;
+  refreshGenerationGallery: () => Promise<void>;
   inspectImageGenerationModels: (
     additionalModelsDirectory?: string | null
   ) => Promise<ImageGenerationModelCatalog>;
@@ -492,6 +526,7 @@ interface AppStoreState {
   selectConversation: (conversationId: string | null) => Promise<void>;
   toggleSettingsDrawer: (open?: boolean) => void;
   toggleQueueDrawer: (open?: boolean) => void;
+  toggleGalleryDrawer: (open?: boolean) => void;
   togglePlanDrawer: (open?: boolean) => void;
   toggleAgentsDrawer: (open?: boolean) => void;
   toggleSkillsDrawer: (open?: boolean) => void;
@@ -511,7 +546,14 @@ interface AppStoreState {
   startVideoGeneration: (
     input: VideoGenerationRequest
   ) => Promise<void>;
-  sendPrompt: (prompt: string, attachments?: MessageAttachment[]) => Promise<void>;
+  sendPrompt: (
+    prompt: string,
+    attachments?: MessageAttachment[]
+  ) => Promise<ChatStartAccepted['kind'] | null>;
+  confirmGenerationSelection: (
+    selection: GenerationConfirmationSelection
+  ) => Promise<ChatStartAccepted['kind'] | null>;
+  dismissGenerationConfirmation: () => void;
   editMessageAndResend: (
     messageId: string,
     prompt: string,
@@ -528,6 +570,7 @@ interface AppStoreState {
   applyGenerationEvent: (event: GenerationStreamEvent) => void;
   cancelGenerationJob: (jobId: string) => Promise<void>;
   retryGenerationJob: (jobId: string) => Promise<void>;
+  deleteGenerationArtifact: (artifactId: string) => Promise<void>;
 }
 
 export const useAppStore = create<AppStoreState>((set, get) => ({
@@ -538,6 +581,7 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
   workspaces: [],
   conversations: [],
   generationJobs: [],
+  generationGalleryItems: [],
   imageGenerationModelCatalog: null,
   availableTools: [],
   availableSkills: [],
@@ -555,10 +599,12 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
   activeWorkspaceId: null,
   activeConversationId: null,
   messagesByConversation: {},
+  pendingGenerationConfirmation: null,
   selectedModel: '',
   selectedThinkMode: '',
   settingsDrawerOpen: false,
   queueDrawerOpen: false,
+  galleryDrawerOpen: false,
   planDrawerOpen: false,
   agentsDrawerOpen: false,
   skillsDrawerOpen: false,
@@ -578,6 +624,7 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
         workspaces,
         conversations,
         generationJobs,
+        generationGalleryItems,
         imageGenerationModelCatalog,
         availableTools,
         availableSkills,
@@ -593,6 +640,7 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
           api.chat.listWorkspaces(),
           api.chat.listConversations(),
           api.generation.listJobs(),
+          api.generation.listGallery(),
           api.generation.listImageModels({
             additionalModelsDirectory: settings.additionalModelsDirectory
           }),
@@ -633,6 +681,7 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
         workspaces,
         conversations,
         generationJobs,
+        generationGalleryItems,
         imageGenerationModelCatalog,
         availableTools,
         availableSkills,
@@ -673,6 +722,11 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
   refreshGenerationJobs: async () => {
     const jobs = await getDesktopApi().generation.listJobs();
     set({ generationJobs: jobs });
+  },
+
+  refreshGenerationGallery: async () => {
+    const generationGalleryItems = await getDesktopApi().generation.listGallery();
+    set({ generationGalleryItems });
   },
 
   inspectImageGenerationModels: async (additionalModelsDirectory) =>
@@ -788,7 +842,8 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
 
     set({
       activeWorkspaceId: workspaceId,
-      activeConversationId: nextConversationId
+      activeConversationId: nextConversationId,
+      pendingGenerationConfirmation: null
     });
 
     if (nextConversationId === null) {
@@ -834,6 +889,7 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
       workspaces: upsertWorkspace(state.workspaces, workspace),
       activeWorkspaceId: workspace.id,
       activeConversationId: null,
+      pendingGenerationConfirmation: null,
       knowledgeDocumentsByWorkspace: {
         ...state.knowledgeDocumentsByWorkspace,
         [workspace.id]: []
@@ -895,6 +951,12 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
       )
         ? nextConversationId
         : currentState.activeConversationId,
+      pendingGenerationConfirmation:
+        deletedConversationIds.has(
+          currentState.pendingGenerationConfirmation?.conversation.id ?? ''
+        )
+          ? null
+          : currentState.pendingGenerationConfirmation,
       knowledgeDocumentsByWorkspace: Object.fromEntries(
         Object.entries(currentState.knowledgeDocumentsByWorkspace).filter(
           ([id]) => id !== workspaceId
@@ -935,7 +997,7 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
     const navigationRequestId = ++latestNavigationRequest;
 
     if (conversationId === null) {
-      set({ activeConversationId: null });
+      set({ activeConversationId: null, pendingGenerationConfirmation: null });
       return;
     }
 
@@ -944,7 +1006,8 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
 
     set({
       activeConversationId: conversationId,
-      activeWorkspaceId: conversation?.workspaceId ?? get().activeWorkspaceId
+      activeWorkspaceId: conversation?.workspaceId ?? get().activeWorkspaceId,
+      pendingGenerationConfirmation: null
     });
 
     if (existing) {
@@ -975,6 +1038,15 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
     set((state) => ({
       queueDrawerOpen: open ?? !state.queueDrawerOpen
     }));
+  },
+
+  toggleGalleryDrawer: (open) => {
+    const opening = open ?? !get().galleryDrawerOpen;
+    set({ galleryDrawerOpen: opening });
+
+    if (opening) {
+      void get().refreshGenerationGallery();
+    }
   },
 
   togglePlanDrawer: (open) => {
@@ -1101,6 +1173,7 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
                   }
           }
         : {}),
+      pendingGenerationConfirmation: null,
       generationJobs: upsertGenerationJobList(state.generationJobs, result.job)
     }));
   },
@@ -1125,6 +1198,7 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
                   }
           }
         : {}),
+      pendingGenerationConfirmation: null,
       generationJobs: upsertGenerationJobList(state.generationJobs, result.job)
     }));
   },
@@ -1133,7 +1207,7 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
     const trimmedPrompt = prompt.trim();
 
     if (!trimmedPrompt) {
-      return;
+      return null;
     }
 
     const api = getDesktopApi();
@@ -1156,6 +1230,11 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
       ...(selectedThinkMode ? { think: selectedThinkMode } : {})
     });
 
+    if (accepted.kind === 'generation-confirmation') {
+      set((currentState) => integrateGenerationConfirmation(currentState, accepted));
+      return accepted.kind;
+    }
+
     if (accepted.kind === 'generation') {
       set((currentState) => ({
         activeConversationId: accepted.conversation.id,
@@ -1172,6 +1251,7 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
                 ...currentState.messagesByConversation,
                 [accepted.conversation.id]: []
               },
+        pendingGenerationConfirmation: null,
         generationJobs: upsertGenerationJobList(
           currentState.generationJobs,
           accepted.job
@@ -1179,7 +1259,7 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
         lastImportPath: null,
         lastExportPath: null
       }));
-      return;
+      return accepted.kind;
     }
 
     set((currentState) =>
@@ -1193,9 +1273,74 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
       )
     );
 
-    if (accepted.conversation.workspaceId && attachments.some((attachment) => attachment.extractedText)) {
+    if (
+      accepted.conversation.workspaceId &&
+      attachments.some((attachment) => attachment.extractedText)
+    ) {
       void get().refreshWorkspaceKnowledge(accepted.conversation.workspaceId);
     }
+
+    return accepted.kind;
+  },
+
+  confirmGenerationSelection: async (selection) => {
+    const api = getDesktopApi();
+    const state = get();
+    const pending = state.pendingGenerationConfirmation;
+
+    if (!pending) {
+      return null;
+    }
+
+    const selectedThinkMode = normalizeThinkModeSelection(state.selectedThinkMode);
+    const accepted = await api.chat.confirmGenerationIntent({
+      conversationId: pending.conversation.id,
+      prompt: pending.prompt,
+      attachments: pending.attachments,
+      selection,
+      model: state.selectedModel || undefined,
+      ...(selectedThinkMode ? { think: selectedThinkMode } : {})
+    });
+
+    if (accepted.kind === 'generation-confirmation') {
+      set((currentState) => integrateGenerationConfirmation(currentState, accepted));
+      return accepted.kind;
+    }
+
+    if (accepted.kind === 'generation') {
+      set((currentState) => ({
+        activeConversationId: accepted.conversation.id,
+        activeWorkspaceId:
+          accepted.conversation.workspaceId ?? currentState.activeWorkspaceId,
+        conversations: upsertConversation(
+          currentState.conversations,
+          accepted.conversation
+        ),
+        messagesByConversation:
+          accepted.conversation.id in currentState.messagesByConversation
+            ? currentState.messagesByConversation
+            : {
+                ...currentState.messagesByConversation,
+                [accepted.conversation.id]: []
+              },
+        pendingGenerationConfirmation: null,
+        generationJobs: upsertGenerationJobList(
+          currentState.generationJobs,
+          accepted.job
+        ),
+        lastImportPath: null,
+        lastExportPath: null
+      }));
+      return accepted.kind;
+    }
+
+    const messages = await api.chat.getConversationMessages(accepted.conversation.id);
+    set((currentState) => integrateAcceptedTurn(currentState, accepted, messages));
+    return accepted.kind;
+  },
+
+  dismissGenerationConfirmation: () => {
+    set({ pendingGenerationConfirmation: null });
   },
 
   editMessageAndResend: async (messageId, prompt, attachments = []) => {
@@ -1326,6 +1471,10 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
           ([assistantMessageId]) => !deletedMessageIds.has(assistantMessageId)
         )
       ),
+      pendingGenerationConfirmation:
+        currentState.pendingGenerationConfirmation?.conversation.id === conversationId
+          ? null
+          : currentState.pendingGenerationConfirmation,
       lastImportPath: null,
       lastExportPath: null
     }));
@@ -1355,6 +1504,7 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
       conversations: upsertConversation(state.conversations, result.conversation),
       activeWorkspaceId: result.conversation.workspaceId ?? state.activeWorkspaceId,
       activeConversationId: result.conversation.id,
+      pendingGenerationConfirmation: null,
       messagesByConversation: {
         ...state.messagesByConversation,
         [result.conversation.id]: messages
@@ -1408,6 +1558,21 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
         : {}),
       generationJobs: upsertGenerationJobList(state.generationJobs, result.job)
     }));
+  },
+
+  deleteGenerationArtifact: async (artifactId) => {
+    const state = get();
+    const galleryItem = state.generationGalleryItems.find((item) => item.id === artifactId);
+    await getDesktopApi().generation.deleteArtifact(
+      galleryItem?.artifactId
+        ? { artifactId: galleryItem.artifactId }
+        : { filePath: galleryItem?.filePath ?? artifactId }
+    );
+
+    await Promise.all([
+      get().refreshGenerationJobs(),
+      get().refreshGenerationGallery()
+    ]);
   },
 
   applyStreamEvent: (event) => {
@@ -1517,5 +1682,6 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
     set((state) => ({
       generationJobs: upsertGenerationJobList(state.generationJobs, event.job)
     }));
+    void get().refreshGenerationGallery();
   }
 }));

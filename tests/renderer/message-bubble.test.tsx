@@ -27,12 +27,15 @@ describe('MessageBubble', () => {
         startVideo: vi.fn(),
         listImageModels: vi.fn(),
         listJobs: vi.fn(),
+        listGallery: vi.fn(),
         cancelJob: vi.fn(),
         retryJob: vi.fn(),
+        deleteArtifact: vi.fn(),
         onJobEvent: vi.fn()
       },
       chat: {
         start: vi.fn(),
+        confirmGenerationIntent: vi.fn(),
         pickAttachments: vi.fn(),
         editAndResend: vi.fn(),
         regenerateResponse: vi.fn(),
