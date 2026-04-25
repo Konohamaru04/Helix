@@ -92,6 +92,34 @@ describe('ChatRouter', () => {
     expect(decision.strategy).toBe('skill-chat');
   });
 
+  it('keeps wireframe mode on the plain chat route even for HTML design prompts', () => {
+    const router = new ChatRouter(createLogger('router-wireframe-test'));
+
+    const decision = router.decide(
+      {
+        prompt: 'Generate a dashboard wireframe using pure HTML, CSS, and JS.',
+        attachments: [],
+        recentMessages: [],
+        workspaceHasKnowledge: false,
+        wireframeMode: true,
+        explicitSkillId: null,
+        explicitToolId: null
+      },
+      {
+        ...defaultUserSettings,
+        defaultModel: 'llama3.2:latest',
+        codingModel: 'qwen2.5-coder:latest'
+      },
+      ['llama3.2:latest', 'qwen2.5-coder:latest']
+    );
+
+    expect(decision.selectedModel).toBe('llama3.2:latest');
+    expect(decision.strategy).toBe('chat');
+    expect(decision.reason).toBe('wireframe-mode');
+    expect(decision.activeSkillId).toBeNull();
+    expect(decision.activeToolId).toBeNull();
+  });
+
   it('uses the configured vision model for image attachments in auto mode', () => {
     const router = new ChatRouter(createLogger('router-vision-test'));
 

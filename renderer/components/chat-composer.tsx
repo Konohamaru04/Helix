@@ -11,7 +11,7 @@ interface ChatComposerProps {
   submitting?: boolean;
   submitLabel?: string | null;
   submitHint?: string | null;
-  generationMode: 'chat' | 'image' | 'video';
+  generationMode: 'chat' | 'image' | 'video' | 'wireframe';
   imageGenerationAvailable: boolean;
   imageGenerationModelLabel: string | null;
   videoGenerationAvailable: boolean;
@@ -28,6 +28,7 @@ interface ChatComposerProps {
   onEnterVideoMode: () => void;
   onExitImageMode: () => void;
   onExitVideoMode: () => void;
+  onToggleWireframeMode: () => void;
   onImportWorkspaceKnowledge: () => Promise<void>;
   onRemoveAttachment: (attachmentId: string) => void;
   onCancelEdit: () => void;
@@ -103,7 +104,9 @@ export function ChatComposer(props: ChatComposerProps) {
       ? 'Generating...'
       : props.generationMode === 'video'
         ? 'Rendering video...'
-        : props.editing
+        : props.generationMode === 'wireframe'
+          ? 'Designing...'
+          : props.editing
           ? 'Resending...'
           : 'Sending...');
 
@@ -189,6 +192,26 @@ export function ChatComposer(props: ChatComposerProps) {
           </div>
         ) : null}
 
+        {props.generationMode === 'wireframe' ? (
+          <div className="motion-panel flex flex-wrap items-center justify-between gap-3 rounded-[1.5rem] border border-cyan-300/20 bg-cyan-400/10 px-4 py-3">
+            <div>
+              <p className="text-xs uppercase tracking-[0.24em] text-cyan-100/80">
+                Wireframe mode
+              </p>
+              <p className="mt-1 text-sm text-cyan-50">
+                Describe the product idea, answer multiple-choice follow-ups, and the model will generate a live canvas.
+              </p>
+            </div>
+            {/* <button
+              className="motion-interactive rounded-xl border border-cyan-100/20 px-3 py-1.5 text-xs font-medium text-cyan-50 transition hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-300"
+              onClick={props.onToggleWireframeMode}
+              type="button"
+            >
+              Back to chat
+            </button> */}
+          </div>
+        ) : null}
+
         {props.attachments.length > 0 ? (
           <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
             {props.attachments.map((attachment) => (
@@ -215,7 +238,9 @@ export function ChatComposer(props: ChatComposerProps) {
                 ? 'Describe the image you want to generate'
                 : props.generationMode === 'video'
                   ? 'Describe the motion, camera movement, and style for the video'
-                : `Message ${APP_DISPLAY_NAME}`
+                  : props.generationMode === 'wireframe'
+                    ? 'Describe the application idea, users, screens, workflows, and design constraints'
+                    : `Message ${APP_DISPLAY_NAME}`
             }
             rows={4}
             value={props.prompt}
@@ -378,6 +403,43 @@ export function ChatComposer(props: ChatComposerProps) {
                 ) : null}
               </div>
 
+              <button
+                aria-pressed={props.generationMode === 'wireframe'}
+                aria-label={
+                  props.generationMode === 'wireframe'
+                    ? 'Disable wireframe mode'
+                    : 'Enable wireframe mode'
+                }
+                className={`motion-interactive inline-flex h-10 items-center justify-center gap-2 rounded-full border px-3 text-xs font-semibold uppercase tracking-[0.14em] transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 ${
+                  props.generationMode === 'wireframe'
+                    ? 'border-cyan-300/40 bg-cyan-400/15 text-cyan-50'
+                    : 'border-white/10 text-slate-200 hover:border-white/20 hover:bg-white/5'
+                }`}
+                disabled={props.disabled && props.generationMode !== 'wireframe'}
+                onClick={props.onToggleWireframeMode}
+                type="button"
+              >
+                <svg
+                  aria-hidden="true"
+                  className="h-4 w-4"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    d="M4 5.5A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5v13a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18.5v-13Z"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                  />
+                  <path
+                    d="M4 9h16M9 20V9M12 13h5M12 16h3"
+                    stroke="currentColor"
+                    strokeLinecap="round"
+                    strokeWidth="1.5"
+                  />
+                </svg>
+                Wireframe
+              </button>
+
               <p className="text-xs text-slate-500">
                 {props.submitting
                   ? 'The desktop bridge is preparing this turn before the reply starts streaming.'
@@ -385,7 +447,9 @@ export function ChatComposer(props: ChatComposerProps) {
                   ? 'Enter starts the image job. Shift+Enter keeps writing. Attached images are used as references.'
                   : props.generationMode === 'video'
                     ? 'Enter starts the video job. Shift+Enter keeps writing. Attach one starting image for the Wan 2.2 workflow.'
-                  : 'Enter sends. Shift+Enter keeps writing. Models choose tools and skills automatically when needed.'}
+                    : props.generationMode === 'wireframe'
+                      ? 'Enter sends the wireframe brief. Shift+Enter keeps writing. Follow-up answers stay in this flow.'
+                      : 'Enter sends. Shift+Enter keeps writing. Models choose tools and skills automatically when needed.'}
               </p>
             </div>
 
@@ -417,7 +481,9 @@ export function ChatComposer(props: ChatComposerProps) {
                     ? 'Generate'
                     : props.generationMode === 'video'
                       ? 'Render video'
-                    : props.editing
+                      : props.generationMode === 'wireframe'
+                        ? 'Wireframe'
+                        : props.editing
                       ? 'Resend'
                       : 'Send'}
               </button>

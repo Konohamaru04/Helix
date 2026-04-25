@@ -34,6 +34,7 @@ The current suite covers:
 - context assembly trimming, prompt layering, pinned memory provenance, and source dedupe
 - routing precedence, follow-up carry-forward, direct tool routing, and tool-assisted routing
 - routing selection across General, Coding, Vision, auto mode, and fallback behavior
+- wireframe-mode routing suppression so HTML/CSS/JS design prompts stay on the plain chat route instead of activating builder/tool paths
 - selected general-chat models still yield to specialist Coding or Vision routing when the prompt clearly requires that capability
 - routing to the new code-runner and web-search tools for explicit runnable/current prompts
 - native Ollama tool-calling for both built-in tools and capability-backed Milestone 4.1 tools such as `task-create`
@@ -52,6 +53,7 @@ The current suite covers:
 - composer keyboard behavior for `Enter` vs `Shift+Enter`
 - transcript auto-scroll behavior when the user is at or away from the bottom
 - automatic composer routing copy with no manual tool or skill picker buttons
+- composer Wireframe toggle, active-mode guidance, structured wireframe helper parsing for question/design artifacts, and preview iteration switching/export behavior
 - attachment picking and send payloads
 - edit-resend and regenerate chat actions
 - workspace-folder connect flow and workspace-doc import from the composer workspace menu through the preload bridge and Zustand store

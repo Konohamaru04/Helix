@@ -2,8 +2,13 @@ import { memo, type MouseEvent, type ReactNode, useEffect, useState } from 'reac
 import type { StoredMessage } from '@bridge/ipc/contracts';
 import { AttachmentCard } from '@renderer/components/attachment-card';
 import { ContextMenu, type ContextMenuItem } from '@renderer/components/context-menu';
+import { WireframeQuestionForm } from '@renderer/components/wireframe-question-form';
 import { formatTimestamp } from '@renderer/lib/format';
 import { parseAssistantContent } from '@renderer/lib/message-content';
+import {
+  parseWireframeArtifact,
+  stripWireframeBlocks
+} from '@renderer/lib/wireframe';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -18,6 +23,8 @@ interface MessageBubbleProps {
   onRegenerate?: (message: StoredMessage) => void;
   onTogglePin?: (message: StoredMessage, pinned: boolean) => void;
   onLoadArtifacts?: (messageId: string) => void;
+  onSubmitWireframeAnswers?: (prompt: string) => Promise<void>;
+  wireframeQuestionsEnabled?: boolean;
 }
 
 function useActivityFrame(enabled: boolean) {
@@ -364,6 +371,9 @@ function MessageBubbleContent(props: MessageBubbleProps) {
   const assistant = message.role === 'assistant';
   const parsedAssistantContent = assistant ? parseAssistantContent(message.content) : null;
   const assistantAnswer = parsedAssistantContent?.answer ?? '';
+  const wireframeArtifact = assistant ? parseWireframeArtifact(message.content) : null;
+  const visibleAssistantAnswer =
+    wireframeArtifact === null ? assistantAnswer : stripWireframeBlocks(assistantAnswer);
   const thinkingBlocks = parsedAssistantContent?.thinkingBlocks ?? [];
   const activeToolCount = message.toolInvocationCount ?? message.toolInvocations?.length ?? 0;
   const activeSourceCount = message.contextSourceCount ?? message.contextSources?.length ?? 0;
@@ -521,14 +531,14 @@ function MessageBubbleContent(props: MessageBubbleProps) {
                 />
               ))}
 
-              {assistantAnswer ? (
+              {visibleAssistantAnswer ? (
                 message.status === 'streaming' ? (
                   <StreamingAnswer
-                    content={assistantAnswer}
+                    content={visibleAssistantAnswer}
                     frame={activityFrame}
                   />
                 ) : (
-                  <MarkdownContent content={assistantAnswer} />
+                  <MarkdownContent content={visibleAssistantAnswer} />
                 )
               ) : message.status === 'streaming' ? (
                 <div className="motion-loader-sweep rounded-lg border border-dashed border-white/10 px-4 py-3 text-sm text-slate-400">
@@ -543,6 +553,16 @@ function MessageBubbleContent(props: MessageBubbleProps) {
                 <div className="motion-panel rounded-lg border border-dashed border-white/10 px-4 py-3 text-sm text-slate-400">
                   No visible answer was returned for this turn.
                 </div>
+              ) : null}
+
+              {wireframeArtifact?.type === 'questions' &&
+              props.wireframeQuestionsEnabled &&
+              props.onSubmitWireframeAnswers ? (
+                <WireframeQuestionForm
+                  disabled={message.status === 'streaming'}
+                  onSubmit={props.onSubmitWireframeAnswers}
+                  questions={wireframeArtifact.questions}
+                />
               ) : null}
 
               {activeToolCount > 0 ? (
@@ -700,7 +720,9 @@ function areMessageBubblePropsEqual(
     previous.message === next.message &&
     previous.canEdit === next.canEdit &&
     previous.canRegenerate === next.canRegenerate &&
-    previous.canPin === next.canPin
+    previous.canPin === next.canPin &&
+    previous.wireframeQuestionsEnabled === next.wireframeQuestionsEnabled &&
+    previous.onSubmitWireframeAnswers === next.onSubmitWireframeAnswers
   );
 }
 

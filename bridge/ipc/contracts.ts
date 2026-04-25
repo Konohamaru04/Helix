@@ -512,6 +512,7 @@ export const systemStatusSchema = z.object({
 });
 
 export const ollamaThinkModeSchema = z.enum(['off', 'on', 'low', 'medium', 'high']);
+export const chatRequestModeSchema = z.enum(['chat', 'wireframe']);
 
 export const chatTurnRequestSchema = z.object({
   conversationId: uuidSchema.optional(),
@@ -519,7 +520,8 @@ export const chatTurnRequestSchema = z.object({
   prompt: z.string().trim().min(1),
   attachments: z.array(messageAttachmentSchema).max(8).optional(),
   model: z.string().trim().min(1).optional(),
-  think: ollamaThinkModeSchema.optional()
+  think: ollamaThinkModeSchema.optional(),
+  mode: chatRequestModeSchema.optional()
 });
 
 export const imageGenerationModeSchema = z.enum(['text-to-image', 'image-to-image']);
@@ -938,6 +940,7 @@ export type NvidiaStatus = z.infer<typeof nvidiaStatusSchema>;
 export type PythonStatus = z.infer<typeof pythonStatusSchema>;
 export type SystemStatus = z.infer<typeof systemStatusSchema>;
 export type OllamaThinkMode = z.infer<typeof ollamaThinkModeSchema>;
+export type ChatRequestMode = z.infer<typeof chatRequestModeSchema>;
 export type ChatTurnRequest = z.infer<typeof chatTurnRequestSchema>;
 export type ImageGenerationRequest = z.infer<typeof imageGenerationRequestSchema>;
 export type VideoGenerationRequest = z.infer<typeof videoGenerationRequestSchema>;

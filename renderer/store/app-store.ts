@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type {
   AgentSession,
+  ChatRequestMode,
   ChatStartAccepted,
   AuditEventRecord,
   ChatTurnAccepted,
@@ -548,7 +549,8 @@ interface AppStoreState {
   ) => Promise<void>;
   sendPrompt: (
     prompt: string,
-    attachments?: MessageAttachment[]
+    attachments?: MessageAttachment[],
+    mode?: ChatRequestMode
   ) => Promise<ChatStartAccepted['kind'] | null>;
   confirmGenerationSelection: (
     selection: GenerationConfirmationSelection
@@ -1203,7 +1205,7 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
     }));
   },
 
-  sendPrompt: async (prompt, attachments = []) => {
+  sendPrompt: async (prompt, attachments = [], mode = 'chat') => {
     const trimmedPrompt = prompt.trim();
 
     if (!trimmedPrompt) {
@@ -1227,6 +1229,7 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
       prompt: trimmedPrompt,
       attachments,
       model: state.selectedModel || undefined,
+      ...(mode === 'wireframe' ? { mode } : {}),
       ...(selectedThinkMode ? { think: selectedThinkMode } : {})
     });
 

@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -5001,6 +5001,179 @@ Must run in Chrome browser`;
       expect(
         readFileSync(path.join(workspaceRoot, 'scaffold', `file-${scaffoldRoundCount}.txt`), 'utf8')
       ).toBe(`scaffold file ${scaffoldRoundCount}\n`);
+    } finally {
+      harness.database.close();
+    }
+  });
+
+  it('keeps file-oriented wireframe prompts in preview mode instead of workspace writes', async () => {
+    const directory = mkdtempSync(path.join(tmpdir(), 'ollama-desktop-wireframe-no-write-'));
+    tempDirectories.push(directory);
+    const streamChat = vi.fn(
+      (input: {
+        onDelta: (delta: string) => void;
+      }) => {
+        const content =
+          '```wireframe\n' +
+          '{"type":"design","title":"Saved Prompt Preview","html":"<main><section class=\\"phone-screen\\">Preview</section></main>","css":".phone-screen { background: #101827; color: white; }","js":""}\n' +
+          '```';
+        input.onDelta(content);
+
+        return Promise.resolve({
+          content,
+          doneReason: 'stop',
+          thinking: '',
+          toolCalls: [
+            {
+              type: 'function' as const,
+              function: {
+                name: 'write',
+                arguments: {
+                  filePath: 'index.html',
+                  content: '<!doctype html><html><body>Wrong surface</body></html>'
+                }
+              }
+            }
+          ]
+        });
+      }
+    );
+    const completeChat = vi.fn().mockResolvedValue({
+      content: '',
+      doneReason: 'stop',
+      thinking: '',
+      toolCalls: []
+    });
+    const harness = createChatServiceHarness({
+      directory,
+      loggerName: 'chat-wireframe-no-workspace-write-test',
+      models: ['llama3.2:latest'],
+      streamChat,
+      completeChat
+    });
+
+    try {
+      const workspaceRoot = path.join(directory, 'workspace-root');
+      const indexPath = path.join(workspaceRoot, 'index.html');
+      mkdirSync(workspaceRoot, { recursive: true });
+
+      const workspace = harness.repository.ensureDefaultWorkspace();
+      harness.repository.updateWorkspaceRoot(workspace.id, workspaceRoot);
+      harness.capabilityService.grantPermission({
+        capabilityId: 'write',
+        scopeKind: 'workspace',
+        scopeId: workspace.id
+      });
+
+      const accepted = await harness.service.startChatTurn(
+        {
+          prompt: 'Create index.html for this music app wireframe and save it.',
+          workspaceId: workspace.id,
+          mode: 'wireframe'
+        },
+        () => undefined
+      );
+
+      await vi.waitFor(() => {
+        const messages = harness.service.listMessages(accepted.conversation.id);
+        expect(messages.at(-1)?.status).toBe('completed');
+      });
+
+      const messages = harness.service.listMessages(accepted.conversation.id);
+      const assistantMessage = messages.at(-1);
+
+      expect(assistantMessage?.content).toContain('"type":"design"');
+      expect(assistantMessage?.content).toContain('phone-screen');
+      expect(assistantMessage?.toolInvocations ?? []).toHaveLength(0);
+      expect(existsSync(indexPath)).toBe(false);
+      expect(streamChat).toHaveBeenCalledTimes(1);
+      expect(completeChat).not.toHaveBeenCalled();
+    } finally {
+      harness.database.close();
+    }
+  });
+
+  it('retries wireframe turns that complete with only thinking content', async () => {
+    const directory = mkdtempSync(path.join(tmpdir(), 'ollama-desktop-wireframe-thinking-only-'));
+    tempDirectories.push(directory);
+    const streamChat = vi
+      .fn()
+      .mockImplementationOnce(
+        (input: {
+          think?: boolean | 'low' | 'medium' | 'high';
+          onThinkingDelta?: (delta: string) => void;
+        }) => {
+          input.onThinkingDelta?.('garbled hidden reasoning');
+
+          return Promise.resolve({
+            content: '',
+            doneReason: 'stop',
+            thinking: 'garbled hidden reasoning',
+            toolCalls: []
+          });
+        }
+      )
+      .mockImplementationOnce(
+        (input: {
+          think?: boolean | 'low' | 'medium' | 'high';
+          messages: Array<{ role: string; content: string }>;
+          onDelta: (delta: string) => void;
+          onThinkingDelta?: (delta: string) => void;
+        }) => {
+          const content =
+            '```wireframe\n' +
+            '{"type":"questions","questions":[{"id":"scope","label":"Which screen should be most detailed?","selection":"single","options":[{"id":"A","label":"Home"},{"id":"B","label":"Search"}]}]}\n' +
+            '```';
+          input.onThinkingDelta?.('retry reasoning should be ignored');
+          input.onDelta(content);
+
+          return Promise.resolve({
+            content,
+            doneReason: 'stop',
+            thinking: 'retry reasoning should be ignored',
+            toolCalls: []
+          });
+        }
+      );
+    const harness = createChatServiceHarness({
+      directory,
+      loggerName: 'chat-wireframe-thinking-only-retry-test',
+      models: ['llama3.2:latest'],
+      streamChat
+    });
+
+    try {
+      const accepted = await harness.service.startChatTurn(
+        {
+          prompt: 'Design a music app wireframe.',
+          mode: 'wireframe',
+          think: 'high'
+        },
+        () => undefined
+      );
+
+      await vi.waitFor(() => {
+        const messages = harness.service.listMessages(accepted.conversation.id);
+        expect(messages.at(-1)?.status).toBe('completed');
+      });
+
+      const messages = harness.service.listMessages(accepted.conversation.id);
+      const assistantMessage = messages.at(-1);
+
+      expect(streamChat).toHaveBeenCalledTimes(2);
+      expect(streamChat.mock.calls[0]?.[0]?.think).toBe(false);
+      expect(streamChat.mock.calls[1]?.[0]?.think).toBe(false);
+      expect(getMockMessages(streamChat.mock.calls[1]?.[0])).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            role: 'system',
+            content: expect.stringContaining('Wireframe mode recovery')
+          })
+        ])
+      );
+      expect(assistantMessage?.content).toContain('"type":"questions"');
+      expect(assistantMessage?.content).not.toContain('<think>');
+      expect(assistantMessage?.content).not.toContain('garbled hidden reasoning');
     } finally {
       harness.database.close();
     }
