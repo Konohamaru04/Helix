@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  type ChatRequestMode,
   type GenerationArtifact,
   type GenerationGalleryItem,
   type MessageAttachment,
@@ -25,6 +26,10 @@ import {
   getConfiguredImageGenerationModelOption,
   getImageGenerationModelLabel
 } from '@renderer/lib/image-generation-models';
+import {
+  parseWireframeArtifact,
+  parseWireframeArtifacts
+} from '@renderer/lib/wireframe';
 import { useAppStore } from '@renderer/store/app-store';
 
 function mergeAttachments(
@@ -67,7 +72,8 @@ function createGeneratedMediaAttachment(
   };
 }
 
-type SubmitPhase = 'chat' | 'image' | 'video' | 'edit';
+type ComposerMode = 'chat' | 'image' | 'video' | 'wireframe';
+type SubmitPhase = ComposerMode | 'edit';
 
 function getSubmitFeedback(phase: SubmitPhase | null) {
   if (phase === 'chat') {
@@ -97,6 +103,16 @@ function getSubmitFeedback(phase: SubmitPhase | null) {
       transcriptLabel: 'Preparing video job',
       transcriptHint:
         'The bridge is packaging the start frame, paired Wan checkpoints, and workflow defaults before the video job enters the queue.'
+    };
+  }
+
+  if (phase === 'wireframe') {
+    return {
+      label: 'Thinking...',
+      hint: 'The model is shaping the wireframe requirements or updating the live canvas.',
+      transcriptLabel: 'Preparing wireframe turn',
+      transcriptHint:
+        'Wireframe mode is keeping the response structured for questions and HTML/CSS/JS preview output.'
     };
   }
 
@@ -131,7 +147,16 @@ export function ChatPage() {
   const [submissionError, setSubmissionError] = useState<string | null>(null);
   const [composerDraft, setComposerDraft] = useState('');
   const [composerAttachments, setComposerAttachments] = useState<MessageAttachment[]>([]);
-  const [composerMode, setComposerMode] = useState<'chat' | 'image' | 'video'>('chat');
+  const [composerMode, setComposerMode] = useState<ComposerMode>('chat');
+  const [wireframeConversationIds, setWireframeConversationIds] = useState<Set<string>>(
+    () => new Set()
+  );
+  const [wireframeDisabledConversationIds, setWireframeDisabledConversationIds] = useState<
+    Set<string>
+  >(() => new Set());
+  const [selectedWireframeIterationIds, setSelectedWireframeIterationIds] = useState<
+    Map<string, string>
+  >(() => new Map());
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [creatingWorkspace, setCreatingWorkspace] = useState(false);
   const [workspaceDraft, setWorkspaceDraft] = useState('');
@@ -239,6 +264,56 @@ export function ChatPage() {
     activeConversationId === null
       ? []
       : messagesByConversation[activeConversationId] ?? [];
+  const wireframeDesignIterations = useMemo(
+    () =>
+      activeMessages.flatMap((message) => {
+        if (message.role !== 'assistant') {
+          return [];
+        }
+
+        return parseWireframeArtifacts(message.content).flatMap((artifact, artifactIndex) =>
+          artifact.type === 'design'
+            ? [
+                {
+                  id: `${message.id}:${artifactIndex}`,
+                  design: artifact,
+                  createdAt: message.createdAt,
+                  sourceMessageId: message.id
+                }
+              ]
+            : []
+        );
+      }),
+    [activeMessages]
+  );
+  const selectedWireframeIterationId =
+    activeConversationId === null
+      ? null
+      : selectedWireframeIterationIds.get(activeConversationId) ?? null;
+  const selectedWireframeIteration =
+    wireframeDesignIterations.find(
+      (iteration) => iteration.id === selectedWireframeIterationId
+    ) ??
+    wireframeDesignIterations.at(-1) ??
+    null;
+  const latestWireframeQuestionsMessageId =
+    [...activeMessages]
+      .reverse()
+      .find((message) => {
+        if (message.role !== 'assistant') {
+          return false;
+        }
+
+        return parseWireframeArtifact(message.content)?.type === 'questions';
+      })?.id ?? null;
+  const activeConversationHasWireframeArtifacts = activeMessages.some(
+    (message) =>
+      (message.role === 'assistant' &&
+        parseWireframeArtifact(message.content) !== null) ||
+      message.routeTrace?.reason === 'wireframe-mode'
+  );
+  const activeConversationWireframeDisabled =
+    activeConversationId !== null && wireframeDisabledConversationIds.has(activeConversationId);
   const activeConversation = conversations.find(
     (conversation) => conversation.id === activeConversationId
   );
@@ -401,12 +476,115 @@ export function ChatPage() {
     return () => window.clearInterval(refreshHandle);
   }, [galleryDrawerOpen, refreshGenerationGallery]);
 
-  function resetComposer() {
+  useEffect(() => {
+    if (
+      activeConversationId === null ||
+      !activeConversationHasWireframeArtifacts ||
+      activeConversationWireframeDisabled
+    ) {
+      return;
+    }
+
+    setWireframeConversationIds((current) => {
+      if (current.has(activeConversationId)) {
+        return current;
+      }
+
+      const next = new Set(current);
+      next.add(activeConversationId);
+      return next;
+    });
+    setComposerMode((current) =>
+      current === 'image' || current === 'video' ? current : 'wireframe'
+    );
+  }, [
+    activeConversationHasWireframeArtifacts,
+    activeConversationId,
+    activeConversationWireframeDisabled
+  ]);
+
+  function resetComposer(options: { preserveMode?: boolean } = {}) {
     setComposerDraft('');
     setComposerAttachments([]);
-    setComposerMode('chat');
+    if (!options.preserveMode) {
+      setComposerMode('chat');
+    }
     setEditingMessageId(null);
     dismissGenerationConfirmation();
+  }
+
+  function markWireframeConversation(conversationId: string | null) {
+    if (!conversationId) {
+      return;
+    }
+
+    setWireframeConversationIds((current) => {
+      const next = new Set(current);
+      next.add(conversationId);
+      return next;
+    });
+    setWireframeDisabledConversationIds((current) => {
+      if (!current.has(conversationId)) {
+        return current;
+      }
+
+      const next = new Set(current);
+      next.delete(conversationId);
+      return next;
+    });
+  }
+
+  function handleSelectWireframeIteration(iterationId: string) {
+    if (!activeConversationId || !iterationId) {
+      return;
+    }
+
+    setSelectedWireframeIterationIds((current) => {
+      if (current.get(activeConversationId) === iterationId) {
+        return current;
+      }
+
+      const next = new Map(current);
+      next.set(activeConversationId, iterationId);
+      return next;
+    });
+  }
+
+  function buildWireframePromptForSelectedIteration(prompt: string) {
+    const trimmedPrompt = prompt.trim();
+
+    if (!selectedWireframeIteration) {
+      return trimmedPrompt;
+    }
+
+    return [
+      'Wireframe revision target:',
+      '- Apply this request to the currently loaded design version only.',
+      '- Treat earlier wireframe versions as immutable history.',
+      '- Create a new design iteration derived from the selected version.',
+      '',
+      'Selected loaded version:',
+      JSON.stringify(selectedWireframeIteration.design),
+      '',
+      'User request:',
+      trimmedPrompt
+    ].join('\n');
+  }
+
+  function resolveWireframeModeForConversation(conversationId: string | null): ComposerMode {
+    if (!conversationId) {
+      return 'chat';
+    }
+
+    return wireframeConversationIds.has(conversationId) &&
+      !wireframeDisabledConversationIds.has(conversationId)
+      ? 'wireframe'
+      : 'chat';
+  }
+
+  function resetComposerForConversation(conversationId: string | null) {
+    resetComposer();
+    setComposerMode(resolveWireframeModeForConversation(conversationId));
   }
 
   function handleComposerDraftChange(nextPrompt: string) {
@@ -441,7 +619,7 @@ export function ChatPage() {
     try {
       setSubmissionError(null);
       await confirmGenerationSelection(selection);
-      resetComposer();
+      resetComposer({ preserveMode: composerMode === 'wireframe' });
     } catch (error) {
       setSubmissionError(
         error instanceof Error ? error.message : 'Unable to continue with the selected action.'
@@ -486,7 +664,9 @@ export function ChatPage() {
           ? 'image'
           : composerMode === 'video'
             ? 'video'
-            : 'chat';
+            : composerMode === 'wireframe'
+              ? 'wireframe'
+              : 'chat';
 
     submitLockRef.current = true;
     setSubmitPhase(nextSubmitPhase);
@@ -533,6 +713,19 @@ export function ChatPage() {
           workflowProfile: 'wan-image-to-video',
           referenceImages: composerAttachments.slice(0, 1)
         });
+      } else if (composerMode === 'wireframe') {
+        const wireframeMode: ChatRequestMode = 'wireframe';
+        const resultKind = await sendPrompt(
+          buildWireframePromptForSelectedIteration(composerDraft),
+          composerAttachments,
+          wireframeMode
+        );
+
+        if (resultKind === 'generation-confirmation') {
+          return;
+        }
+
+        markWireframeConversation(useAppStore.getState().activeConversationId);
       } else {
         const resultKind = await sendPrompt(composerDraft, composerAttachments);
 
@@ -541,7 +734,7 @@ export function ChatPage() {
         }
       }
 
-      resetComposer();
+      resetComposer({ preserveMode: composerMode === 'wireframe' });
     } catch (error) {
       setSubmissionError(
         error instanceof Error ? error.message : 'Unable to send message.'
@@ -562,6 +755,60 @@ export function ChatPage() {
         error instanceof Error ? error.message : 'Unable to attach files.'
       );
     }
+  }
+
+  async function handleSubmitWireframeAnswers(prompt: string) {
+    if (submitLockRef.current || streaming || submitInFlight) {
+      return;
+    }
+
+    submitLockRef.current = true;
+    setSubmitPhase('wireframe');
+
+    try {
+      setSubmissionError(null);
+      await sendPrompt(prompt, [], 'wireframe');
+      markWireframeConversation(useAppStore.getState().activeConversationId);
+      setComposerMode('wireframe');
+      setComposerDraft('');
+      setComposerAttachments([]);
+      dismissGenerationConfirmation();
+    } catch (error) {
+      setSubmissionError(
+        error instanceof Error ? error.message : 'Unable to submit wireframe answers.'
+      );
+    } finally {
+      submitLockRef.current = false;
+      setSubmitPhase(null);
+    }
+  }
+
+  function handleToggleWireframeMode() {
+    setSubmissionError(null);
+    setEditingMessageId(null);
+    dismissGenerationConfirmation();
+    setComposerMode((current) => {
+      const nextMode = current === 'wireframe' ? 'chat' : 'wireframe';
+
+      if (activeConversationId) {
+        if (nextMode === 'wireframe') {
+          markWireframeConversation(activeConversationId);
+        } else {
+          setWireframeConversationIds((ids) => {
+            const next = new Set(ids);
+            next.delete(activeConversationId);
+            return next;
+          });
+          setWireframeDisabledConversationIds((ids) => {
+            const next = new Set(ids);
+            next.add(activeConversationId);
+            return next;
+          });
+        }
+      }
+
+      return nextMode;
+    });
   }
 
   function handleEditMessage(message: StoredMessage) {
@@ -815,7 +1062,7 @@ export function ChatPage() {
               conversations={conversations}
               onSearchQueryChange={(query) => void setSearchQuery(query)}
               onSelectConversation={(conversationId) => {
-                resetComposer();
+                resetComposerForConversation(conversationId);
                 void selectConversation(conversationId);
               }}
               onSelectWorkspace={(workspaceId) => {
@@ -830,7 +1077,7 @@ export function ChatPage() {
                 void handleClearWorkspaceFolder(workspaceId);
               }}
               onNewChat={() => {
-                resetComposer();
+                resetComposerForConversation(null);
                 void selectConversation(null);
               }}
               onNewWorkspace={toggleWorkspaceCreator}
@@ -860,7 +1107,7 @@ export function ChatPage() {
                   conversations={conversations}
                   onSearchQueryChange={(query) => void setSearchQuery(query)}
                   onSelectConversation={(conversationId) => {
-                    resetComposer();
+                    resetComposerForConversation(conversationId);
                     void selectConversation(conversationId);
                     toggleSidebar(false);
                   }}
@@ -877,7 +1124,7 @@ export function ChatPage() {
                     void handleClearWorkspaceFolder(workspaceId);
                   }}
                   onNewChat={() => {
-                    resetComposer();
+                    resetComposerForConversation(null);
                     void selectConversation(null);
                   }}
                   onNewWorkspace={toggleWorkspaceCreator}
@@ -1012,7 +1259,15 @@ export function ChatPage() {
                   onRegenerateMessage={(message) => {
                     void handleRegenerateMessage(message);
                   }}
+                  onSelectWireframeIteration={handleSelectWireframeIteration}
+                  onSubmitWireframeAnswers={handleSubmitWireframeAnswers}
                   streaming={streaming}
+                  wireframeDesignIterations={wireframeDesignIterations}
+                  wireframeSelectedIterationId={selectedWireframeIteration?.id ?? null}
+                  wireframeIntroVisible={composerMode === 'wireframe'}
+                  wireframeQuestionsMessageId={
+                    composerMode === 'wireframe' ? latestWireframeQuestionsMessageId : null
+                  }
                 />
 
                 {pendingGenerationConfirmation ? (
@@ -1081,7 +1336,7 @@ export function ChatPage() {
                       ? !imageGenerationAvailable || streaming || submitInFlight
                       : composerMode === 'video'
                         ? !videoGenerationAvailable || streaming || submitInFlight
-                      : !settings || !textBackendReady || streaming || submitInFlight
+                        : !settings || !textBackendReady || streaming || submitInFlight
                   }
                   submitDisabled={submitBlockedByConfirmation}
                   editing={editingMessageId !== null}
@@ -1113,6 +1368,7 @@ export function ChatPage() {
                     setComposerMode('chat');
                     dismissGenerationConfirmation();
                   }}
+                  onToggleWireframeMode={handleToggleWireframeMode}
                   onImportWorkspaceKnowledge={handleImportKnowledge}
                   onPromptChange={handleComposerDraftChange}
                   onRemoveAttachment={(attachmentId) => {

@@ -19,6 +19,7 @@ Helix runs entirely on your machine. Chat with local Ollama models or NVIDIA-hos
 - Edit and resend last user message; regenerate or retry last assistant response
 - Stop in-flight replies without breaking the stream lifecycle
 - Attachment previews in the composer and transcript (images, files)
+- Wireframe mode in the composer for guided app-design ideation: the text model asks multiple-choice follow-up questions, renders a live sandboxed HTML/CSS/JS canvas in chat, and exports the result as a standalone `.html` file
 - Import and export conversations through the bridge
 - Native splash screen while Electron boots the bridge and loads the first renderer window
 - Packaged builds defer part of the Python runtime into a first-run installer under Electron `userData/python-runtime/site-packages` before the local inference server starts

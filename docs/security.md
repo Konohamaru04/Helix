@@ -53,6 +53,12 @@ The current image-generation slice also keeps a few important boundaries:
 - generated artifacts are persisted locally under the app data directory and referenced through normalized job/artifact tables
 - the placeholder backend provides a no-download fallback for test/dev flows when a real diffusers model is unavailable
 
+## Wireframe preview safety
+
+Wireframe mode is text-model driven and does not call the Python generation server. The renderer parses a fenced `wireframe` JSON block from assistant output and renders the latest design in an iframe sandboxed with `allow-scripts` only. Design artifacts are ignored unless their `html` field contains inline markup, so model outputs like `See index.html` do not become broken previews. The generated preview document includes a restrictive Content Security Policy: no default network access, no `connect-src`, no frames, no form actions, and inline-only CSS/JavaScript. The bridge prompt also instructs the model not to use remote assets, imports, `fetch`, browser storage, local file paths, or iframes.
+
+Wireframe exports are client-side standalone `.html` downloads from the parsed preview document. They are not written to arbitrary local paths by the bridge.
+
 ## Current limitations
 
 These items are still not fully implemented and remain explicitly deferred:

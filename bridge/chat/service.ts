@@ -81,6 +81,7 @@ import { parseJsonishRecord } from '@bridge/jsonish';
 import type { SettingsService } from '@bridge/settings/service';
 import type { SkillRegistry } from '@bridge/skills';
 import type { ToolDispatcher } from '@bridge/tools';
+import { WIREFRAME_MODE_SYSTEM_PROMPT } from '@bridge/wireframe/prompt';
 import type { Logger } from 'pino';
 import type { ChatRepository } from './repository';
 
@@ -286,6 +287,8 @@ type CapabilitySurfaceSnapshot = {
   capabilityPlanState: PlanState | null;
 };
 type OllamaThinkValue = boolean | 'low' | 'medium' | 'high';
+const WIREFRAME_OUTPUT_REMINDER_PROMPT =
+  'Wireframe mode recovery: your previous response had no visible wireframe artifact. Return exactly one fenced ```wireframe JSON artifact in the final answer. Use type="questions" with concrete multiple-choice options if requirements are still missing. Use type="design" with complete inline html/css/js if requirements are sufficient. Do not include tools, filenames, workspace paths, or prose-only output.';
 
 function estimateTokens(value: string): number {
   return Math.max(1, Math.ceil(value.trim().length / 4));
@@ -309,6 +312,63 @@ function resolveOllamaThinkValue(thinkMode: OllamaThinkMode | undefined): Ollama
   }
 
   return thinkMode;
+}
+
+function hasPreviewableWireframeOutput(content: string): boolean {
+  const visibleContent = sanitizeTextCommandRecoveryContent(content);
+
+  return (
+    /```wireframe\s*[\s\S]*"type"\s*:\s*"(?:questions|design)"[\s\S]*```/i.test(
+      visibleContent
+    ) ||
+    /```html[^\n]*\n[\s\S]*<[\s\S]*```/i.test(visibleContent)
+  );
+}
+
+function buildFallbackWireframeQuestionsArtifact(): string {
+  return [
+    'Choose the closest direction and I will generate the wireframe.',
+    '',
+    '```wireframe',
+    JSON.stringify({
+      type: 'questions',
+      questions: [
+        {
+          id: 'wireframe_scope',
+          label: 'What should I prioritize in this wireframe?',
+          selection: 'single',
+          options: [
+            { id: 'A', label: 'Core user flow screens' },
+            { id: 'B', label: 'Visual layout and hierarchy' },
+            { id: 'C', label: 'Interactive prototype states' },
+            { id: 'D', label: 'Empty, loading, and error states' }
+          ]
+        },
+        {
+          id: 'wireframe_fidelity',
+          label: 'What fidelity should the preview use?',
+          selection: 'single',
+          options: [
+            { id: 'A', label: 'Low-fidelity grayscale blocks' },
+            { id: 'B', label: 'Mid-fidelity branded wireframe' },
+            { id: 'C', label: 'High-fidelity mockup-style wireframe' }
+          ]
+        },
+        {
+          id: 'wireframe_interactions',
+          label: 'Which interactions should be represented?',
+          selection: 'multi',
+          options: [
+            { id: 'A', label: 'Navigation between screens' },
+            { id: 'B', label: 'Primary CTA states' },
+            { id: 'C', label: 'Search or filtering' },
+            { id: 'D', label: 'Forms or selection controls' }
+          ]
+        }
+      ]
+    }),
+    '```'
+  ].join('\n');
 }
 
 function isImageAttachment(attachment: MessageAttachment): boolean {
@@ -1141,6 +1201,7 @@ interface ResolvedTurnPlan {
   baseUrl: string;
   apiKey: string | null;
   cleanedPrompt: string;
+  wireframeMode: boolean;
   thinkMode: OllamaThinkValue | undefined;
   toolExecutionPrompt: string;
   routeDecision: RouteDecision;
@@ -2122,17 +2183,21 @@ export class ChatService {
         explicitToolId: directives.explicitToolId,
         attachmentCount: (request.attachments ?? []).length,
         attachments: summarizeLoggedAttachments(request.attachments ?? []),
+        mode: request.mode ?? 'chat',
         prompt: clipLoggedText(request.prompt),
         cleanedPrompt: clipLoggedText(directives.cleanedPrompt)
       },
       'Received user prompt'
     );
-    const generationConfirmation = await this.resolveGenerationConfirmation({
-      prompt: request.prompt,
-      requestedModel: request.model,
-      attachments: request.attachments ?? [],
-      conversationId: conversation.id
-    });
+    const generationConfirmation =
+      request.mode === 'wireframe'
+        ? null
+        : await this.resolveGenerationConfirmation({
+            prompt: request.prompt,
+            requestedModel: request.model,
+            attachments: request.attachments ?? [],
+            conversationId: conversation.id
+          });
 
     if (generationConfirmation) {
       const touchedConversation = this.repository.touchConversation(conversation.id);
@@ -2282,7 +2347,8 @@ export class ChatService {
       attachments: parsedRequest.attachments ?? [],
       conversationId: conversation.id,
       workspaceId: conversation.workspaceId,
-      importedKnowledge
+      importedKnowledge,
+      wireframeMode: parsedRequest.mode === 'wireframe'
     });
     const correlationId = randomUUID();
     const userMessage = this.repository.createMessage({
@@ -2306,6 +2372,7 @@ export class ChatService {
         importedKnowledgeCount: importedKnowledge?.documents.length ?? 0,
         attachmentCount: userMessage.attachments.length,
         attachments: summarizeLoggedAttachments(userMessage.attachments),
+        mode: parsedRequest.mode ?? 'chat',
         prompt: clipLoggedText(userMessage.content)
       },
       'Persisted user message for assistant turn'
@@ -2950,6 +3017,7 @@ export class ChatService {
     workspaceId: string | null;
     importedKnowledge: ImportWorkspaceKnowledgeResult | null;
     excludeMessageIds?: string[];
+    wireframeMode?: boolean;
   }): Promise<ResolvedTurnPlan> {
     const directives = this.parsePromptDirectives(input.prompt);
     const settings = this.settingsService.get();
@@ -2980,6 +3048,7 @@ export class ChatService {
       recentMessages,
       workspaceHasKnowledge,
       workspaceRootConnected,
+      wireframeMode: input.wireframeMode === true,
       explicitSkillId: directives.explicitSkillId,
       explicitToolId: directives.explicitToolId
     };
@@ -3012,9 +3081,12 @@ export class ChatService {
       baseUrl: activeTextBackend.baseUrl,
       apiKey: activeTextBackend.apiKey,
       cleanedPrompt: directives.cleanedPrompt,
+      wireframeMode: input.wireframeMode === true,
       thinkMode:
         activeTextBackend.backend === 'ollama'
-          ? resolveOllamaThinkValue(input.requestedThinkMode)
+          ? input.wireframeMode === true
+            ? false
+            : resolveOllamaThinkValue(input.requestedThinkMode)
           : undefined,
       toolExecutionPrompt: this.resolveToolExecutionPrompt({
         cleanedPrompt: directives.cleanedPrompt,
@@ -3026,7 +3098,8 @@ export class ChatService {
         routeDecision.activeSkillId === null
           ? null
           : this.skillRegistry.getById(routeDecision.activeSkillId),
-      supportsNativeToolLoop: activeTextBackend.backend === 'ollama',
+      supportsNativeToolLoop:
+        activeTextBackend.backend === 'ollama' && input.wireframeMode !== true,
       selectedModelSizeBytes:
         activeTextBackend.backend !== 'ollama' || routeDecision.selectedModel === null
           ? null
@@ -3414,16 +3487,18 @@ export class ChatService {
       }
     }
 
+    const activeSkillPrompts = [
+      input.routePlan.activeSkill?.prompt ?? null,
+      input.routePlan.wireframeMode ? WIREFRAME_MODE_SYSTEM_PROMPT : null,
+      toolContextPrompt
+    ].filter((prompt): prompt is string => Boolean(prompt?.trim()));
     const context = buildConversationContext({
       recentMessages: memoryContext.recentMessages,
       pinnedMessages,
       retrievedSources: [...ragSources, ...toolContextSources],
       workspacePrompt: workspace?.prompt ?? null,
       workspaceRootPath: workspace?.rootPath ?? null,
-      skillPrompt:
-        input.routePlan.activeSkill?.prompt && toolContextPrompt
-          ? `${input.routePlan.activeSkill.prompt}\n\n${toolContextPrompt}`
-          : input.routePlan.activeSkill?.prompt ?? toolContextPrompt,
+      skillPrompt: activeSkillPrompts.length > 0 ? activeSkillPrompts.join('\n\n') : null,
       planContextPrompt: buildPlanContextPrompt(this.toolDispatcher.getPlanContext(workspace?.id ?? null)),
       availableTools: this.toolDispatcher
         .listDefinitions()
@@ -3669,6 +3744,7 @@ export class ChatService {
           workspaceRootPath: workspace?.rootPath ?? null
         });
       const allowInlineToolCallAutoRecovery =
+        !input.routePlan.wireframeMode &&
         this.shouldAllowInlineToolCallAutoRecovery({
           prompt: input.routePlan.cleanedPrompt,
           routeDecision: input.routePlan.routeDecision,
@@ -3871,7 +3947,83 @@ export class ChatService {
           });
         }
       });
+      content = result.content || content;
       thinking = result.thinking || thinking;
+      let completionDoneReason = result.doneReason;
+
+      if (input.routePlan.wireframeMode && !hasPreviewableWireframeOutput(content)) {
+        this.logger.warn(
+          {
+            requestId: accepted.requestId,
+            conversationId: accepted.conversation.id,
+            assistantMessageId: currentAssistantMessageId,
+            model: accepted.model,
+            assistantContent: clipLoggedText(composePersistentAssistantContent({ content, thinking }))
+          },
+          'Wireframe turn produced no preview artifact; retrying with contract reminder'
+        );
+
+        content = '';
+        thinking = '';
+        this.repository.updateMessage(currentAssistantMessageId, {
+          content,
+          status: 'streaming',
+          model: accepted.model
+        });
+        this.emitAssistantUpdateEvent({
+          emitEvent: input.emitEvent,
+          requestId: accepted.requestId,
+          assistantMessageId: currentAssistantMessageId,
+          content,
+          status: 'streaming',
+          model: accepted.model
+        });
+
+        const retryResult = await this.streamTextChat({
+          backend: input.routePlan.backend,
+          baseUrl: input.routePlan.baseUrl,
+          apiKey: input.routePlan.apiKey,
+          model: accepted.model,
+          messages: [
+            ...ollamaMessages,
+            {
+              role: 'system',
+              content: WIREFRAME_OUTPUT_REMINDER_PROMPT
+            }
+          ],
+          numCtx: initialNumCtxBudget.numCtx,
+          think: false,
+          signal: activeTurn.abortController.signal,
+          onThinkingDelta: () => {
+            // Wireframe mode needs machine-readable visible output; do not persist retry reasoning.
+          },
+          onDelta: (delta) => {
+            content += delta;
+
+            this.repository.updateMessage(currentAssistantMessageId, {
+              content,
+              status: 'streaming',
+              model: accepted.model
+            });
+            input.emitEvent({
+              type: 'delta',
+              requestId: accepted.requestId,
+              assistantMessageId: currentAssistantMessageId,
+              delta,
+              content
+            });
+          }
+        });
+        content = retryResult.content || content;
+        completionDoneReason = retryResult.doneReason;
+
+        if (!hasPreviewableWireframeOutput(content)) {
+          content = buildFallbackWireframeQuestionsArtifact();
+          thinking = '';
+          completionDoneReason = 'wireframe-fallback';
+        }
+      }
+
       const inlineToolRecovery = await this.recoverInlineToolCalls({
         backend: input.routePlan.backend,
         baseUrl: input.routePlan.baseUrl,
@@ -3879,7 +4031,7 @@ export class ChatService {
         model: accepted.model,
         messages: ollamaMessages,
         content,
-        doneReason: result.doneReason,
+        doneReason: completionDoneReason,
         workspaceRootPath: workspace?.rootPath ?? null,
         workspaceId: workspace?.id ?? null,
         conversationId: accepted.conversation.id,

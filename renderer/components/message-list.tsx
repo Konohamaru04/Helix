@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { GenerationJob, StoredMessage } from '@bridge/ipc/contracts';
 import { GenerationThreadItem } from '@renderer/components/generation-thread-item';
 import { MessageBubble } from '@renderer/components/message-bubble';
+import { WireframePreviewPanel } from '@renderer/components/wireframe-preview-panel';
+import type { WireframeDesignIteration } from '@renderer/lib/wireframe';
 
 interface MessageListProps {
   conversationTitle: string;
@@ -15,7 +17,13 @@ interface MessageListProps {
   onLoadMessageArtifacts?: (messageId: string) => void;
   onCancelGenerationJob?: (jobId: string) => void;
   onRetryGenerationJob?: (jobId: string) => void;
+  onSelectWireframeIteration?: (iterationId: string) => void;
+  onSubmitWireframeAnswers?: (prompt: string) => Promise<void>;
   streaming: boolean;
+  wireframeDesignIterations?: WireframeDesignIteration[];
+  wireframeIntroVisible?: boolean;
+  wireframeQuestionsMessageId?: string | null;
+  wireframeSelectedIterationId?: string | null;
 }
 
 const AUTO_SCROLL_THRESHOLD_PX = 96;
@@ -62,6 +70,26 @@ const EMPTY_STATE_TIPS = [
     body: 'The bridge can route between general chat, coding, vision, grounded answers, and tool-assisted flows before the reply starts.'
   }
 ] as const;
+
+function WireframeIntroMessage() {
+  return (
+    <div className="motion-message-assistant w-full self-start">
+      <article className="motion-card animate-fade-in-up min-w-0 overflow-hidden text-slate-100">
+        <div className="rounded-[1.25rem] border border-cyan-300/20 bg-cyan-400/5 px-5 py-4 shadow-panel">
+          <p className="text-xs uppercase tracking-[0.2em] text-cyan-200/80">
+            Wireframe mode
+          </p>
+          <h2 className="mt-3 text-lg font-semibold text-slate-100">
+            Describe your idea in detail.
+          </h2>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-300">
+            Include the users, main screens, core actions, data that appears on each screen, and any visual constraints. I will ask multiple-choice follow-up questions, then generate an HTML/CSS/JS wireframe canvas here.
+          </p>
+        </div>
+      </article>
+    </div>
+  );
+}
 
 function pickRandomTipIndex(previousIndex: number | null = null) {
   const nextIndex = Math.floor(Math.random() * EMPTY_STATE_TIPS.length);
@@ -111,7 +139,8 @@ export function MessageList(props: MessageListProps) {
       return left.sequence - right.sequence;
     });
   }, [props.generationJobs, props.messages]);
-  const emptyStateVisible = timelineItems.length === 0 && !props.pendingLabel;
+  const emptyStateVisible =
+    timelineItems.length === 0 && !props.pendingLabel && !props.wireframeIntroVisible;
   const [emptyTipIndex, setEmptyTipIndex] = useState(() => pickRandomTipIndex());
   const lastTipIndexRef = useRef<number>(emptyTipIndex);
   const visibleEmptyStateKeyRef = useRef<string | null>(
@@ -228,7 +257,7 @@ export function MessageList(props: MessageListProps) {
           scrollDistanceFromBottom(event.currentTarget) <= AUTO_SCROLL_THRESHOLD_PX
       }}
     >
-      {timelineItems.length === 0 ? (
+      {timelineItems.length === 0 && !props.wireframeIntroVisible ? (
         pendingTurnIndicator ? (
           <div className="mx-auto flex h-full max-w-2xl flex-col justify-center">
             {pendingTurnIndicator}
@@ -248,6 +277,8 @@ export function MessageList(props: MessageListProps) {
         )
       ) : (
         <div className="mx-auto flex w-full min-w-0 max-w-[88rem] flex-col gap-5">
+          {props.wireframeIntroVisible ? <WireframeIntroMessage /> : null}
+
           {timelineItems.map((item, itemIndex) => {
             if (item.type === 'generation') {
               return (
@@ -296,16 +327,32 @@ export function MessageList(props: MessageListProps) {
                   {...(props.onLoadMessageArtifacts
                     ? { onLoadArtifacts: props.onLoadMessageArtifacts }
                     : {})}
+                  {...(props.onSubmitWireframeAnswers
+                    ? { onSubmitWireframeAnswers: props.onSubmitWireframeAnswers }
+                    : {})}
                   {...(props.onTogglePin ? { onTogglePin: props.onTogglePin } : {})}
                   {...(props.onRegenerateMessage
                     ? { onRegenerate: props.onRegenerateMessage }
                     : {})}
+                  wireframeQuestionsEnabled={
+                    message.id === props.wireframeQuestionsMessageId
+                  }
                 />
               </div>
             );
           })}
 
           {pendingTurnIndicator}
+          {props.wireframeDesignIterations &&
+          props.wireframeDesignIterations.length > 0 ? (
+            <WireframePreviewPanel
+              iterations={props.wireframeDesignIterations}
+              selectedIterationId={props.wireframeSelectedIterationId ?? null}
+              {...(props.onSelectWireframeIteration
+                ? { onSelectIteration: props.onSelectWireframeIteration }
+                : {})}
+            />
+          ) : null}
         </div>
       )}
     </section>

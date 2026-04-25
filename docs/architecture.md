@@ -37,6 +37,7 @@ The routed chat flow is:
 2. Zustand calls the typed preload API.
 3. Electron main validates the payload and forwards it to `ChatService`.
 4. `ChatService` first decides whether the submit looks like a generation request in normal chat mode. Instead of dispatching immediately, the bridge can now return a typed `generation-confirmation` result so the renderer shows attachment-aware action buttons such as `Generate Image`, `Edit Image`, `Generate Video`, `Edit Images`, or `Continue Chat`. If the user continues with chat, the normal routed turn path runs; if the user confirms image or video generation, the bridge starts the corresponding job through the same typed IPC layer. Explicit `/tool` and `@skill` directives still bypass this confirmation gate.
+   Wireframe mode uses the same `chat:start` IPC path with `mode: "wireframe"`. The bridge bypasses automatic image/video confirmation for these turns, forces a plain chat route, and injects a dedicated wireframe system prompt that requires either structured multiple-choice questions or a structured HTML/CSS/JS design artifact.
 5. Optional workspace knowledge import happens for text-like attachments.
 6. Optional tool execution runs inside the bridge layer.
 7. `buildConversationContext` assembles the system base prompt, workspace prompt, active skill prompt, pinned memory, retrieved knowledge, and recent turns.
@@ -78,6 +79,7 @@ UI layout note:
 - key transcript and sidebar entities also expose custom right-click context menus so workspace, chat, and message actions are reachable without hunting for inline affordances; the workspace context menu is also where existing workspaces can connect, change, or disconnect their local folder binding
 - settings open from a single header action, while the status bar stays focused on runtime health plus quick access to plan, agents, skills, and queue drawers
 - when the transcript is empty, the chat surface shows a randomized feature/instruction tip instead of a fixed placeholder so the blank state can teach discovery over time
+- the composer includes a Wireframe toggle beside the workspace controls; when active, a chat-style intro appears in the transcript, multiple-choice model questions render as native controls, and structured design artifacts appear as sandboxed canvas iterations with selected-version HTML export. The right preview rail lists every design iteration parsed from the conversation, and the selected iteration is included as the revision target for the next Wireframe-mode prompt so edits branch from the loaded version instead of mutating all prior versions. Wireframe mode is tracked per conversation in renderer state and stays active for that conversation until the user turns it off. The bridge uses `bridge/wireframe/prompt.ts` as the dedicated Wireframe system prompt; it defines activation, questionnaire, answer-submission, preview, versioned revision phases, and limits previews to inline HTML/CSS/vanilla JS.
 
 ## Routing and context
 
@@ -91,6 +93,7 @@ The current router is heuristic but stateful enough to handle common follow-ups:
 - grounded routing when the workspace has imported knowledge
 - tool-assisted routing for calculator, code-runner, file-reader, workspace-lister, workspace-search, knowledge-search, and web-search intents
 - automatic skill activation for builder, debugger, reviewer, grounded, and stepwise response modes
+- explicit wireframe-mode turns, which suppress tool/skill routing and use the General model unless the user-selected model is valid
 
 Manual override behavior:
 

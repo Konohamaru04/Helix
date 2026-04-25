@@ -560,6 +560,7 @@ export interface RouteInput {
   recentMessages: StoredMessage[];
   workspaceHasKnowledge: boolean;
   workspaceRootConnected?: boolean;
+  wireframeMode?: boolean;
   explicitSkillId: string | null;
   explicitToolId: string | null;
   modelAnalysis?: ModelRouteAnalysis | null;
@@ -585,6 +586,36 @@ export class ChatRouter {
     settings: UserSettings,
     availableModels: string[]
   ): RouteDecision {
+    if (input.wireframeMode) {
+      const modelSelection = findPreferredModel(availableModels, settings, {
+        requestedModel: input.requestedModel,
+        needsVision: input.attachments.some(
+          (attachment) => attachment.mimeType?.startsWith('image/') === true
+        ),
+        prefersCode: false
+      });
+
+      this.logger.info(
+        {
+          selectedModel: modelSelection.selectedModel,
+          fallbackModel: modelSelection.fallbackModel
+        },
+        'Resolved wireframe-mode chat model'
+      );
+
+      return {
+        selectedModel: modelSelection.selectedModel,
+        fallbackModel: modelSelection.fallbackModel,
+        strategy: 'chat',
+        reason: 'wireframe-mode',
+        confidence: 1,
+        activeSkillId: null,
+        activeToolId: null,
+        useRag: false,
+        useTools: false
+      };
+    }
+
     const trustedModelAnalysis = isTrustedModelRouteAnalysis(input.modelAnalysis)
       ? input.modelAnalysis
       : null;

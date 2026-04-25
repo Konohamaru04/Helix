@@ -27,6 +27,7 @@ function renderComposer(
     onEnterVideoMode: vi.fn(),
     onExitImageMode: vi.fn(),
     onExitVideoMode: vi.fn(),
+    onToggleWireframeMode: vi.fn(),
     onImportWorkspaceKnowledge: vi.fn().mockResolvedValue(undefined),
     onPromptChange: vi.fn(),
     onRemoveAttachment: vi.fn(),
@@ -114,5 +115,32 @@ describe('ChatComposer', () => {
     expect(screen.getByText('Image to video')).toBeInTheDocument();
     expect(screen.getByText(/Attach exactly one start image/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Render video' })).toBeInTheDocument();
+  });
+
+  it('toggles wireframe mode from the composer action row', () => {
+    const onToggleWireframeMode = vi.fn();
+    renderComposer({
+      onToggleWireframeMode,
+      prompt: 'A CRM for field sales teams'
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Enable wireframe mode' }));
+
+    expect(onToggleWireframeMode).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows wireframe guidance when wireframe mode is active', () => {
+    renderComposer({
+      generationMode: 'wireframe',
+      prompt: 'A planning app for architects'
+    });
+
+    expect(screen.getByText('Wireframe mode')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Wireframe' })).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'Enter sends the wireframe brief. Shift+Enter keeps writing. Follow-up answers stay in this flow.'
+      )
+    ).toBeInTheDocument();
   });
 });
