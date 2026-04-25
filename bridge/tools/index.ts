@@ -1762,8 +1762,9 @@ export class ToolDispatcher {
       case 'read':
         return rawInput ?? getStringArg(args, 'path', 'filePath');
       case 'workspace-lister':
-      case 'glob':
         return rawInput ?? (getStringArg(args, 'pattern', 'path') || '.');
+      case 'glob':
+        return rawInput ?? (getStringArg(args, 'pattern', 'path') || '**/*');
       case 'workspace-search':
       case 'grep':
       case 'knowledge-search':
@@ -1977,9 +1978,11 @@ export class ToolDispatcher {
   ): Promise<ToolExecutionResult> {
     let jsonPath: string | undefined;
     try {
-      const parsed = JSON.parse(prompt);
+      const parsed = JSON.parse(prompt) as unknown;
       if (typeof parsed === 'object' && parsed !== null) {
-        jsonPath = (parsed.filePath ?? parsed.path)?.trim();
+        const record = parsed as Record<string, unknown>;
+        const pathValue = record.filePath ?? record.path;
+        jsonPath = typeof pathValue === 'string' ? pathValue.trim() : undefined;
       }
     } catch { /* not JSON, fall through */ }
     const candidatePath = jsonPath || extractPromptPathCandidate(prompt);

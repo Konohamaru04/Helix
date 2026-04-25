@@ -28,7 +28,7 @@ import type { NvidiaClient } from '@bridge/nvidia/client';
 import type { OllamaClient } from '@bridge/ollama/client';
 import { extractPromptPathCandidate, looksLikeStructuredPath } from '@bridge/path-prompt';
 import { SkillRegistry } from '@bridge/skills';
-import { resolveBareFilename, IGNORED_DIRECTORY_NAMES, workspaceFileIndex } from '@bridge/workspace-resolve';
+import { resolveBareFilename, IGNORED_DIRECTORY_NAMES } from '@bridge/workspace-resolve';
 import type { Logger } from 'pino';
 import { CapabilityRepository } from './repository';
 
@@ -457,6 +457,15 @@ function summarize(value: string | null | undefined): string | null {
   return normalized ? normalized.slice(0, 300) : null;
 }
 
+function stringifyScalar(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
+    return String(value);
+  }
+
+  return '';
+}
+
 function isWithinDirectory(candidatePath: string, directoryPath: string): boolean {
   const normalizedCandidate = path.resolve(candidatePath).toLowerCase();
   const normalizedDirectory = path.resolve(directoryPath).toLowerCase();
@@ -544,8 +553,8 @@ function parseEditInput(prompt: string, workspaceRootPath?: string | null): Edit
       workspaceRootPath && !path.isAbsolute(filePath)
         ? path.join(workspaceRootPath, filePath)
         : filePath;
-    const searchText = String(j.search ?? j.oldText ?? j.old_text ?? '');
-    const replacementText = String(j.replacement ?? j.newText ?? j.new_text ?? j.content ?? '');
+    const searchText = stringifyScalar(j.search ?? j.oldText ?? j.old_text);
+    const replacementText = stringifyScalar(j.replacement ?? j.newText ?? j.new_text ?? j.content);
     const replaceAll = j.replaceAll === true || j.replace_all === true;
     return { kind: 'legacy-search', filePath: resolvedPath, search: searchText, replacement: replacementText, replaceAll };
   }
@@ -646,6 +655,39 @@ function globToRegExp(pattern: string): RegExp {
     .replace(/::DOUBLE_STAR::/g, '.*');              // standalone ** matches everything
 
   return new RegExp(`^${regexSource}$`, 'i');
+}
+
+function extractGlobPattern(prompt: string): string {
+  const jsonPayload = parseLooseJson<{ pattern?: string; path?: string }>(prompt);
+  const jsonPattern =
+    typeof jsonPayload?.pattern === 'string'
+      ? jsonPayload.pattern.trim()
+      : typeof jsonPayload?.path === 'string'
+        ? jsonPayload.path.trim()
+        : '';
+
+  if (jsonPattern) {
+    return jsonPattern;
+  }
+
+  const trimmedPrompt = prompt.trim();
+
+  if (!trimmedPrompt) {
+    return '**/*';
+  }
+
+  const keyedPattern = trimmedPrompt.match(
+    /^(?:pattern|path)\s*(?:=|:)\s*(?:"([^"]+)"|'([^']+)'|`([^`]+)`|(.+))$/i
+  );
+  const candidate = (
+    keyedPattern?.[1] ??
+    keyedPattern?.[2] ??
+    keyedPattern?.[3] ??
+    keyedPattern?.[4] ??
+    trimmedPrompt
+  ).trim();
+
+  return candidate || '**/*';
 }
 
 function createInvocation(input: {
@@ -1162,7 +1204,7 @@ export class CapabilityService {
       throw new Error('Glob requires a connected workspace folder.');
     }
 
-    const pattern = prompt.trim() || '**/*';
+    const pattern = extractGlobPattern(prompt);
     const matcher = globToRegExp(pattern);
     const files = (await walkWorkspaceFiles(workspaceRootPath))
       .map((filePath) => path.relative(workspaceRootPath, filePath).replace(/\\/g, '/'))

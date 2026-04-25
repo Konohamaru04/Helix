@@ -286,6 +286,68 @@ describe('CapabilityService', () => {
     }
   });
 
+  it('reads direct file paths that contain spaces', async () => {
+    const harness = createHarness();
+
+    try {
+      const workspaceRoot = path.join(harness.directory, 'workspace-root');
+      const readableFile = path.join(workspaceRoot, 'IMG to VIDEO 2.4 BASE SIMPLE.json');
+      mkdirSync(workspaceRoot, { recursive: true });
+      writeFileSync(readableFile, '{"workflow": "wan"}\n', 'utf8');
+
+      const relativeResult = await harness.service.executeTool({
+        toolId: 'read',
+        prompt: 'IMG to VIDEO 2.4 BASE SIMPLE.json',
+        workspaceRootPath: workspaceRoot
+      });
+
+      expect(relativeResult.toolInvocations[0]?.status).toBe('completed');
+      expect(relativeResult.toolInvocations[0]?.inputSummary).toBe(readableFile);
+      expect(relativeResult.assistantContent).toContain('"workflow": "wan"');
+
+      const absoluteResult = await harness.service.executeTool({
+        toolId: 'read',
+        prompt: readableFile,
+        workspaceRootPath: workspaceRoot
+      });
+
+      expect(absoluteResult.toolInvocations[0]?.status).toBe('completed');
+      expect(absoluteResult.toolInvocations[0]?.inputSummary).toBe(readableFile);
+      expect(absoluteResult.assistantContent).toContain('"workflow": "wan"');
+    } finally {
+      harness.database.close();
+    }
+  });
+
+  it('matches workspace files from keyed glob patterns', async () => {
+    const harness = createHarness();
+
+    try {
+      const workspaceRoot = path.join(harness.directory, 'workspace-root');
+      mkdirSync(path.join(workspaceRoot, 'workflows', 'nested'), { recursive: true });
+      mkdirSync(path.join(workspaceRoot, 'dist'), { recursive: true });
+      writeFileSync(path.join(workspaceRoot, 'workflows', 'workflow.json'), '{}\n', 'utf8');
+      writeFileSync(path.join(workspaceRoot, 'workflows', 'nested', 'config.json'), '{}\n', 'utf8');
+      writeFileSync(path.join(workspaceRoot, 'workflows', 'notes.txt'), 'notes\n', 'utf8');
+      writeFileSync(path.join(workspaceRoot, 'dist', 'ignored.json'), '{}\n', 'utf8');
+
+      const result = await harness.service.executeTool({
+        toolId: 'glob',
+        prompt: 'pattern: "**/*.json"',
+        workspaceRootPath: workspaceRoot
+      });
+
+      expect(result.toolInvocations[0]?.status).toBe('completed');
+      expect(result.toolInvocations[0]?.outputSummary).toBe('2 match(es)');
+      expect(result.assistantContent).toContain('workflows/workflow.json');
+      expect(result.assistantContent).toContain('workflows/nested/config.json');
+      expect(result.assistantContent).not.toContain('workflows/notes.txt');
+      expect(result.assistantContent).not.toContain('dist/ignored.json');
+    } finally {
+      harness.database.close();
+    }
+  });
+
   it('treats non-zero shell exits as completed command results when the process finishes normally', async () => {
     const harness = createHarness();
 

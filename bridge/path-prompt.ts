@@ -38,6 +38,12 @@ function looksLikeLooseFilename(value: string): boolean {
   return Boolean(candidate) && LOOSE_FILENAME_PATTERN.test(candidate);
 }
 
+function looksLikePathInstruction(value: string): boolean {
+  return /\b(?:file\s*name|filename|file|path|target|document|read|open|show|inspect|summari[sz]e|try|again|please|is|the|this|that)\b/i.test(
+    value
+  );
+}
+
 export function extractPromptPathCandidate(prompt: string): string | null {
   const trimmedPrompt = prompt.trim();
 
@@ -55,8 +61,32 @@ export function extractPromptPathCandidate(prompt: string): string | null {
 
   const standaloneCandidate = normalizePathCandidate(trimmedPrompt);
 
-  if (!/\s/.test(trimmedPrompt) && looksLikeStructuredPath(standaloneCandidate)) {
+  if (
+    looksLikeStructuredPath(standaloneCandidate) ||
+    (looksLikeLooseFilename(standaloneCandidate) && !looksLikePathInstruction(standaloneCandidate))
+  ) {
     return standaloneCandidate || null;
+  }
+
+  const directVerbMatch = trimmedPrompt.match(
+    /^(?:read|open|show|inspect|summari[sz]e)\s+(.+)$/i
+  );
+  const directVerbCandidate = normalizePathCandidate(directVerbMatch?.[1] ?? '');
+
+  if (looksLikeStructuredPath(directVerbCandidate) || looksLikeLooseFilename(directVerbCandidate)) {
+    return directVerbCandidate || null;
+  }
+
+  const keyedRemainderMatch = trimmedPrompt.match(
+    /^(?:file\s*name|filename|file|path|target|document)\s*(?:is|=|:)?\s+(.+)$/i
+  );
+  const keyedRemainderCandidate = normalizePathCandidate(keyedRemainderMatch?.[1] ?? '');
+
+  if (
+    looksLikeStructuredPath(keyedRemainderCandidate) ||
+    looksLikeLooseFilename(keyedRemainderCandidate)
+  ) {
+    return keyedRemainderCandidate || null;
   }
 
   for (const match of trimmedPrompt.matchAll(KEYED_PATH_PATTERN)) {
