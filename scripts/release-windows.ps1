@@ -1,7 +1,7 @@
 #requires -Version 5.1
 <#
 .SYNOPSIS
-  Build Helix Windows release artifact and upload to GitHub release V1.0-Diablo.
+  Build Helix Windows release artifact and upload to GitHub release V1.5-Testarossa.
 
 .DESCRIPTION
   Steps:
@@ -9,9 +9,9 @@
     2. npm run package:dir_win
     3. Locate release/win-unpacked
     4. Rename to release/Helix
-    5. Compress to release/Helix.v1.0.Windows.7z with 7zip settings matching
+    5. Compress to release/Helix.v1.5.Windows.7z with 7zip settings matching
        screenshot (LZMA2, level 9 Ultra, 64MB dict, 64 word, 16GB solid, 12 threads).
-    6. Upload to GitHub release tag V1.0-Diablo on Konohamaru04/Helix via gh CLI.
+    6. Upload to GitHub release tag V1.5-Testarossa on Konohamaru04/Helix via gh CLI.
 
   Intended to run from repo root on the designated Windows build machine.
 #>
@@ -21,8 +21,8 @@ $ErrorActionPreference = 'Stop'
 $RepoRoot   = Split-Path -Parent $PSScriptRoot
 $ReleaseDir = Join-Path $RepoRoot 'release'
 $SevenZip   = if ($env:HELIX_SEVENZIP) { $env:HELIX_SEVENZIP } else { 'E:\Softwar\7z\7z.exe' }
-$ArtifactName = 'Helix.v1.0.Windows.7z'
-$ReleaseTag = 'V1.0-Diablo'
+$ArtifactName = 'Helix.v1.5.Windows.7z'
+$ReleaseTag = 'V1.5-Testarossa'
 $Repo       = 'Konohamaru04/Helix'
 
 Set-Location $RepoRoot

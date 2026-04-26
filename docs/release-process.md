@@ -29,8 +29,8 @@ Flags:
   1. Installs dependencies
   2. Builds the Electron app
   3. Packages into an unpacked directory
-  4. Compresses into `Helix.v1.0.Windows.7z`
-  5. Uploads to GitHub release `V1.0-Diablo`
+  4. Compresses into `Helix.v1.5.Windows.7z`
+  5. Uploads to GitHub release `V1.5-Testarossa`
 
 ## Packaging
 

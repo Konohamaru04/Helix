@@ -20,7 +20,7 @@ concurrency:
 
 jobs:
   build-and-release:
-    name: Build + upload Helix.v1.0.Windows.7z
+    name: Build + upload Helix.v1.5.Windows.7z
     runs-on: [self-hosted, windows]
     timeout-minutes: 120
     env:
