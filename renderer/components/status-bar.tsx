@@ -1,4 +1,5 @@
-import type { SystemStatus } from '@bridge/ipc/contracts';
+import { useEffect, useState } from 'react';
+import type { SystemStatus, UpdateCheckResult } from '@bridge/ipc/contracts';
 import { ThemedSelect } from '@renderer/components/themed-select';
 
 interface StatusBarProps {
@@ -111,6 +112,31 @@ export function StatusBar(props: StatusBarProps) {
   const ollamaHealth = getOllamaHealth(props.systemStatus);
   const nvidiaHealth = getNvidiaHealth(props.systemStatus);
   const pythonFailure = getPythonFailure(props.systemStatus);
+  const [updateStatus, setUpdateStatus] = useState<UpdateCheckResult | null>(null);
+
+  useEffect(() => {
+    const desktop = window.ollamaDesktop;
+    if (!desktop) {
+      return;
+    }
+
+    let active = true;
+    desktop.update
+      .getLatest()
+      .then((result) => {
+        if (active) setUpdateStatus(result);
+      })
+      .catch(() => undefined);
+
+    const unsubscribe = desktop.update.onStatusUpdate((result) => {
+      setUpdateStatus(result);
+    });
+
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, []);
   const activeButtonClass = 'border-cyan-300/30 bg-cyan-500/15 text-cyan-100 hover:bg-cyan-500/20';
   const idleButtonClass = 'border-white/10 text-slate-200 hover:border-white/20 hover:bg-white/5';
   const modelOptions = Array.from(
@@ -139,6 +165,19 @@ export function StatusBar(props: StatusBarProps) {
             healthy={pythonFailure.healthy}
             label={pythonFailure.label}
           />
+        ) : null}
+        {updateStatus?.hasUpdate && updateStatus.releaseUrl ? (
+          <a
+            aria-label={`Open release notes for ${updateStatus.latestVersion ?? 'the latest version'}`}
+            className="motion-interactive inline-flex items-center gap-1 rounded-full border border-amber-300/40 bg-amber-500/15 px-3 py-1 text-xs font-medium text-amber-100 transition hover:bg-amber-500/25 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-300"
+            href={updateStatus.releaseUrl}
+            rel="noreferrer"
+            target="_blank"
+            title={updateStatus.releaseNotes ?? 'A new Helix release is available.'}
+          >
+            <span aria-hidden="true">↑</span>
+            Update {updateStatus.latestVersion ?? 'available'}
+          </a>
         ) : null}
       </div>
 

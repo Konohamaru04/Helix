@@ -1,4 +1,6 @@
 import { Children, isValidElement, type ReactNode, useEffect, useState } from 'react';
+import { useEscapeClose } from '@renderer/lib/use-escape-close';
+import { useFocusTrap } from '@renderer/lib/use-focus-trap';
 import type {
   AgentSession,
   AuditEventRecord,
@@ -140,6 +142,8 @@ function getPermissionClassLabel(permissionClass: ToolDefinition['permissionClas
 }
 
 export function SettingsDrawer(props: SettingsDrawerProps) {
+  useEscapeClose(props.open, props.onClose);
+  const focusRef = useFocusTrap(props.open);
   const [draft, setDraft] = useState<UserSettings | null>(props.settings);
   const [localCatalog, setLocalCatalog] = useState<ImageGenerationModelCatalog | null>(
     props.imageGenerationModelCatalog
@@ -276,7 +280,7 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
         type="button"
       />
       <div className="absolute inset-y-0 right-0 flex w-full max-w-xl justify-end">
-        <aside className="motion-drawer-right relative flex h-full w-full max-w-xl flex-col border-l border-white/10 bg-slate-950 px-6 py-5 shadow-2xl">
+        <aside ref={focusRef} role="dialog" aria-modal="true" aria-label="Settings" className="motion-drawer-right relative flex h-full w-full max-w-xl flex-col border-l border-white/10 bg-slate-950 px-6 py-5 shadow-2xl">
           <div className="flex items-start justify-between gap-4">
             <div>
               <p className="text-xs uppercase tracking-[0.3em] text-cyan-200/70">

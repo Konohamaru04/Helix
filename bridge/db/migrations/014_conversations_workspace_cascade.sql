@@ -1,5 +1,15 @@
 -- Change conversations.workspace_id from ON DELETE SET NULL to ON DELETE CASCADE
--- Ensures all conversations and their messages are deleted when a workspace is deleted
+-- Ensures all conversations and their messages are deleted when a workspace is deleted.
+--
+-- Triggers that reference `conversations` from other tables must be dropped before
+-- the table is dropped — otherwise SQLite leaves the triggers bound to the old
+-- table identity and inserts into `messages` fail with `no such table: main.conversations`
+-- after the rename.
+
+DROP TRIGGER IF EXISTS trg_messages_ai_fts;
+DROP TRIGGER IF EXISTS trg_messages_au_fts;
+DROP TRIGGER IF EXISTS trg_messages_ad_fts;
+DROP TRIGGER IF EXISTS trg_conversations_au_fts;
 
 CREATE TABLE conversations_new (
   id TEXT PRIMARY KEY,
@@ -18,7 +28,29 @@ ALTER TABLE conversations_new RENAME TO conversations;
 CREATE INDEX IF NOT EXISTS idx_conversations_updated_at
   ON conversations (updated_at DESC);
 
--- Re-create the title FTS sync trigger (dropped with the old table)
+CREATE TRIGGER IF NOT EXISTS trg_messages_ai_fts
+AFTER INSERT ON messages
+BEGIN
+  INSERT INTO conversation_fts (conversation_id, message_id, title, content)
+  SELECT NEW.conversation_id, NEW.id, conversations.title, NEW.content
+  FROM conversations
+  WHERE conversations.id = NEW.conversation_id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_messages_au_fts
+AFTER UPDATE OF content ON messages
+BEGIN
+  UPDATE conversation_fts
+  SET content = NEW.content
+  WHERE message_id = NEW.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_messages_ad_fts
+AFTER DELETE ON messages
+BEGIN
+  DELETE FROM conversation_fts WHERE message_id = OLD.id;
+END;
+
 CREATE TRIGGER IF NOT EXISTS trg_conversations_au_fts
 AFTER UPDATE OF title ON conversations
 BEGIN

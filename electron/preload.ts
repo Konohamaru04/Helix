@@ -12,6 +12,7 @@ import {
   capabilityPermissionInputSchema,
   capabilityPermissionSchema,
   capabilityTaskSchema,
+  composerDraftInputSchema,
   chatStartAcceptedSchema,
   chatTurnRequestSchema,
   chatStreamEventSchema,
@@ -57,13 +58,15 @@ import {
   systemStatusSchema,
   teamSessionSchema,
   toolDefinitionSchema,
+  updateCheckResultSchema,
   updateSkillInputSchema,
   updateWorkspaceRootInputSchema,
   updateUserSettingsSchema,
   userSettingsSchema,
   worktreeSessionSchema,
   workspaceDirectorySelectionSchema,
-  workspaceSummarySchema
+  workspaceSummarySchema,
+  lastSessionSchema
 } from '@bridge/ipc/contracts';
 
 const desktopApi: DesktopApi = {
@@ -351,6 +354,25 @@ const desktopApi: DesktopApi = {
           exportConversationInputSchema.parse(input)
         )
       ),
+    getComposerDraft: async (conversationId) => {
+      const payload: unknown = await ipcRenderer.invoke(
+        IpcChannels.chatGetComposerDraft,
+        conversationIdSchema.parse(conversationId)
+      );
+      return typeof payload === 'string' ? payload : null;
+    },
+    setComposerDraft: async (input) => {
+      await ipcRenderer.invoke(
+        IpcChannels.chatSetComposerDraft,
+        composerDraftInputSchema.parse(input)
+      );
+    },
+    clearComposerDraft: async (conversationId) => {
+      await ipcRenderer.invoke(
+        IpcChannels.chatClearComposerDraft,
+        conversationIdSchema.parse(conversationId)
+      );
+    },
     onStreamEvent: (listener) => {
       const handler = (_event: Electron.IpcRendererEvent, payload: ChatStreamEvent) => {
         listener(chatStreamEventSchema.parse(payload));
@@ -360,6 +382,25 @@ const desktopApi: DesktopApi = {
 
       return () => {
         ipcRenderer.removeListener(IpcChannels.chatStreamEvent, handler);
+      };
+    }
+  },
+  update: {
+    checkNow: async () =>
+      updateCheckResultSchema.parse(await ipcRenderer.invoke(IpcChannels.updateCheckNow)),
+    getLatest: async () => {
+      const payload: unknown = await ipcRenderer.invoke(IpcChannels.updateGetLatest);
+      return payload === null || payload === undefined
+        ? null
+        : updateCheckResultSchema.parse(payload);
+    },
+    onStatusUpdate: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: unknown) => {
+        listener(updateCheckResultSchema.parse(payload));
+      };
+      ipcRenderer.on(IpcChannels.updateStatusEvent, handler);
+      return () => {
+        ipcRenderer.removeListener(IpcChannels.updateStatusEvent, handler);
       };
     }
   },
@@ -444,6 +485,16 @@ const desktopApi: DesktopApi = {
       )) as unknown[];
 
       return payload.map((event) => auditEventRecordSchema.parse(event));
+    }
+  },
+  appState: {
+    getLastSession: async () => {
+      const result = await ipcRenderer.invoke(IpcChannels.appStateGetLastSession);
+      if (result === null) return null;
+      return lastSessionSchema.parse(result);
+    },
+    setLastSession: async (input: { conversationId: string; workspaceId: string }) => {
+      await ipcRenderer.invoke(IpcChannels.appStateSetLastSession, input);
     }
   }
 };

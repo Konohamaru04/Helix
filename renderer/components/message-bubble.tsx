@@ -1,4 +1,13 @@
-import { memo, type MouseEvent, type ReactNode, useEffect, useState } from 'react';
+import {
+  memo,
+  type MouseEvent,
+  type ReactNode,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState
+} from 'react';
 import type { StoredMessage } from '@bridge/ipc/contracts';
 import { AttachmentCard } from '@renderer/components/attachment-card';
 import { ContextMenu, type ContextMenuItem } from '@renderer/components/context-menu';
@@ -333,6 +342,58 @@ function ToolInvocationCard(props: {
   );
 }
 
+const COLLAPSED_TEXT_MAX_HEIGHT_PX = 192;
+
+function CollapsibleText(props: { content: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const [overflows, setOverflows] = useState(false);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  useLayoutEffect(() => {
+    const element = containerRef.current;
+
+    if (!element) {
+      return;
+    }
+
+    setOverflows(element.scrollHeight > COLLAPSED_TEXT_MAX_HEIGHT_PX + 1);
+  }, [props.content]);
+
+  const showButton = overflows;
+  const clamp = !expanded && overflows;
+
+  return (
+    <div className="mt-3">
+      <div
+        ref={containerRef}
+        className="relative whitespace-pre-wrap text-sm leading-7"
+        style={
+          clamp
+            ? { maxHeight: `${COLLAPSED_TEXT_MAX_HEIGHT_PX}px`, overflow: 'hidden' }
+            : undefined
+        }
+      >
+        {props.content}
+        {clamp ? (
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-slate-950/90 to-transparent"
+          />
+        ) : null}
+      </div>
+      {showButton ? (
+        <button
+          className="motion-interactive mt-2 rounded-full border border-white/10 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.16em] text-slate-200 transition hover:border-white/20 hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
+          onClick={() => setExpanded((value) => !value)}
+          type="button"
+        >
+          {expanded ? 'Show less' : 'Show more'}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 function StreamingAnswer(props: { content: string; frame: number }) {
   return (
     <div className="whitespace-pre-wrap break-words rounded-lg border border-cyan-300/15 bg-white/[0.02] px-4 py-3 text-sm leading-7 text-slate-200">
@@ -369,11 +430,19 @@ function LoadMoreArtifactsButton(props: {
 function MessageBubbleContent(props: MessageBubbleProps) {
   const { message } = props;
   const assistant = message.role === 'assistant';
-  const parsedAssistantContent = assistant ? parseAssistantContent(message.content) : null;
+  const parsedAssistantContent = useMemo(
+    () => assistant ? parseAssistantContent(message.content) : null,
+    [assistant, message.content]
+  );
   const assistantAnswer = parsedAssistantContent?.answer ?? '';
-  const wireframeArtifact = assistant ? parseWireframeArtifact(message.content) : null;
-  const visibleAssistantAnswer =
-    wireframeArtifact === null ? assistantAnswer : stripWireframeBlocks(assistantAnswer);
+  const wireframeArtifact = useMemo(
+    () => assistant ? parseWireframeArtifact(message.content) : null,
+    [assistant, message.content]
+  );
+  const visibleAssistantAnswer = useMemo(
+    () => wireframeArtifact === null ? assistantAnswer : stripWireframeBlocks(assistantAnswer),
+    [wireframeArtifact, assistantAnswer]
+  );
   const thinkingBlocks = parsedAssistantContent?.thinkingBlocks ?? [];
   const activeToolCount = message.toolInvocationCount ?? message.toolInvocations?.length ?? 0;
   const activeSourceCount = message.contextSourceCount ?? message.contextSources?.length ?? 0;
@@ -622,7 +691,7 @@ function MessageBubbleContent(props: MessageBubbleProps) {
                             {source.excerpt}
                           </p>
                           {source.sourcePath ? (
-                            <p className="mt-2 break-all text-[11px] text-slate-500">
+                            <p className="mt-2 break-all text-[11px] text-slate-400">
                               {source.sourcePath}
                             </p>
                           ) : null}
@@ -647,7 +716,7 @@ function MessageBubbleContent(props: MessageBubbleProps) {
               ) : null}
             </div>
           ) : (
-            <p className="mt-3 whitespace-pre-wrap text-sm leading-7">{message.content}</p>
+            <CollapsibleText content={message.content} />
           )}
 
           {assistant && (message.routeTrace || message.usage || message.model) ? (
@@ -677,7 +746,7 @@ function MessageBubbleContent(props: MessageBubbleProps) {
           ) : null}
         </div>
 
-        <div className="shrink-0 text-right text-xs text-slate-500">
+        <div className="shrink-0 text-right text-xs text-slate-400">
           <p>{formatTimestamp(message.createdAt)}</p>
           <p
             className="mt-1 capitalize"

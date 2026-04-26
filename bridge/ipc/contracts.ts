@@ -902,6 +902,37 @@ export const chatStreamEventSchema = z.discriminatedUnion('type', [
 ]);
 
 export const conversationIdSchema = z.string().uuid();
+
+export const lastSessionSchema = z.object({
+  conversationId: z.string().uuid(),
+  workspaceId: z.string().uuid()
+});
+
+export const composerDraftInputSchema = z.object({
+  conversationId: conversationIdSchema,
+  prompt: z.string().max(64_000)
+});
+export type ComposerDraftInput = z.infer<typeof composerDraftInputSchema>;
+
+export const updateCheckCommitSchema = z.object({
+  sha: z.string(),
+  message: z.string(),
+  date: z.string(),
+  url: z.string()
+});
+
+export const updateCheckResultSchema = z.object({
+  currentVersion: z.string(),
+  latestVersion: z.string().nullable(),
+  hasUpdate: z.boolean(),
+  releaseUrl: z.string().nullable(),
+  publishedAt: z.string().nullable(),
+  releaseNotes: z.string().nullable(),
+  latestCommit: updateCheckCommitSchema.nullable(),
+  checkedAt: z.string(),
+  error: z.string().nullable()
+});
+export type UpdateCheckResult = z.infer<typeof updateCheckResultSchema>;
 export const messageIdSchema = z.string().uuid();
 
 export type ConversationSummary = z.infer<typeof conversationSummarySchema>;
@@ -1051,6 +1082,9 @@ export const IpcChannels = {
   chatImportWorkspaceKnowledge: 'chat:import-workspace-knowledge',
   chatImportConversation: 'chat:import-conversation',
   chatExportConversation: 'chat:export-conversation',
+  chatGetComposerDraft: 'chat:get-composer-draft',
+  chatSetComposerDraft: 'chat:set-composer-draft',
+  chatClearComposerDraft: 'chat:clear-composer-draft',
   capabilitiesListPermissions: 'capabilities:list-permissions',
   capabilitiesGrantPermission: 'capabilities:grant-permission',
   capabilitiesRevokePermission: 'capabilities:revoke-permission',
@@ -1064,7 +1098,12 @@ export const IpcChannels = {
   capabilitiesGetPlanState: 'capabilities:get-plan-state',
   capabilitiesListAuditEvents: 'capabilities:list-audit-events',
   chatStreamEvent: 'chat:stream-event',
-  generationStreamEvent: 'generation:stream-event'
+  generationStreamEvent: 'generation:stream-event',
+  appStateGetLastSession: 'app-state:get-last-session',
+  appStateSetLastSession: 'app-state:set-last-session',
+  updateCheckNow: 'update:check-now',
+  updateGetLatest: 'update:get-latest',
+  updateStatusEvent: 'update:status-event'
 } as const;
 
 export interface DesktopApi {
@@ -1126,7 +1165,19 @@ export interface DesktopApi {
     ) => Promise<ImportWorkspaceKnowledgeResult>;
     importConversation: () => Promise<ImportConversationResult>;
     exportConversation: (input: ExportConversationInput) => Promise<ExportConversationResult>;
+    getComposerDraft: (conversationId: string) => Promise<string | null>;
+    setComposerDraft: (input: { conversationId: string; prompt: string }) => Promise<void>;
+    clearComposerDraft: (conversationId: string) => Promise<void>;
     onStreamEvent: (listener: (event: ChatStreamEvent) => void) => Unsubscribe;
+  };
+  appState: {
+    getLastSession: () => Promise<{ conversationId: string; workspaceId: string } | null>;
+    setLastSession: (input: { conversationId: string; workspaceId: string }) => Promise<void>;
+  };
+  update: {
+    checkNow: () => Promise<UpdateCheckResult>;
+    getLatest: () => Promise<UpdateCheckResult | null>;
+    onStatusUpdate: (listener: (result: UpdateCheckResult) => void) => Unsubscribe;
   };
   capabilities: {
     listPermissions: () => Promise<CapabilityPermission[]>;

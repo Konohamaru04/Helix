@@ -3084,9 +3084,7 @@ export class ChatService {
       wireframeMode: input.wireframeMode === true,
       thinkMode:
         activeTextBackend.backend === 'ollama'
-          ? input.wireframeMode === true
-            ? false
-            : resolveOllamaThinkValue(input.requestedThinkMode)
+          ? resolveOllamaThinkValue(input.requestedThinkMode)
           : undefined,
       toolExecutionPrompt: this.resolveToolExecutionPrompt({
         cleanedPrompt: directives.cleanedPrompt,

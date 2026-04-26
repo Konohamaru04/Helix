@@ -7,6 +7,36 @@ files:
   - dist/**
   - package.json
 asar: true
+afterPack: scripts/electron-builder-after-pack.mjs
+removePackageScripts: true
+electronLanguages:
+  - en-US
+win:
+  target:
+    - target: dir
+    - target: nsis
+      arch:
+        - x64
+    - target: portable
+      arch:
+        - x64
+  artifactName: ${productName}-${version}-${arch}.${ext}
+  publisherName: Abstergo
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: Helix
+  artifactName: ${productName}-Setup-${version}.${ext}
+portable:
+  artifactName: ${productName}-Portable-${version}.${ext}
+publish:
+  - provider: github
+    owner: Konohamaru04
+    repo: Helix
+    releaseType: release
 extraResources:
   - from: Assets
     to: Assets

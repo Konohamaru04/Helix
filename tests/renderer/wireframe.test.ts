@@ -205,8 +205,7 @@ document.getElementById('play')?.setAttribute('aria-pressed', 'true');
 
     expect(document).toContain('body > [class*="artboard" i]');
     expect(document).toContain('body > [class*="screen-set" i]');
-    expect(document).toContain('clearHelixWireframeStageBackgrounds');
     expect(document).toContain('background: transparent !important');
-    expect(document).toContain("background-color', 'transparent'");
+    expect(document).toContain('background-color: transparent !important');
   });
 });

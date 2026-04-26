@@ -107,7 +107,15 @@ describe('GenerationJobCard', () => {
         importWorkspaceKnowledge: vi.fn(),
         importConversation: vi.fn(),
         exportConversation: vi.fn(),
+        getComposerDraft: vi.fn(async () => null),
+        setComposerDraft: vi.fn(async () => undefined),
+        clearComposerDraft: vi.fn(async () => undefined),
         onStreamEvent: vi.fn()
+      },
+      update: {
+        checkNow: vi.fn(),
+        getLatest: vi.fn(async () => null),
+        onStatusUpdate: vi.fn(() => () => undefined)
       },
       capabilities: {
         listPermissions: vi.fn().mockResolvedValue([]),
@@ -128,6 +136,10 @@ describe('GenerationJobCard', () => {
           updatedAt: null
         }),
         listAuditEvents: vi.fn().mockResolvedValue([])
+      },
+      appState: {
+        getLastSession: vi.fn().mockResolvedValue(null),
+        setLastSession: vi.fn().mockResolvedValue(undefined)
       }
     };
   });

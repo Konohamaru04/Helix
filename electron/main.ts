@@ -9,142 +9,68 @@ import {
   ipcMain,
   Menu,
   type MenuItemConstructorOptions,
+  session,
   shell
 } from 'electron';
 import { createDesktopAppContext, type DesktopAppContext } from '@bridge/app-context';
 import { APP_DISPLAY_NAME, APP_WINDOWS_APP_USER_MODEL_ID } from '@bridge/branding';
+import { IpcChannels, type UpdateCheckResult } from '@bridge/ipc/contracts';
 import { createLogger } from '@bridge/logging/logger';
 import {
   DeferredPythonRuntimeProvisioner,
   type DeferredPythonSplashState
 } from '@bridge/python/deferred-runtime';
+import { fetchUpdateStatus } from '@bridge/update/service';
 import { registerIpcHandlers } from '@electron/ipc/register-handlers';
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
 const SPLASH_MIN_VISIBLE_MS = 5_000;
 const SPLASH_STATUS_CHANNEL = 'helix:splash-status';
 const UPDATE_CHECK_CHANNEL = 'helix:check-updates';
-const UPDATE_CHECK_TIMEOUT_MS = 6_000;
 const GITHUB_REPO = 'Konohamaru04/Helix';
+const UPDATE_POLL_INTERVAL_MS = 24 * 60 * 60 * 1_000;
+const UPDATE_INITIAL_DELAY_MS = 5_000;
 
-type UpdateCheckResult = {
-  currentVersion: string;
-  latestVersion: string | null;
-  hasUpdate: boolean;
-  releaseUrl: string | null;
-  publishedAt: string | null;
-  latestCommit: { sha: string; message: string; date: string; url: string } | null;
-  error: string | null;
-};
+let lastUpdateStatus: UpdateCheckResult | null = null;
+let updatePollHandle: NodeJS.Timeout | null = null;
 
-function compareSemver(a: string, b: string): number {
-  const parse = (v: string) =>
-    v
-      .replace(/^v/i, '')
-      .split(/[.\-+]/)
-      .map((part) => {
-        const n = Number.parseInt(part, 10);
-        return Number.isFinite(n) ? n : 0;
-      });
-  const left = parse(a);
-  const right = parse(b);
-  const len = Math.max(left.length, right.length);
-  for (let i = 0; i < len; i += 1) {
-    const li = left[i] ?? 0;
-    const ri = right[i] ?? 0;
-    if (li !== ri) return li < ri ? -1 : 1;
-  }
-  return 0;
+async function runUpdateCheck(): Promise<UpdateCheckResult> {
+  const result = await fetchUpdateStatus({
+    currentVersion: app.getVersion(),
+    repo: GITHUB_REPO
+  });
+  lastUpdateStatus = result;
+  broadcastUpdateStatus(result);
+  return result;
 }
 
-async function fetchJsonWithTimeout(url: string, headers: Record<string, string>): Promise<unknown> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), UPDATE_CHECK_TIMEOUT_MS);
-  try {
-    const response = await fetch(url, { headers, signal: controller.signal });
-    if (!response.ok) {
-      throw new Error(`GitHub ${response.status} ${response.statusText}`);
+function broadcastUpdateStatus(result: UpdateCheckResult) {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
+      window.webContents.send(IpcChannels.updateStatusEvent, result);
     }
-    return await response.json();
-  } finally {
-    clearTimeout(timer);
   }
 }
 
-async function fetchUpdateStatus(): Promise<UpdateCheckResult> {
-  const currentVersion = app.getVersion();
-  const headers = {
-    Accept: 'application/vnd.github+json',
-    'User-Agent': `Helix/${currentVersion}`
-  };
-  try {
-    const [releasePayload, commitsPayload] = await Promise.allSettled([
-      fetchJsonWithTimeout(`https://api.github.com/repos/${GITHUB_REPO}/releases/latest`, headers),
-      fetchJsonWithTimeout(`https://api.github.com/repos/${GITHUB_REPO}/commits?per_page=1`, headers)
-    ]);
-
-    let latestVersion: string | null = null;
-    let releaseUrl: string | null = null;
-    let publishedAt: string | null = null;
-    if (releasePayload.status === 'fulfilled') {
-      const release = releasePayload.value as {
-        tag_name?: string;
-        html_url?: string;
-        published_at?: string;
-      };
-      latestVersion = release.tag_name ?? null;
-      releaseUrl = release.html_url ?? null;
-      publishedAt = release.published_at ?? null;
-    }
-
-    let latestCommit: UpdateCheckResult['latestCommit'] = null;
-    if (commitsPayload.status === 'fulfilled' && Array.isArray(commitsPayload.value)) {
-      const first = (commitsPayload.value as Array<{
-        sha: string;
-        html_url?: string;
-        commit: { message: string; author: { date: string } };
-      }>)[0];
-      if (first) {
-        latestCommit = {
-          sha: first.sha.slice(0, 7),
-          message: ((first.commit.message ?? '').split('\n')[0] ?? '').slice(0, 140),
-          date: first.commit.author.date,
-          url: first.html_url ?? `https://github.com/${GITHUB_REPO}/commit/${first.sha}`
-        };
-      }
-    }
-
-    const hasUpdate = latestVersion !== null && compareSemver(currentVersion, latestVersion) < 0;
-    const error =
-      releasePayload.status === 'rejected' && commitsPayload.status === 'rejected'
-        ? releasePayload.reason instanceof Error
-          ? releasePayload.reason.message
-          : String(releasePayload.reason)
-        : null;
-
-    return {
-      currentVersion,
-      latestVersion,
-      hasUpdate,
-      releaseUrl,
-      publishedAt,
-      latestCommit,
-      error
-    };
-  } catch (error) {
-    return {
-      currentVersion,
-      latestVersion: null,
-      hasUpdate: false,
-      releaseUrl: null,
-      publishedAt: null,
-      latestCommit: null,
-      error: error instanceof Error ? error.message : String(error)
-    };
+function scheduleUpdatePolling() {
+  if (updatePollHandle) {
+    return;
   }
+  setTimeout(() => {
+    void runUpdateCheck().catch((error) => {
+      appContext?.logger.warn({ error }, 'Initial update check failed');
+    });
+  }, UPDATE_INITIAL_DELAY_MS);
+  updatePollHandle = setInterval(() => {
+    void runUpdateCheck().catch((error) => {
+      appContext?.logger.warn({ error }, 'Periodic update check failed');
+    });
+  }, UPDATE_POLL_INTERVAL_MS);
 }
 
-ipcMain.handle(UPDATE_CHECK_CHANNEL, () => fetchUpdateStatus());
+ipcMain.handle(UPDATE_CHECK_CHANNEL, () => runUpdateCheck());
+ipcMain.handle(IpcChannels.updateCheckNow, () => runUpdateCheck());
+ipcMain.handle(IpcChannels.updateGetLatest, () => lastUpdateStatus);
 let appContext: DesktopAppContext | null = null;
 let shutdownInProgress = false;
 let shutdownPromise: Promise<void> | null = null;
@@ -159,6 +85,53 @@ function configureAppIdentity() {
   if (process.platform === 'win32') {
     app.setAppUserModelId(APP_WINDOWS_APP_USER_MODEL_ID);
   }
+}
+
+const ALLOWED_EXTERNAL_PROTOCOLS = new Set([
+  'https:',
+  'http:',
+  'mailto:'
+]);
+
+function isAllowedExternalUrl(rawUrl: string): boolean {
+  try {
+    const parsed = new URL(rawUrl);
+    return ALLOWED_EXTERNAL_PROTOCOLS.has(parsed.protocol);
+  } catch {
+    return false;
+  }
+}
+
+function applyContentSecurityPolicy() {
+  const isDevServer = Boolean(process.env.ELECTRON_RENDERER_URL);
+  if (isDevServer) {
+    // Vite dev server needs eval and ws — keep CSP relaxed only in dev.
+    return;
+  }
+
+  const policy = [
+    "default-src 'self'",
+    "img-src 'self' data: blob: https:",
+    "media-src 'self' data: blob:",
+    "style-src 'self' 'unsafe-inline'",
+    "script-src 'self'",
+    "font-src 'self' data:",
+    "connect-src 'self'",
+    "object-src 'none'",
+    "base-uri 'none'",
+    "frame-ancestors 'none'"
+  ].join('; ');
+
+  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    const responseHeaders = details.responseHeaders ?? {};
+    callback({
+      responseHeaders: {
+        ...responseHeaders,
+        'Content-Security-Policy': [policy],
+        'X-Content-Type-Options': ['nosniff']
+      }
+    });
+  });
 }
 
 function getPreloadPath() {
@@ -315,7 +288,9 @@ async function createSplashWindow() {
       preload: getPreloadPath(),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false
+      sandbox: false, // TODO: Enable sandbox — requires preload bundling refactor to remove direct Node.js APIs
+      webSecurity: true,
+      allowRunningInsecureContent: false
     }
   });
 
@@ -367,9 +342,10 @@ async function revealMainWindow(window: BrowserWindow) {
 }
 
 async function createMainWindow() {
-  const window = new BrowserWindow({
-    width: 1560,
-    height: 960,
+  const persistedBounds = appContext?.appStateRepository.getWindowBounds() ?? null;
+  const initialOptions: Electron.BrowserWindowConstructorOptions = {
+    width: persistedBounds?.width ?? 1560,
+    height: persistedBounds?.height ?? 960,
     minWidth: 1180,
     minHeight: 720,
     show: false,
@@ -383,12 +359,67 @@ async function createMainWindow() {
       preload: getPreloadPath(),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false
+      sandbox: false, // TODO: Enable sandbox — requires preload bundling refactor to remove direct Node.js APIs
+      webSecurity: true,
+      allowRunningInsecureContent: false
     }
-  });
+  };
+
+  if (persistedBounds && persistedBounds.x !== null && persistedBounds.y !== null) {
+    initialOptions.x = persistedBounds.x;
+    initialOptions.y = persistedBounds.y;
+  }
+
+  const window = new BrowserWindow(initialOptions);
 
   mainWindow = window;
   attachTextContextMenu(window);
+
+  if (persistedBounds?.isMaximized) {
+    window.maximize();
+  }
+
+  let saveBoundsTimer: NodeJS.Timeout | null = null;
+  const persistBounds = () => {
+    if (window.isDestroyed()) {
+      return;
+    }
+    const repository = appContext?.appStateRepository;
+    if (!repository) {
+      return;
+    }
+    const isMaximized = window.isMaximized();
+    const normalBounds = isMaximized ? window.getNormalBounds() : window.getBounds();
+    try {
+      repository.setWindowBounds({
+        width: normalBounds.width,
+        height: normalBounds.height,
+        x: normalBounds.x,
+        y: normalBounds.y,
+        isMaximized
+      });
+    } catch (error) {
+      appContext?.logger.warn({ error }, 'Failed to persist window bounds');
+    }
+  };
+  const scheduleBoundsSave = () => {
+    if (saveBoundsTimer) {
+      clearTimeout(saveBoundsTimer);
+    }
+    saveBoundsTimer = setTimeout(persistBounds, 500);
+  };
+
+  window.on('resize', scheduleBoundsSave);
+  window.on('move', scheduleBoundsSave);
+  window.on('maximize', persistBounds);
+  window.on('unmaximize', persistBounds);
+  window.on('close', () => {
+    if (saveBoundsTimer) {
+      clearTimeout(saveBoundsTimer);
+      saveBoundsTimer = null;
+    }
+    persistBounds();
+  });
 
   window.on('closed', () => {
     if (mainWindow === window) {
@@ -397,14 +428,23 @@ async function createMainWindow() {
   });
 
   window.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
+    if (isAllowedExternalUrl(url)) {
+      void shell.openExternal(url);
+    } else {
+      appContext?.logger.warn({ url }, 'Blocked window-open for disallowed URL scheme');
+    }
     return { action: 'deny' };
   });
 
   window.webContents.on('will-navigate', (event, url) => {
-    if (url !== window.webContents.getURL()) {
-      event.preventDefault();
+    if (url === window.webContents.getURL()) {
+      return;
+    }
+    event.preventDefault();
+    if (isAllowedExternalUrl(url)) {
       void shell.openExternal(url);
+    } else {
+      appContext?.logger.warn({ url }, 'Blocked navigation to disallowed URL scheme');
     }
   });
 
@@ -424,7 +464,7 @@ async function createMainWindow() {
   window.webContents.on('render-process-gone', (_event, details) => {
     appContext?.logger.error({ details }, 'Renderer process exited unexpectedly');
 
-    if (details.reason === 'crashed' || details.reason === 'killed') {
+    if (details.reason === 'crashed' || details.reason === 'killed' || details.reason === 'oom') {
       rendererCrashCount++;
       const RELOAD_DELAY_MS = 2_000;
 
@@ -529,6 +569,7 @@ async function bootstrap() {
     progress: 0.95
   });
   await createMainWindow();
+  scheduleUpdatePolling();
   appContext.logger.info({ userDataPath: app.getPath('userData') }, 'Electron app ready');
 }
 
@@ -573,6 +614,10 @@ function emergencyDisposeAppContext() {
 process.on('uncaughtException', (error) => {
   appContext?.logger.error({ error }, 'Uncaught main-process exception');
   emergencyDisposeAppContext();
+  dialog.showErrorBox(
+    'Helix encountered an error',
+    `An unexpected error occurred: ${error instanceof Error ? error.message : String(error)}\n\nThe app will attempt to continue. Please restart if issues persist.`
+  );
 });
 
 process.on('unhandledRejection', (reason) => {
@@ -635,6 +680,7 @@ if (!hasSingleInstanceLock) {
     .whenReady()
     .then(async () => {
       configureAppPaths();
+      applyContentSecurityPolicy();
       await createSplashWindow().catch((error: unknown) => {
         console.warn('Unable to create splash window:', error);
       });
@@ -669,6 +715,11 @@ app.on('before-quit', (event) => {
 
   shutdownInProgress = true;
   event.preventDefault();
+
+  if (updatePollHandle) {
+    clearInterval(updatePollHandle);
+    updatePollHandle = null;
+  }
 
   void Promise.race([
     disposeAppContext(),
