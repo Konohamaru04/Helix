@@ -165,6 +165,11 @@ describe('app-store stream buffering', () => {
         clearComposerDraft: vi.fn(async () => undefined),
         onStreamEvent: vi.fn()
       },
+      update: {
+        checkNow: vi.fn(),
+        getLatest: vi.fn(async () => null),
+        onStatusUpdate: vi.fn(() => () => undefined)
+      },
       capabilities: {
         listPermissions: vi.fn().mockResolvedValue([]),
         grantPermission: vi.fn(),

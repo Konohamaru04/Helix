@@ -58,6 +58,7 @@ import {
   systemStatusSchema,
   teamSessionSchema,
   toolDefinitionSchema,
+  updateCheckResultSchema,
   updateSkillInputSchema,
   updateWorkspaceRootInputSchema,
   updateUserSettingsSchema,
@@ -380,6 +381,25 @@ const desktopApi: DesktopApi = {
 
       return () => {
         ipcRenderer.removeListener(IpcChannels.chatStreamEvent, handler);
+      };
+    }
+  },
+  update: {
+    checkNow: async () =>
+      updateCheckResultSchema.parse(await ipcRenderer.invoke(IpcChannels.updateCheckNow)),
+    getLatest: async () => {
+      const payload: unknown = await ipcRenderer.invoke(IpcChannels.updateGetLatest);
+      return payload === null || payload === undefined
+        ? null
+        : updateCheckResultSchema.parse(payload);
+    },
+    onStatusUpdate: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: unknown) => {
+        listener(updateCheckResultSchema.parse(payload));
+      };
+      ipcRenderer.on(IpcChannels.updateStatusEvent, handler);
+      return () => {
+        ipcRenderer.removeListener(IpcChannels.updateStatusEvent, handler);
       };
     }
   },

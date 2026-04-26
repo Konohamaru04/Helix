@@ -158,8 +158,8 @@ Comment: The Python worker now persists queued and running jobs into its own res
 
 ### Milestone 6.4: Future Generation Surfaces
 
-- [ ] video jobs
-- [ ] richer asset actions and gallery management
+- [x] video jobs
+- [x] richer asset actions and gallery management
 
 Status: Planned
 

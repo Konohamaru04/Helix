@@ -908,6 +908,26 @@ export const composerDraftInputSchema = z.object({
   prompt: z.string().max(64_000)
 });
 export type ComposerDraftInput = z.infer<typeof composerDraftInputSchema>;
+
+export const updateCheckCommitSchema = z.object({
+  sha: z.string(),
+  message: z.string(),
+  date: z.string(),
+  url: z.string()
+});
+
+export const updateCheckResultSchema = z.object({
+  currentVersion: z.string(),
+  latestVersion: z.string().nullable(),
+  hasUpdate: z.boolean(),
+  releaseUrl: z.string().nullable(),
+  publishedAt: z.string().nullable(),
+  releaseNotes: z.string().nullable(),
+  latestCommit: updateCheckCommitSchema.nullable(),
+  checkedAt: z.string(),
+  error: z.string().nullable()
+});
+export type UpdateCheckResult = z.infer<typeof updateCheckResultSchema>;
 export const messageIdSchema = z.string().uuid();
 
 export type ConversationSummary = z.infer<typeof conversationSummarySchema>;
@@ -1073,7 +1093,10 @@ export const IpcChannels = {
   capabilitiesGetPlanState: 'capabilities:get-plan-state',
   capabilitiesListAuditEvents: 'capabilities:list-audit-events',
   chatStreamEvent: 'chat:stream-event',
-  generationStreamEvent: 'generation:stream-event'
+  generationStreamEvent: 'generation:stream-event',
+  updateCheckNow: 'update:check-now',
+  updateGetLatest: 'update:get-latest',
+  updateStatusEvent: 'update:status-event'
 } as const;
 
 export interface DesktopApi {
@@ -1139,6 +1162,11 @@ export interface DesktopApi {
     setComposerDraft: (input: { conversationId: string; prompt: string }) => Promise<void>;
     clearComposerDraft: (conversationId: string) => Promise<void>;
     onStreamEvent: (listener: (event: ChatStreamEvent) => void) => Unsubscribe;
+  };
+  update: {
+    checkNow: () => Promise<UpdateCheckResult>;
+    getLatest: () => Promise<UpdateCheckResult | null>;
+    onStatusUpdate: (listener: (result: UpdateCheckResult) => void) => Unsubscribe;
   };
   capabilities: {
     listPermissions: () => Promise<CapabilityPermission[]>;
