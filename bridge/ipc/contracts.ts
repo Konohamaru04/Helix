@@ -902,6 +902,12 @@ export const chatStreamEventSchema = z.discriminatedUnion('type', [
 ]);
 
 export const conversationIdSchema = z.string().uuid();
+
+export const composerDraftInputSchema = z.object({
+  conversationId: conversationIdSchema,
+  prompt: z.string().max(64_000)
+});
+export type ComposerDraftInput = z.infer<typeof composerDraftInputSchema>;
 export const messageIdSchema = z.string().uuid();
 
 export type ConversationSummary = z.infer<typeof conversationSummarySchema>;
@@ -1051,6 +1057,9 @@ export const IpcChannels = {
   chatImportWorkspaceKnowledge: 'chat:import-workspace-knowledge',
   chatImportConversation: 'chat:import-conversation',
   chatExportConversation: 'chat:export-conversation',
+  chatGetComposerDraft: 'chat:get-composer-draft',
+  chatSetComposerDraft: 'chat:set-composer-draft',
+  chatClearComposerDraft: 'chat:clear-composer-draft',
   capabilitiesListPermissions: 'capabilities:list-permissions',
   capabilitiesGrantPermission: 'capabilities:grant-permission',
   capabilitiesRevokePermission: 'capabilities:revoke-permission',
@@ -1126,6 +1135,9 @@ export interface DesktopApi {
     ) => Promise<ImportWorkspaceKnowledgeResult>;
     importConversation: () => Promise<ImportConversationResult>;
     exportConversation: (input: ExportConversationInput) => Promise<ExportConversationResult>;
+    getComposerDraft: (conversationId: string) => Promise<string | null>;
+    setComposerDraft: (input: { conversationId: string; prompt: string }) => Promise<void>;
+    clearComposerDraft: (conversationId: string) => Promise<void>;
     onStreamEvent: (listener: (event: ChatStreamEvent) => void) => Unsubscribe;
   };
   capabilities: {

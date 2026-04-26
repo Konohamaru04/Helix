@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { shell } from 'electron';
+import { AppStateRepository } from '@bridge/app-state/repository';
 import { CapabilityRepository, CapabilityService } from '@bridge/capabilities';
 import { DatabaseManager } from '@bridge/db/database';
 import { GenerationRepository } from '@bridge/generation/repository';
@@ -33,6 +34,7 @@ export class DesktopAppContext {
   readonly logger: Logger;
   readonly logDirectory: string;
   readonly database: DatabaseManager;
+  readonly appStateRepository: AppStateRepository;
   readonly settingsService: SettingsService;
   readonly queue: BridgeQueue;
   readonly ollamaClient: OllamaClient;
@@ -66,6 +68,7 @@ export class DesktopAppContext {
       databasePath,
       this.logger.child({ scope: 'database' })
     );
+    this.appStateRepository = new AppStateRepository(this.database);
     this.settingsService = new SettingsService(
       this.database,
       this.logger.child({ scope: 'settings' })

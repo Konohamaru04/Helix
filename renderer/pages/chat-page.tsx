@@ -146,6 +146,8 @@ export function ChatPage() {
 
   const [submissionError, setSubmissionError] = useState<string | null>(null);
   const [composerDraft, setComposerDraft] = useState('');
+  const draftSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const loadedDraftConversationRef = useRef<string | null>(null);
   const [composerAttachments, setComposerAttachments] = useState<MessageAttachment[]>([]);
   const [composerMode, setComposerMode] = useState<ComposerMode>('chat');
   const [wireframeConversationIds, setWireframeConversationIds] = useState<Set<string>>(
@@ -503,7 +505,66 @@ export function ChatPage() {
     activeConversationWireframeDisabled
   ]);
 
+  useEffect(() => {
+    if (draftSaveTimerRef.current) {
+      clearTimeout(draftSaveTimerRef.current);
+      draftSaveTimerRef.current = null;
+    }
+
+    if (!activeConversationId) {
+      loadedDraftConversationRef.current = null;
+      setComposerDraft('');
+      return;
+    }
+
+    const desktop = window.ollamaDesktop;
+    if (!desktop) {
+      loadedDraftConversationRef.current = activeConversationId;
+      return;
+    }
+
+    const conversationId = activeConversationId;
+    let cancelled = false;
+    desktop.chat
+      .getComposerDraft(conversationId)
+      .then((draft) => {
+        if (cancelled) return;
+        loadedDraftConversationRef.current = conversationId;
+        setComposerDraft(draft ?? '');
+      })
+      .catch(() => {
+        if (cancelled) return;
+        loadedDraftConversationRef.current = conversationId;
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeConversationId]);
+
+  function persistComposerDraft(conversationId: string, prompt: string) {
+    const desktop = window.ollamaDesktop;
+    if (!desktop) {
+      return;
+    }
+    if (prompt.length === 0) {
+      desktop.chat.clearComposerDraft(conversationId).catch(() => undefined);
+      return;
+    }
+    desktop.chat
+      .setComposerDraft({ conversationId, prompt })
+      .catch(() => undefined);
+  }
+
   function resetComposer(options: { preserveMode?: boolean } = {}) {
+    if (draftSaveTimerRef.current) {
+      clearTimeout(draftSaveTimerRef.current);
+      draftSaveTimerRef.current = null;
+    }
+    const conversationId = activeConversationId;
+    if (conversationId && loadedDraftConversationRef.current === conversationId) {
+      persistComposerDraft(conversationId, '');
+    }
     setComposerDraft('');
     setComposerAttachments([]);
     if (!options.preserveMode) {
@@ -590,6 +651,17 @@ export function ChatPage() {
   function handleComposerDraftChange(nextPrompt: string) {
     setComposerDraft(nextPrompt);
     dismissGenerationConfirmation();
+
+    const conversationId = activeConversationId;
+    if (!conversationId || loadedDraftConversationRef.current !== conversationId) {
+      return;
+    }
+    if (draftSaveTimerRef.current) {
+      clearTimeout(draftSaveTimerRef.current);
+    }
+    draftSaveTimerRef.current = setTimeout(() => {
+      persistComposerDraft(conversationId, nextPrompt);
+    }, 400);
   }
 
   function updateComposerAttachments(

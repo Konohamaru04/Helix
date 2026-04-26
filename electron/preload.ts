@@ -12,6 +12,7 @@ import {
   capabilityPermissionInputSchema,
   capabilityPermissionSchema,
   capabilityTaskSchema,
+  composerDraftInputSchema,
   chatStartAcceptedSchema,
   chatTurnRequestSchema,
   chatStreamEventSchema,
@@ -351,6 +352,25 @@ const desktopApi: DesktopApi = {
           exportConversationInputSchema.parse(input)
         )
       ),
+    getComposerDraft: async (conversationId) => {
+      const payload: unknown = await ipcRenderer.invoke(
+        IpcChannels.chatGetComposerDraft,
+        conversationIdSchema.parse(conversationId)
+      );
+      return typeof payload === 'string' ? payload : null;
+    },
+    setComposerDraft: async (input) => {
+      await ipcRenderer.invoke(
+        IpcChannels.chatSetComposerDraft,
+        composerDraftInputSchema.parse(input)
+      );
+    },
+    clearComposerDraft: async (conversationId) => {
+      await ipcRenderer.invoke(
+        IpcChannels.chatClearComposerDraft,
+        conversationIdSchema.parse(conversationId)
+      );
+    },
     onStreamEvent: (listener) => {
       const handler = (_event: Electron.IpcRendererEvent, payload: ChatStreamEvent) => {
         listener(chatStreamEventSchema.parse(payload));

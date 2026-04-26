@@ -18,6 +18,7 @@ import {
   chatTurnAcceptedSchema,
   chatTurnRequestSchema,
   confirmGenerationIntentInputSchema,
+  composerDraftInputSchema,
   conversationIdSchema,
   conversationSearchResultSchema,
   conversationSummarySchema,
@@ -621,6 +622,23 @@ export function registerIpcHandlers(context: DesktopAppContext): void {
     return exportConversationResultSchema.parse({
       path: saveResult.filePath
     });
+  });
+
+  ipcMain.handle(IpcChannels.chatGetComposerDraft, (_event, payload) => {
+    return context.appStateRepository.getDraft(conversationIdSchema.parse(payload));
+  });
+
+  ipcMain.handle(IpcChannels.chatSetComposerDraft, (_event, payload) => {
+    const input = composerDraftInputSchema.parse(payload);
+    if (input.prompt.length === 0) {
+      context.appStateRepository.clearDraft(input.conversationId);
+    } else {
+      context.appStateRepository.setDraft(input.conversationId, input.prompt);
+    }
+  });
+
+  ipcMain.handle(IpcChannels.chatClearComposerDraft, (_event, payload) => {
+    context.appStateRepository.clearDraft(conversationIdSchema.parse(payload));
   });
 
   ipcMain.handle(IpcChannels.capabilitiesListPermissions, () =>

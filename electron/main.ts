@@ -367,9 +367,10 @@ async function revealMainWindow(window: BrowserWindow) {
 }
 
 async function createMainWindow() {
-  const window = new BrowserWindow({
-    width: 1560,
-    height: 960,
+  const persistedBounds = appContext?.appStateRepository.getWindowBounds() ?? null;
+  const initialOptions: Electron.BrowserWindowConstructorOptions = {
+    width: persistedBounds?.width ?? 1560,
+    height: persistedBounds?.height ?? 960,
     minWidth: 1180,
     minHeight: 720,
     show: false,
@@ -385,10 +386,63 @@ async function createMainWindow() {
       nodeIntegration: false,
       sandbox: false
     }
-  });
+  };
+
+  if (persistedBounds && persistedBounds.x !== null && persistedBounds.y !== null) {
+    initialOptions.x = persistedBounds.x;
+    initialOptions.y = persistedBounds.y;
+  }
+
+  const window = new BrowserWindow(initialOptions);
 
   mainWindow = window;
   attachTextContextMenu(window);
+
+  if (persistedBounds?.isMaximized) {
+    window.maximize();
+  }
+
+  let saveBoundsTimer: NodeJS.Timeout | null = null;
+  const persistBounds = () => {
+    if (window.isDestroyed()) {
+      return;
+    }
+    const repository = appContext?.appStateRepository;
+    if (!repository) {
+      return;
+    }
+    const isMaximized = window.isMaximized();
+    const normalBounds = isMaximized ? window.getNormalBounds() : window.getBounds();
+    try {
+      repository.setWindowBounds({
+        width: normalBounds.width,
+        height: normalBounds.height,
+        x: normalBounds.x,
+        y: normalBounds.y,
+        isMaximized
+      });
+    } catch (error) {
+      appContext?.logger.warn({ error }, 'Failed to persist window bounds');
+    }
+  };
+  const scheduleBoundsSave = () => {
+    if (saveBoundsTimer) {
+      clearTimeout(saveBoundsTimer);
+    }
+    saveBoundsTimer = setTimeout(persistBounds, 500);
+  };
+
+  window.on('resize', scheduleBoundsSave);
+  window.on('move', scheduleBoundsSave);
+  window.on('maximize', persistBounds);
+  window.on('unmaximize', persistBounds);
+  window.on('close', () => {
+    if (saveBoundsTimer) {
+      clearTimeout(saveBoundsTimer);
+      saveBoundsTimer = null;
+    }
+    persistBounds();
+  });
 
   window.on('closed', () => {
     if (mainWindow === window) {

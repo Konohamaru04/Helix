@@ -240,6 +240,9 @@ const mockApi = {
     importWorkspaceKnowledge: vi.fn(),
     importConversation: vi.fn(),
     exportConversation: vi.fn(),
+    getComposerDraft: vi.fn(async () => null),
+    setComposerDraft: vi.fn(async () => undefined),
+    clearComposerDraft: vi.fn(async () => undefined),
     onStreamEvent: vi.fn()
   },
   capabilities: {
