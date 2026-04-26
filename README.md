@@ -57,10 +57,11 @@ Guided app-design flow: the model asks multiple-choice questions and renders liv
 
 ### End users
 
-1. Download the latest release from the [Releases](https://github.com/Konohamaru04/Abstergo-Helix/releases) page.
-2. Run `Helix-Setup-<version>.exe` (installer) or extract `Helix-Portable-<version>.exe`.
-3. On first launch the splash screen provisions deferred Python packages automatically.
-4. Open **Settings** and configure your text backend (Ollama or NVIDIA).
+1. Download `Helix.v1.5.Windows.7z` from the [Releases](https://github.com/Konohamaru04/Helix/releases) page.
+2. Extract the archive.
+3. Run `Helix.exe` from the extracted folder. The bundled Python runtime is included — no separate install required.
+4. On first launch the splash screen provisions deferred Python packages automatically.
+5. Open **Settings** and configure your text backend (Ollama or NVIDIA).
 
 ### Developers
 
