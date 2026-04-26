@@ -149,6 +149,11 @@ export class DatabaseManager {
       }
       const appliedAt = new Date().toISOString();
 
+      // PRAGMA foreign_keys cannot be toggled inside a transaction. Disable it
+      // outside BEGIN/COMMIT so DDL like DROP/RENAME doesn't cascade-delete
+      // child rows during table rebuilds. foreign_key_check inside the txn
+      // verifies the migration didn't leave dangling references.
+      connection.exec('PRAGMA foreign_keys = OFF');
       connection.exec('BEGIN');
 
       try {
@@ -156,11 +161,23 @@ export class DatabaseManager {
         connection
           .prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)')
           .run(migration.version, appliedAt);
+        const violations = connection
+          .prepare('PRAGMA foreign_key_check')
+          .all() as Array<Record<string, unknown>>;
+
+        if (violations.length > 0) {
+          throw new Error(
+            `Foreign-key violations after migration ${migration.version}: ${JSON.stringify(violations)}`
+          );
+        }
+
         connection.exec('COMMIT');
         this.logger.info({ migration: migration.version }, 'Applied SQLite migration');
       } catch (error) {
         connection.exec('ROLLBACK');
         throw error;
+      } finally {
+        connection.exec('PRAGMA foreign_keys = ON');
       }
     }
   }

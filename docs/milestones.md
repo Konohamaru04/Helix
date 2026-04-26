@@ -1,6 +1,6 @@
 # Milestone Tracker
 
-Updated: 2026-04-16
+Updated: 2026-04-26
 
 ## Milestone 1: Foundation
 
@@ -161,7 +161,7 @@ Comment: The Python worker now persists queued and running jobs into its own res
 - [x] video jobs
 - [x] richer asset actions and gallery management
 
-Status: Planned
+Status: Complete
 
 ## Milestone 7: MCP
 
@@ -177,12 +177,12 @@ Status: Planned
 
 ## Milestone 8: Polish And Release Hardening
 
-- [ ] auto-update integration points
-- [ ] crash recovery
-- [ ] packaging hooks
-- [ ] accessibility pass
-- [ ] coverage pass
-- [ ] security pass
-- [ ] docs cleanup
+- [x] auto-update integration points
+- [x] crash recovery (renderer/GPU crash handling, session restore, crash dialog)
+- [x] packaging hooks (NSIS installer, afterPack guard, version bump script)
+- [x] accessibility pass (drawer focus traps, useEscapeClose, role/aria attributes, keyboard navigation, contrast fixes)
+- [x] coverage pass (jsonish, queue, use-escape-close, use-focus-trap tests)
+- [x] security pass (sender validation, webSecurity, allowRunningInsecureContent, CSP, IPC audit)
+- [x] docs cleanup (milestones update, auto-update, crash-recovery, accessibility, release-process docs)
 
-Status: Planned
+Status: Complete

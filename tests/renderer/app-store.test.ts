@@ -189,6 +189,10 @@ describe('app-store stream buffering', () => {
           updatedAt: null
         }),
         listAuditEvents: vi.fn().mockResolvedValue([])
+      },
+      appState: {
+        getLastSession: vi.fn().mockResolvedValue(null),
+        setLastSession: vi.fn().mockResolvedValue(undefined)
       }
     };
 

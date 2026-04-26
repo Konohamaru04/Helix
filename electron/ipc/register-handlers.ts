@@ -65,8 +65,22 @@ import {
   userSettingsSchema,
   worktreeSessionSchema,
   workspaceDirectorySelectionSchema,
-  workspaceSummarySchema
+  workspaceSummarySchema,
+  lastSessionSchema
 } from '@bridge/ipc/contracts';
+
+const ALLOWED_SENDER_ORIGINS: string[] = [];
+
+function validateSender(event: Electron.IpcMainInvokeEvent): void {
+  const url = event.senderFrame?.url ?? '';
+  // In production, the renderer loads from file:// or app:// protocol.
+  // In dev, it loads from the Vite dev server (localhost).
+  if (url.startsWith('file://') || url.startsWith('app://') || url.startsWith('http://localhost')) {
+    return;
+  }
+
+  throw new Error(`IPC rejected: sender origin not allowed (${url})`);
+}
 
 function toSafeFileStem(value: string): string {
   const invalidFileNameCharacters = new Set(['<', '>', ':', '"', '/', '\\', '|', '?', '*']);
@@ -202,7 +216,8 @@ export function registerIpcHandlers(context: DesktopAppContext): void {
     userSettingsSchema.parse(context.settingsService.get())
   );
 
-  ipcMain.handle(IpcChannels.settingsUpdate, async (_event, payload) => {
+  ipcMain.handle(IpcChannels.settingsUpdate, async (event, payload) => {
+    validateSender(event);
     const previousSettings = context.settingsService.get();
     const nextSettings = context.settingsService.update(
       updateUserSettingsSchema.parse(payload)
@@ -233,21 +248,23 @@ export function registerIpcHandlers(context: DesktopAppContext): void {
     systemStatusSchema.parse(await context.getSystemStatus())
   );
 
-  ipcMain.handle(IpcChannels.generationStartImage, async (_event, payload) =>
-    imageGenerationStartResultSchema.parse(
+  ipcMain.handle(IpcChannels.generationStartImage, async (event, payload) => {
+    validateSender(event);
+    return imageGenerationStartResultSchema.parse(
       await context.generationService.startImageJob(
         imageGenerationRequestSchema.parse(payload)
       )
     )
-  );
+  });
 
-  ipcMain.handle(IpcChannels.generationStartVideo, async (_event, payload) =>
-    videoGenerationStartResultSchema.parse(
+  ipcMain.handle(IpcChannels.generationStartVideo, async (event, payload) => {
+    validateSender(event);
+    return videoGenerationStartResultSchema.parse(
       await context.generationService.startVideoJob(
         videoGenerationRequestSchema.parse(payload)
       )
     )
-  );
+  });
 
   ipcMain.handle(IpcChannels.generationListImageModels, (_event, payload) =>
     imageGenerationModelCatalogSchema.parse(
@@ -294,6 +311,7 @@ export function registerIpcHandlers(context: DesktopAppContext): void {
   });
 
   ipcMain.handle(IpcChannels.chatStart, async (event, payload) => {
+    validateSender(event);
     const request = chatTurnRequestSchema.parse(payload);
     const accepted = await context.chatService.submitPrompt(
       request,
@@ -308,6 +326,7 @@ export function registerIpcHandlers(context: DesktopAppContext): void {
   });
 
   ipcMain.handle(IpcChannels.chatConfirmGeneration, async (event, payload) => {
+    validateSender(event);
     const accepted = await context.chatService.confirmGenerationIntent(
       confirmGenerationIntentInputSchema.parse(payload),
       (streamEvent: ChatStreamEvent) => {
@@ -367,6 +386,7 @@ export function registerIpcHandlers(context: DesktopAppContext): void {
   });
 
   ipcMain.handle(IpcChannels.chatEditAndResend, async (event, payload) => {
+    validateSender(event);
     const accepted = await context.chatService.editMessageAndResend(
       editMessageInputSchema.parse(payload),
       (streamEvent: ChatStreamEvent) => {
@@ -380,6 +400,7 @@ export function registerIpcHandlers(context: DesktopAppContext): void {
   });
 
   ipcMain.handle(IpcChannels.chatRegenerateResponse, async (event, payload) => {
+    validateSender(event);
     const accepted = await context.chatService.regenerateResponse(
       regenerateResponseInputSchema.parse(payload),
       (streamEvent: ChatStreamEvent) => {
@@ -396,7 +417,8 @@ export function registerIpcHandlers(context: DesktopAppContext): void {
     context.chatService.cancelChatTurn(cancelChatTurnInputSchema.parse(payload));
   });
 
-  ipcMain.handle(IpcChannels.chatDeleteConversation, (_event, payload) => {
+  ipcMain.handle(IpcChannels.chatDeleteConversation, (event, payload) => {
+    validateSender(event);
     context.chatService.deleteConversation(
       deleteConversationInputSchema.parse(payload).conversationId
     );
@@ -462,7 +484,8 @@ export function registerIpcHandlers(context: DesktopAppContext): void {
     )
   );
 
-  ipcMain.handle(IpcChannels.chatDeleteWorkspace, (_event, payload) => {
+  ipcMain.handle(IpcChannels.chatDeleteWorkspace, (event, payload) => {
+    validateSender(event);
     context.chatService.deleteWorkspace(deleteWorkspaceInputSchema.parse(payload).workspaceId);
   });
 
@@ -509,7 +532,8 @@ export function registerIpcHandlers(context: DesktopAppContext): void {
     )
   );
 
-  ipcMain.handle(IpcChannels.chatDeleteSkill, (_event, payload) => {
+  ipcMain.handle(IpcChannels.chatDeleteSkill, (event, payload) => {
+    validateSender(event);
     context.chatService.deleteSkill(deleteSkillInputSchema.parse(payload));
   });
 
@@ -628,7 +652,8 @@ export function registerIpcHandlers(context: DesktopAppContext): void {
     return context.appStateRepository.getDraft(conversationIdSchema.parse(payload));
   });
 
-  ipcMain.handle(IpcChannels.chatSetComposerDraft, (_event, payload) => {
+  ipcMain.handle(IpcChannels.chatSetComposerDraft, (event, payload) => {
+    validateSender(event);
     const input = composerDraftInputSchema.parse(payload);
     if (input.prompt.length === 0) {
       context.appStateRepository.clearDraft(input.conversationId);
@@ -641,21 +666,33 @@ export function registerIpcHandlers(context: DesktopAppContext): void {
     context.appStateRepository.clearDraft(conversationIdSchema.parse(payload));
   });
 
+  ipcMain.handle(IpcChannels.appStateGetLastSession, () => {
+    return context.appStateRepository.getLastSession();
+  });
+
+  ipcMain.handle(IpcChannels.appStateSetLastSession, (event, payload) => {
+    validateSender(event);
+    const input = lastSessionSchema.parse(payload);
+    context.appStateRepository.setLastSession(input.conversationId, input.workspaceId);
+  });
+
   ipcMain.handle(IpcChannels.capabilitiesListPermissions, () =>
     context.capabilityService
       .listPermissions()
       .map((permission) => capabilityPermissionSchema.parse(permission))
   );
 
-  ipcMain.handle(IpcChannels.capabilitiesGrantPermission, (_event, payload) =>
-    capabilityPermissionSchema.parse(
+  ipcMain.handle(IpcChannels.capabilitiesGrantPermission, (event, payload) => {
+    validateSender(event);
+    return capabilityPermissionSchema.parse(
       context.capabilityService.grantPermission(
         capabilityPermissionInputSchema.parse(payload)
       )
-    )
-  );
+    );
+  });
 
-  ipcMain.handle(IpcChannels.capabilitiesRevokePermission, (_event, payload) => {
+  ipcMain.handle(IpcChannels.capabilitiesRevokePermission, (event, payload) => {
+    validateSender(event);
     context.capabilityService.revokePermission(
       capabilityPermissionInputSchema.parse(payload)
     );

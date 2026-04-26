@@ -65,7 +65,8 @@ import {
   userSettingsSchema,
   worktreeSessionSchema,
   workspaceDirectorySelectionSchema,
-  workspaceSummarySchema
+  workspaceSummarySchema,
+  lastSessionSchema
 } from '@bridge/ipc/contracts';
 
 const desktopApi: DesktopApi = {
@@ -484,6 +485,16 @@ const desktopApi: DesktopApi = {
       )) as unknown[];
 
       return payload.map((event) => auditEventRecordSchema.parse(event));
+    }
+  },
+  appState: {
+    getLastSession: async () => {
+      const result = await ipcRenderer.invoke(IpcChannels.appStateGetLastSession);
+      if (result === null) return null;
+      return lastSessionSchema.parse(result);
+    },
+    setLastSession: async (input: { conversationId: string; workspaceId: string }) => {
+      await ipcRenderer.invoke(IpcChannels.appStateSetLastSession, input);
     }
   }
 };

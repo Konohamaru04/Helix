@@ -97,4 +97,16 @@ export class AppStateRepository {
       .prepare('DELETE FROM conversation_drafts WHERE conversation_id = ?')
       .run(conversationId);
   }
+
+  getLastSession(): { conversationId: string; workspaceId: string } | null {
+    const value = this.getJson<{ conversationId: string; workspaceId: string }>('lastSession');
+    if (!value || typeof value.conversationId !== 'string' || typeof value.workspaceId !== 'string') {
+      return null;
+    }
+    return value;
+  }
+
+  setLastSession(conversationId: string, workspaceId: string): void {
+    this.setJson('lastSession', { conversationId, workspaceId });
+  }
 }

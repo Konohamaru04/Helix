@@ -288,7 +288,9 @@ async function createSplashWindow() {
       preload: getPreloadPath(),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false
+      sandbox: false, // TODO: Enable sandbox — requires preload bundling refactor to remove direct Node.js APIs
+      webSecurity: true,
+      allowRunningInsecureContent: false
     }
   });
 
@@ -357,7 +359,9 @@ async function createMainWindow() {
       preload: getPreloadPath(),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false
+      sandbox: false, // TODO: Enable sandbox — requires preload bundling refactor to remove direct Node.js APIs
+      webSecurity: true,
+      allowRunningInsecureContent: false
     }
   };
 
@@ -460,7 +464,7 @@ async function createMainWindow() {
   window.webContents.on('render-process-gone', (_event, details) => {
     appContext?.logger.error({ details }, 'Renderer process exited unexpectedly');
 
-    if (details.reason === 'crashed' || details.reason === 'killed') {
+    if (details.reason === 'crashed' || details.reason === 'killed' || details.reason === 'oom') {
       rendererCrashCount++;
       const RELOAD_DELAY_MS = 2_000;
 
@@ -610,6 +614,10 @@ function emergencyDisposeAppContext() {
 process.on('uncaughtException', (error) => {
   appContext?.logger.error({ error }, 'Uncaught main-process exception');
   emergencyDisposeAppContext();
+  dialog.showErrorBox(
+    'Helix encountered an error',
+    `An unexpected error occurred: ${error instanceof Error ? error.message : String(error)}\n\nThe app will attempt to continue. Please restart if issues persist.`
+  );
 });
 
 process.on('unhandledRejection', (reason) => {

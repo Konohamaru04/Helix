@@ -113,6 +113,10 @@ describe('GalleryDrawer', () => {
           updatedAt: null
         }),
         listAuditEvents: vi.fn().mockResolvedValue([])
+      },
+      appState: {
+        getLastSession: vi.fn().mockResolvedValue(null),
+        setLastSession: vi.fn().mockResolvedValue(undefined)
       }
     };
   });

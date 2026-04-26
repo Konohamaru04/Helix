@@ -655,10 +655,27 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
           api.capabilities.listWorktrees(),
           api.capabilities.listAuditEvents()
         ]);
-      const activeWorkspaceId = workspaces[0]?.id ?? null;
-      const activeConversationId =
-        getFirstConversationIdForWorkspace(conversations, activeWorkspaceId) ??
-        getFirstConversationIdForWorkspace(conversations, null);
+      let activeWorkspaceId = workspaces[0]?.id ?? null;
+      let activeConversationId: string | null;
+      try {
+        const lastSession = await api.appState.getLastSession();
+        if (
+          lastSession &&
+          workspaces.some((w) => w.id === lastSession.workspaceId) &&
+          conversations.some((c) => c.id === lastSession.conversationId)
+        ) {
+          activeWorkspaceId = lastSession.workspaceId;
+          activeConversationId = lastSession.conversationId;
+        } else {
+          activeConversationId =
+            getFirstConversationIdForWorkspace(conversations, activeWorkspaceId) ??
+            getFirstConversationIdForWorkspace(conversations, null);
+        }
+      } catch {
+        activeConversationId =
+          getFirstConversationIdForWorkspace(conversations, activeWorkspaceId) ??
+          getFirstConversationIdForWorkspace(conversations, null);
+      }
       const [
         messages,
         knowledgeDocuments,
@@ -848,6 +865,13 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
       pendingGenerationConfirmation: null
     });
 
+    if (nextConversationId && workspaceId) {
+      void getDesktopApi().appState.setLastSession({
+        conversationId: nextConversationId,
+        workspaceId
+      }).catch(() => undefined);
+    }
+
     if (nextConversationId === null) {
       if (workspaceId && !(workspaceId in state.knowledgeDocumentsByWorkspace)) {
         void get().refreshWorkspaceKnowledge(workspaceId);
@@ -1006,11 +1030,17 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
     const existing = get().messagesByConversation[conversationId];
     const conversation = get().conversations.find((item) => item.id === conversationId) ?? null;
 
+    const workspaceId = conversation?.workspaceId ?? get().activeWorkspaceId;
     set({
       activeConversationId: conversationId,
-      activeWorkspaceId: conversation?.workspaceId ?? get().activeWorkspaceId,
+      activeWorkspaceId: workspaceId,
       pendingGenerationConfirmation: null
     });
+
+    void getDesktopApi().appState.setLastSession({
+      conversationId,
+      workspaceId: workspaceId ?? ''
+    }).catch(() => undefined);
 
     if (existing) {
       return;

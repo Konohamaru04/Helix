@@ -33,6 +33,8 @@ export interface WireframeDesignIteration {
 }
 
 const WIREFRAME_BLOCK_PATTERN = /```wireframe\s*([\s\S]*?)```/gi;
+const GENERIC_CODE_BLOCK_PATTERN = /```[a-zA-Z0-9_-]*\s*\n?([\s\S]*?)```/g;
+const BARE_WIREFRAME_OBJECT_PATTERN = /\{\s*"type"\s*:\s*"(?:design|questions)"/g;
 const HTML_BLOCK_PATTERN = /```html[^\n]*\n([\s\S]*?)```/i;
 const CSS_BLOCK_PATTERN = /```css[^\n]*\n([\s\S]*?)```/i;
 const JS_BLOCK_PATTERN = /```(?:js|javascript)[^\n]*\n([\s\S]*?)```/i;
@@ -268,20 +270,114 @@ function parseMarkdownQuestions(content: string): WireframeQuestionsArtifact | n
     : null;
 }
 
-export function parseWireframeArtifacts(content: string): WireframeArtifact[] {
-  const withoutThinking = stripThinking(content);
-  const artifacts: WireframeArtifact[] = [];
+function findBalancedJsonObject(source: string, startIndex: number): string | null {
+  if (source[startIndex] !== '{') {
+    return null;
+  }
 
-  for (const match of withoutThinking.matchAll(WIREFRAME_BLOCK_PATTERN)) {
-    const artifact = parseArtifactJson(match[1] ?? '');
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+
+  for (let i = startIndex; i < source.length; i += 1) {
+    const ch = source[i];
+
+    if (escape) {
+      escape = false;
+      continue;
+    }
+
+    if (ch === '\\') {
+      escape = true;
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+
+    if (inString) {
+      continue;
+    }
+
+    if (ch === '{') {
+      depth += 1;
+    } else if (ch === '}') {
+      depth -= 1;
+
+      if (depth === 0) {
+        return source.slice(startIndex, i + 1);
+      }
+    }
+  }
+
+  return null;
+}
+
+function extractWireframeArtifactsFromText(source: string): WireframeArtifact[] {
+  const artifacts: WireframeArtifact[] = [];
+  const seen = new Set<string>();
+
+  function pushIfNew(candidate: string | null | undefined) {
+    if (!candidate) {
+      return;
+    }
+
+    const normalized = candidate.trim();
+
+    if (!normalized || seen.has(normalized)) {
+      return;
+    }
+
+    const artifact = parseArtifactJson(normalized);
 
     if (artifact) {
+      seen.add(normalized);
       artifacts.push(artifact);
     }
   }
 
+  for (const match of source.matchAll(WIREFRAME_BLOCK_PATTERN)) {
+    pushIfNew(match[1]);
+  }
+
   if (artifacts.length > 0) {
     return artifacts;
+  }
+
+  for (const match of source.matchAll(GENERIC_CODE_BLOCK_PATTERN)) {
+    pushIfNew(match[1]);
+  }
+
+  if (artifacts.length > 0) {
+    return artifacts;
+  }
+
+  for (const match of source.matchAll(BARE_WIREFRAME_OBJECT_PATTERN)) {
+    if (match.index === undefined) {
+      continue;
+    }
+
+    const json = findBalancedJsonObject(source, match.index);
+    pushIfNew(json);
+  }
+
+  return artifacts;
+}
+
+export function parseWireframeArtifacts(content: string): WireframeArtifact[] {
+  const withoutThinking = stripThinking(content);
+  const fromAnswer = extractWireframeArtifactsFromText(withoutThinking);
+
+  if (fromAnswer.length > 0) {
+    return fromAnswer;
+  }
+
+  const fromThinking = extractWireframeArtifactsFromText(content);
+
+  if (fromThinking.length > 0) {
+    return fromThinking;
   }
 
   const markdownQuestions = parseMarkdownQuestions(withoutThinking);
@@ -377,6 +473,23 @@ export function buildWireframePreviewDocument(design: WireframeDesignArtifact): 
       background: transparent !important;
     }
 
+    [class*="canvas" i],
+    [class*="stage" i],
+    [class*="artboard" i],
+    [class*="workspace" i],
+    [class*="preview" i],
+    [class*="prototype" i],
+    [class*="mockup" i],
+    [class*="screen-set" i],
+    [class*="screens" i],
+    [class*="layout" i],
+    [class*="wrapper" i],
+    [class*="container" i] {
+      background: transparent !important;
+      background-color: transparent !important;
+      background-image: none !important;
+    }
+
     body > [class*="canvas" i],
     body > [class*="stage" i],
     body > [class*="artboard" i],
@@ -410,56 +523,6 @@ export function buildWireframePreviewDocument(design: WireframeDesignArtifact): 
 <body>
   ${design.html}
   <script>
-    function clearHelixWireframeStageBackgrounds() {
-      const stageNamePattern = /canvas|stage|artboard|workspace|preview|prototype|mockup|viewport|board|screen-set|screens|layout|wrapper|container|shell/i;
-      const productFramePattern = /phone|mobile|screen|device|app-screen|appScreen/i;
-      const elements = Array.from(document.body.querySelectorAll('*')).filter(function (element) {
-        const tagName = element.tagName.toLowerCase();
-        return element instanceof HTMLElement && tagName !== 'script' && tagName !== 'style';
-      });
-
-      for (const element of elements) {
-        const name = [
-          element.id,
-          element.className,
-          element.getAttribute('aria-label') || ''
-        ].join(' ');
-
-        const rect = element.getBoundingClientRect();
-        const parentArea = rect.width * rect.height;
-        const childRects = Array.from(element.children)
-          .filter(function (child) {
-            return child instanceof HTMLElement;
-          })
-          .map(function (child) {
-            return child.getBoundingClientRect();
-          });
-        const hasSmallerProductChild = childRects.some(function (childRect) {
-          const childArea = childRect.width * childRect.height;
-
-          return childArea > 5000 && parentArea > 0 && childArea < parentArea * 0.82;
-        });
-        const isNamedProductFrame =
-          productFramePattern.test(name) && !stageNamePattern.test(name);
-
-        if (isNamedProductFrame) {
-          continue;
-        }
-
-        const looksLikeStage =
-          stageNamePattern.test(name) ||
-          (rect.width >= 420 && rect.height >= 260 && hasSmallerProductChild);
-
-        if (!looksLikeStage) {
-          continue;
-        }
-
-        element.style.setProperty('background', 'transparent', 'important');
-        element.style.setProperty('background-color', 'transparent', 'important');
-        element.style.setProperty('background-image', 'none', 'important');
-      }
-    }
-
     window.addEventListener('wheel', function (event) {
       event.preventDefault();
       event.stopPropagation();
@@ -473,64 +536,28 @@ export function buildWireframePreviewDocument(design: WireframeDesignArtifact): 
     }, { capture: true, passive: false });
 
     function reportHelixWireframeContentSize() {
-      const docElement = document.documentElement;
-      const body = document.body;
-      const widestChildren = Array.from(body.children)
-        .filter(function (child) { return child instanceof HTMLElement; })
-        .reduce(function (acc, child) {
-          const rect = child.getBoundingClientRect();
-          return {
-            width: Math.max(acc.width, rect.right),
-            height: Math.max(acc.height, rect.bottom)
-          };
-        }, { width: 0, height: 0 });
-      const width = Math.max(
-        docElement.scrollWidth,
-        body.scrollWidth,
-        docElement.offsetWidth,
-        body.offsetWidth,
-        widestChildren.width
-      );
-      const height = Math.max(
-        docElement.scrollHeight,
-        body.scrollHeight,
-        docElement.offsetHeight,
-        body.offsetHeight,
-        widestChildren.height
-      );
+      var doc = document.documentElement;
       window.parent.postMessage({
         source: 'helix-wireframe-preview',
         type: 'resize',
-        width: Math.ceil(width),
-        height: Math.ceil(height)
+        width: Math.max(doc.scrollWidth, document.body.scrollWidth),
+        height: Math.max(doc.scrollHeight, document.body.scrollHeight)
       }, '*');
     }
 
     try {
-      clearHelixWireframeStageBackgrounds();
-      window.requestAnimationFrame(clearHelixWireframeStageBackgrounds);
       ${safeScript}
     } catch (error) {
-      const warning = document.createElement('pre');
+      var warning = document.createElement('pre');
       warning.textContent = 'Wireframe script error: ' + (error && error.message ? error.message : String(error));
       warning.style.cssText = 'position:fixed;left:12px;right:12px;bottom:12px;z-index:9999;margin:0;padding:10px;border:1px solid #fecaca;background:#450a0a;color:#fee2e2;font:12px/1.4 ui-monospace,monospace;white-space:pre-wrap;';
       document.body.appendChild(warning);
     }
 
-    reportHelixWireframeContentSize();
-    window.requestAnimationFrame(reportHelixWireframeContentSize);
     window.addEventListener('load', reportHelixWireframeContentSize);
-    setTimeout(reportHelixWireframeContentSize, 100);
-    setTimeout(reportHelixWireframeContentSize, 400);
-    setTimeout(reportHelixWireframeContentSize, 1000);
     if (typeof ResizeObserver === 'function') {
-      const resizeObserver = new ResizeObserver(reportHelixWireframeContentSize);
+      var resizeObserver = new ResizeObserver(reportHelixWireframeContentSize);
       resizeObserver.observe(document.body);
-      resizeObserver.observe(document.documentElement);
-    }
-    if (typeof MutationObserver === 'function') {
-      const mutationObserver = new MutationObserver(reportHelixWireframeContentSize);
-      mutationObserver.observe(document.body, { childList: true, subtree: true, attributes: true });
     }
   </script>
 </body>

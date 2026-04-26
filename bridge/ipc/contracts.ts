@@ -903,6 +903,11 @@ export const chatStreamEventSchema = z.discriminatedUnion('type', [
 
 export const conversationIdSchema = z.string().uuid();
 
+export const lastSessionSchema = z.object({
+  conversationId: z.string().uuid(),
+  workspaceId: z.string().uuid()
+});
+
 export const composerDraftInputSchema = z.object({
   conversationId: conversationIdSchema,
   prompt: z.string().max(64_000)
@@ -1094,6 +1099,8 @@ export const IpcChannels = {
   capabilitiesListAuditEvents: 'capabilities:list-audit-events',
   chatStreamEvent: 'chat:stream-event',
   generationStreamEvent: 'generation:stream-event',
+  appStateGetLastSession: 'app-state:get-last-session',
+  appStateSetLastSession: 'app-state:set-last-session',
   updateCheckNow: 'update:check-now',
   updateGetLatest: 'update:get-latest',
   updateStatusEvent: 'update:status-event'
@@ -1162,6 +1169,10 @@ export interface DesktopApi {
     setComposerDraft: (input: { conversationId: string; prompt: string }) => Promise<void>;
     clearComposerDraft: (conversationId: string) => Promise<void>;
     onStreamEvent: (listener: (event: ChatStreamEvent) => void) => Unsubscribe;
+  };
+  appState: {
+    getLastSession: () => Promise<{ conversationId: string; workspaceId: string } | null>;
+    setLastSession: (input: { conversationId: string; workspaceId: string }) => Promise<void>;
   };
   update: {
     checkNow: () => Promise<UpdateCheckResult>;

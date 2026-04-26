@@ -5,6 +5,8 @@ import type {
   UpdateSkillInput
 } from '@bridge/ipc/contracts';
 import { formatTimestamp } from '@renderer/lib/format';
+import { useEscapeClose } from '@renderer/lib/use-escape-close';
+import { useFocusTrap } from '@renderer/lib/use-focus-trap';
 
 type WizardStep = 1 | 2 | 3;
 
@@ -129,6 +131,8 @@ function SkillCard(props: {
 }
 
 export function SkillsDrawer(props: SkillsDrawerProps) {
+  useEscapeClose(props.open, props.onClose);
+  const focusRef = useFocusTrap(props.open);
   const [wizardStep, setWizardStep] = useState<WizardStep>(1);
   const [draft, setDraft] = useState<SkillWizardDraft>(createEmptyDraft());
   const [saving, setSaving] = useState(false);
@@ -236,7 +240,7 @@ export function SkillsDrawer(props: SkillsDrawerProps) {
 
   return (
     <div className="pointer-events-none fixed inset-x-0 bottom-16 z-20 flex animate-fade-in justify-center px-6">
-      <section className="motion-drawer-up pointer-events-auto flex max-h-[calc(78vh-2rem)] w-full max-w-6xl flex-col overflow-hidden rounded-[2rem] border border-white/10 bg-slate-950/95 shadow-2xl backdrop-blur">
+      <section ref={focusRef} role="dialog" aria-modal="true" aria-label="Skills" className="motion-drawer-up pointer-events-auto flex max-h-[calc(78vh-2rem)] w-full max-w-6xl flex-col overflow-hidden rounded-[2rem] border border-white/10 bg-slate-950/95 shadow-2xl backdrop-blur">
         <div className="flex shrink-0 items-start justify-between gap-4 px-6 pt-5">
           <div>
             <p className="text-xs uppercase tracking-[0.3em] text-cyan-200/70">Skills</p>

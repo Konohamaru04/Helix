@@ -262,6 +262,10 @@ const mockApi = {
     listWorktrees: vi.fn(),
     getPlanState: vi.fn(),
     listAuditEvents: vi.fn()
+  },
+  appState: {
+    getLastSession: vi.fn().mockResolvedValue(null),
+    setLastSession: vi.fn().mockResolvedValue(undefined)
   }
 };
 

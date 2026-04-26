@@ -266,6 +266,13 @@ export function ChatPage() {
     activeConversationId === null
       ? []
       : messagesByConversation[activeConversationId] ?? [];
+  const activeMessagesSignature = useMemo(
+    () =>
+      activeMessages
+        .map((m) => `${m.id}:${m.status}:${m.content.length}:${m.updatedAt}`)
+        .join('|'),
+    [activeMessages]
+  );
   const wireframeDesignIterations = useMemo(
     () =>
       activeMessages.flatMap((message) => {
@@ -286,7 +293,8 @@ export function ChatPage() {
             : []
         );
       }),
-    [activeMessages]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [activeMessagesSignature]
   );
   const selectedWireframeIterationId =
     activeConversationId === null
@@ -298,21 +306,30 @@ export function ChatPage() {
     ) ??
     wireframeDesignIterations.at(-1) ??
     null;
-  const latestWireframeQuestionsMessageId =
-    [...activeMessages]
-      .reverse()
-      .find((message) => {
-        if (message.role !== 'assistant') {
-          return false;
-        }
+  const latestWireframeQuestionsMessageId = useMemo(
+    () =>
+      [...activeMessages]
+        .reverse()
+        .find((message) => {
+          if (message.role !== 'assistant') {
+            return false;
+          }
 
-        return parseWireframeArtifact(message.content)?.type === 'questions';
-      })?.id ?? null;
-  const activeConversationHasWireframeArtifacts = activeMessages.some(
-    (message) =>
-      (message.role === 'assistant' &&
-        parseWireframeArtifact(message.content) !== null) ||
-      message.routeTrace?.reason === 'wireframe-mode'
+          return parseWireframeArtifact(message.content)?.type === 'questions';
+        })?.id ?? null,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [activeMessagesSignature]
+  );
+  const activeConversationHasWireframeArtifacts = useMemo(
+    () =>
+      activeMessages.some(
+        (message) =>
+          (message.role === 'assistant' &&
+            parseWireframeArtifact(message.content) !== null) ||
+          message.routeTrace?.reason === 'wireframe-mode'
+      ),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [activeMessagesSignature]
   );
   const activeConversationWireframeDisabled =
     activeConversationId !== null && wireframeDisabledConversationIds.has(activeConversationId);

@@ -73,7 +73,45 @@ export function ContextMenu(props: ContextMenuProps) {
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === 'Escape') {
         props.onClose();
+        return;
       }
+
+      if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp' && event.key !== 'Home' && event.key !== 'End') {
+        return;
+      }
+
+      event.preventDefault();
+      const menu = menuRef.current;
+      if (!menu) {
+        return;
+      }
+
+      const items = Array.from(menu.querySelectorAll<HTMLElement>('button:not([disabled])'));
+      if (items.length === 0) {
+        return;
+      }
+
+      const currentIndex = items.indexOf(document.activeElement as HTMLElement);
+      let nextIndex: number;
+
+      switch (event.key) {
+        case 'ArrowDown':
+          nextIndex = currentIndex < items.length - 1 ? currentIndex + 1 : 0;
+          break;
+        case 'ArrowUp':
+          nextIndex = currentIndex > 0 ? currentIndex - 1 : items.length - 1;
+          break;
+        case 'Home':
+          nextIndex = 0;
+          break;
+        case 'End':
+          nextIndex = items.length - 1;
+          break;
+        default:
+          return;
+      }
+
+      items[nextIndex]?.focus();
     }
 
     window.addEventListener('pointerdown', handlePointerDown);
@@ -110,6 +148,7 @@ export function ContextMenu(props: ContextMenuProps) {
       {props.items.map((item) => (
         <button
           aria-disabled={item.disabled ? true : undefined}
+          tabIndex={item.disabled ? -1 : 0}
           className={`motion-interactive flex w-full items-center rounded-xl px-3 py-2 text-left text-sm transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 ${
             item.danger
               ? 'text-rose-200 hover:bg-rose-500/10 focus-visible:outline-rose-400'
