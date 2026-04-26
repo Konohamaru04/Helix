@@ -21,7 +21,6 @@ win:
       arch:
         - x64
   artifactName: ${productName}-${version}-${arch}.${ext}
-  publisherName: Abstergo
 nsis:
   oneClick: false
   perMachine: false
