@@ -9,6 +9,7 @@ import {
   ipcMain,
   Menu,
   type MenuItemConstructorOptions,
+  session,
   shell
 } from 'electron';
 import { createDesktopAppContext, type DesktopAppContext } from '@bridge/app-context';
@@ -84,6 +85,53 @@ function configureAppIdentity() {
   if (process.platform === 'win32') {
     app.setAppUserModelId(APP_WINDOWS_APP_USER_MODEL_ID);
   }
+}
+
+const ALLOWED_EXTERNAL_PROTOCOLS = new Set([
+  'https:',
+  'http:',
+  'mailto:'
+]);
+
+function isAllowedExternalUrl(rawUrl: string): boolean {
+  try {
+    const parsed = new URL(rawUrl);
+    return ALLOWED_EXTERNAL_PROTOCOLS.has(parsed.protocol);
+  } catch {
+    return false;
+  }
+}
+
+function applyContentSecurityPolicy() {
+  const isDevServer = Boolean(process.env.ELECTRON_RENDERER_URL);
+  if (isDevServer) {
+    // Vite dev server needs eval and ws — keep CSP relaxed only in dev.
+    return;
+  }
+
+  const policy = [
+    "default-src 'self'",
+    "img-src 'self' data: blob: https:",
+    "media-src 'self' data: blob:",
+    "style-src 'self' 'unsafe-inline'",
+    "script-src 'self'",
+    "font-src 'self' data:",
+    "connect-src 'self'",
+    "object-src 'none'",
+    "base-uri 'none'",
+    "frame-ancestors 'none'"
+  ].join('; ');
+
+  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    const responseHeaders = details.responseHeaders ?? {};
+    callback({
+      responseHeaders: {
+        ...responseHeaders,
+        'Content-Security-Policy': [policy],
+        'X-Content-Type-Options': ['nosniff']
+      }
+    });
+  });
 }
 
 function getPreloadPath() {
@@ -376,14 +424,23 @@ async function createMainWindow() {
   });
 
   window.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
+    if (isAllowedExternalUrl(url)) {
+      void shell.openExternal(url);
+    } else {
+      appContext?.logger.warn({ url }, 'Blocked window-open for disallowed URL scheme');
+    }
     return { action: 'deny' };
   });
 
   window.webContents.on('will-navigate', (event, url) => {
-    if (url !== window.webContents.getURL()) {
-      event.preventDefault();
+    if (url === window.webContents.getURL()) {
+      return;
+    }
+    event.preventDefault();
+    if (isAllowedExternalUrl(url)) {
       void shell.openExternal(url);
+    } else {
+      appContext?.logger.warn({ url }, 'Blocked navigation to disallowed URL scheme');
     }
   });
 
@@ -615,6 +672,7 @@ if (!hasSingleInstanceLock) {
     .whenReady()
     .then(async () => {
       configureAppPaths();
+      applyContentSecurityPolicy();
       await createSplashWindow().catch((error: unknown) => {
         console.warn('Unable to create splash window:', error);
       });
