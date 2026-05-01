@@ -29,7 +29,7 @@ function buildFtsQuery(query: string): string {
     .trim()
     .split(/\s+/)
     .map((token) => token.replaceAll('"', '""'))
-    .filter(Boolean);
+    .filter((token) => token.length >= 3);
 
   if (tokens.length === 0) {
     return '""';
@@ -118,7 +118,7 @@ function chunkText(text: string): string[] {
   }
 
   flush();
-  return [...new Set(chunks)];
+  return chunks;
 }
 
 function clampSearchScore(value: number): number {
@@ -183,6 +183,8 @@ interface RankedKnowledgeCandidate {
 }
 
 export class RagService {
+  private ensuredWorkspaces = new Set<string>();
+
   constructor(
     private readonly database: DatabaseManager,
     private readonly logger: Logger
@@ -261,6 +263,28 @@ export class RagService {
 
     const documents: KnowledgeDocument[] = [];
     const skippedFiles: string[] = [];
+    const importedAt = nowIso();
+
+    const insertDocument = this.database.connection.prepare(`
+      INSERT INTO knowledge_documents (
+        id, workspace_id, title, source_path, mime_type,
+        content_hash, token_estimate, created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const insertChunk = this.database.connection.prepare(`
+      INSERT INTO knowledge_chunks (
+        id, document_id, workspace_id, chunk_index,
+        content, content_hash, token_estimate, created_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const deleteBySourcePath = this.database.connection.prepare(`
+      DELETE FROM knowledge_documents
+      WHERE workspace_id = ? AND source_path = ?
+    `);
 
     for (const attachment of attachments) {
       const content = attachment.extractedText?.trim();
@@ -283,27 +307,18 @@ export class RagService {
         continue;
       }
 
-      const createdAt = nowIso();
       const documentId = randomUUID();
       const chunks = chunkText(content);
       const tokenEstimate = estimateTokens(content);
 
-      this.database.connection
-        .prepare(`
-          INSERT INTO knowledge_documents (
-            id,
-            workspace_id,
-            title,
-            source_path,
-            mime_type,
-            content_hash,
-            token_estimate,
-            created_at,
-            updated_at
-          )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `)
-        .run(
+      this.database.connection.exec('BEGIN');
+
+      try {
+        if (attachment.filePath) {
+          deleteBySourcePath.run(workspaceId, attachment.filePath);
+        }
+
+        insertDocument.run(
           documentId,
           workspaceId,
           attachment.fileName,
@@ -311,39 +326,31 @@ export class RagService {
           attachment.mimeType,
           contentHash,
           tokenEstimate,
-          createdAt,
-          createdAt
+          importedAt,
+          importedAt
         );
 
-      const chunkStatement = this.database.connection.prepare(`
-        INSERT INTO knowledge_chunks (
-          id,
-          document_id,
-          workspace_id,
-          chunk_index,
-          content,
-          content_hash,
-          token_estimate,
-          created_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `);
+        chunks.forEach((chunk, index) => {
+          const chunkId = randomUUID();
 
-      chunks.forEach((chunk, index) => {
-        const chunkId = randomUUID();
+          insertChunk.run(
+            chunkId,
+            documentId,
+            workspaceId,
+            index,
+            chunk,
+            hashContent(chunk),
+            estimateTokens(chunk),
+            importedAt
+          );
+          this.upsertChunkEmbedding(chunkId, workspaceId, chunk, importedAt);
+        });
 
-        chunkStatement.run(
-          chunkId,
-          documentId,
-          workspaceId,
-          index,
-          chunk,
-          hashContent(chunk),
-          estimateTokens(chunk),
-          createdAt
-        );
-        this.upsertChunkEmbedding(chunkId, workspaceId, chunk, createdAt);
-      });
+        this.database.connection.exec('COMMIT');
+      } catch (error) {
+        this.database.connection.exec('ROLLBACK');
+        throw error;
+      }
 
       documents.push(
         knowledgeDocumentSchema.parse({
@@ -353,13 +360,14 @@ export class RagService {
           sourcePath: attachment.filePath,
           mimeType: attachment.mimeType,
           tokenEstimate,
-          createdAt,
-          updatedAt: createdAt
+          createdAt: importedAt,
+          updatedAt: importedAt
         })
       );
     }
 
     if (documents.length > 0 || skippedFiles.length > 0) {
+      this.ensuredWorkspaces.delete(workspaceId);
       this.logger.info(
         {
           workspaceId,
@@ -478,8 +486,10 @@ export class RagService {
         JOIN knowledge_chunks ON knowledge_chunks.id = knowledge_chunk_embeddings.chunk_id
         JOIN knowledge_documents ON knowledge_documents.id = knowledge_chunks.document_id
         WHERE knowledge_chunk_embeddings.workspace_id = ?
+        ORDER BY knowledge_chunk_embeddings.updated_at DESC
+        LIMIT ?
       `)
-      .all(workspaceId) as unknown as EmbeddingSearchRow[];
+      .all(workspaceId, Math.max(limit * 10, 100)) as unknown as EmbeddingSearchRow[];
 
     return rows
       .map((row) => ({
@@ -502,6 +512,10 @@ export class RagService {
   }
 
   private ensureWorkspaceEmbeddings(workspaceId: string): void {
+    if (this.ensuredWorkspaces.has(workspaceId)) {
+      return;
+    }
+
     const missingRows = this.database.connection
       .prepare(`
         SELECT
@@ -513,10 +527,12 @@ export class RagService {
           ON knowledge_chunk_embeddings.chunk_id = knowledge_chunks.id
         WHERE knowledge_chunks.workspace_id = ?
           AND knowledge_chunk_embeddings.chunk_id IS NULL
+        LIMIT 1000
       `)
       .all(workspaceId) as unknown as MissingEmbeddingRow[];
 
     if (missingRows.length === 0) {
+      this.ensuredWorkspaces.add(workspaceId);
       return;
     }
 

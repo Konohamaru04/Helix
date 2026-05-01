@@ -11,6 +11,7 @@ import { MemoryService } from '@bridge/memory';
 import { getMcpCapabilitySurface } from '@bridge/mcp';
 import { NvidiaClient } from '@bridge/nvidia/client';
 import { OllamaClient } from '@bridge/ollama/client';
+import { VisionCapabilityCache } from '@bridge/ollama/vision-cache';
 import { getDeferredPythonSitePackagesPath } from '@bridge/python/deferred-runtime';
 import { PythonServerManager } from '@bridge/python/lifecycle';
 import { BridgeQueue } from '@bridge/queue';
@@ -23,6 +24,8 @@ import type { Logger } from 'pino';
 import { ChatRepository } from './chat/repository';
 import { ChatService } from './chat/service';
 import { TurnMetadataService } from './chat/turn-metadata';
+import { PersonaRepository } from './personas/repository';
+import { PersonaService } from './personas/service';
 
 export interface DesktopAppContextOptions {
   appPath: string;
@@ -51,6 +54,9 @@ export class DesktopAppContext {
   readonly memoryService: MemoryService;
   readonly generationRepository: GenerationRepository;
   readonly generationService: GenerationService;
+  readonly visionCache: VisionCapabilityCache;
+  readonly personaRepository: PersonaRepository;
+  readonly personaService: PersonaService;
   readonly chatService: ChatService;
 
   constructor(private readonly options: DesktopAppContextOptions) {
@@ -61,7 +67,11 @@ export class DesktopAppContext {
     this.queue = new BridgeQueue();
     this.ollamaClient = new OllamaClient(this.logger.child({ scope: 'ollama' }));
     this.nvidiaClient = new NvidiaClient(this.logger.child({ scope: 'nvidia' }));
-    this.router = new ChatRouter(this.logger.child({ scope: 'router' }));
+    this.visionCache = new VisionCapabilityCache(
+      this.ollamaClient,
+      this.logger.child({ scope: 'vision-cache' })
+    );
+    this.router = new ChatRouter(this.logger.child({ scope: 'router' }), this.visionCache);
     const databasePath = path.join(options.userDataPath, 'data', 'ollama-desktop.sqlite');
     const skillsDirectory = path.join(options.appPath, 'skills');
     this.database = new DatabaseManager(
@@ -109,6 +119,8 @@ export class DesktopAppContext {
       undefined,
       this.capabilityService
     );
+    this.personaRepository = new PersonaRepository(this.database);
+    this.personaService = new PersonaService(this.personaRepository, this.appStateRepository);
     this.memoryService = new MemoryService(this.repository, this.turnMetadataService);
     this.generationService = new GenerationService(
       this.generationRepository,
@@ -125,12 +137,14 @@ export class DesktopAppContext {
       this.ollamaClient,
       this.nvidiaClient,
       this.router,
+      this.visionCache,
       this.queue,
       this.logger.child({ scope: 'chat' }),
       this.memoryService,
       this.ragService,
       this.toolDispatcher,
       this.skillRegistry,
+      this.personaService,
       this.generationRepository,
       this.generationService
     );
@@ -177,6 +191,22 @@ export class DesktopAppContext {
   async getSystemStatus(): Promise<SystemStatus> {
     const settings = this.settingsService.get();
 
+    const ollamaStatus = await this.ollamaClient.getStatus(settings.ollamaBaseUrl);
+
+    if (ollamaStatus.reachable && ollamaStatus.models.length > 0) {
+      this.visionCache
+        .preWarm(
+          settings.ollamaBaseUrl,
+          ollamaStatus.models.map((m) => m.name)
+        )
+        .catch((error) => {
+          this.logger.warn(
+            { error: error instanceof Error ? error.message : String(error) },
+            'Failed to pre-warm vision capability cache'
+          );
+        });
+    }
+
     return systemStatusSchema.parse({
       appVersion: this.options.appVersion,
       database: {
@@ -184,7 +214,7 @@ export class DesktopAppContext {
         path: this.database.databasePath
       },
       activeTextBackend: settings.textInferenceBackend,
-      ollama: await this.ollamaClient.getStatus(settings.ollamaBaseUrl),
+      ollama: ollamaStatus,
       nvidia: await this.nvidiaClient.getStatus(
         settings.nvidiaBaseUrl,
         settings.nvidiaApiKey

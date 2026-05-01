@@ -15,6 +15,7 @@ import { MessageList } from '@renderer/components/message-list';
 import { PlanDrawer } from '@renderer/components/plan-drawer';
 import { QueueDrawer } from '@renderer/components/queue-drawer';
 import { SkillsDrawer } from '@renderer/components/skills-drawer';
+import { PersonasDrawer } from '@renderer/components/personas-drawer';
 import { SettingsDrawer } from '@renderer/components/settings-drawer';
 import { Sidebar } from '@renderer/components/sidebar';
 import { StatusBar } from '@renderer/components/status-bar';
@@ -27,6 +28,7 @@ import {
   getImageGenerationModelLabel
 } from '@renderer/lib/image-generation-models';
 import {
+  buildWireframeScaffoldPrompt,
   parseWireframeArtifact,
   parseWireframeArtifacts
 } from '@renderer/lib/wireframe';
@@ -261,6 +263,15 @@ export function ChatPage() {
   const deleteGenerationArtifact = useAppStore(
     (state) => state.deleteGenerationArtifact
   );
+  const personas = useAppStore((state) => state.personas);
+  const activePersonaId = useAppStore((state) => state.activePersonaId);
+  const personasDrawerOpen = useAppStore((state) => state.personasDrawerOpen);
+  const togglePersonasDrawer = useAppStore((state) => state.togglePersonasDrawer);
+  const createPersona = useAppStore((state) => state.createPersona);
+  const updatePersona = useAppStore((state) => state.updatePersona);
+  const deletePersona = useAppStore((state) => state.deletePersona);
+  const setActivePersona = useAppStore((state) => state.setActivePersona);
+  const activePersona = personas.find((p) => p.id === activePersonaId) ?? null;
 
   const activeMessages =
     activeConversationId === null
@@ -631,22 +642,26 @@ export function ChatPage() {
   function buildWireframePromptForSelectedIteration(prompt: string) {
     const trimmedPrompt = prompt.trim();
 
-    if (!selectedWireframeIteration) {
-      return trimmedPrompt;
+    if (selectedWireframeIteration) {
+      return [
+        'Wireframe revision target:',
+        '- Apply this request to the currently loaded design version only.',
+        '- Treat earlier wireframe versions as immutable history.',
+        '- Create a new design iteration derived from the selected version.',
+        '',
+        'Selected loaded version:',
+        JSON.stringify(selectedWireframeIteration.design),
+        '',
+        'User request:',
+        trimmedPrompt
+      ].join('\n');
     }
 
-    return [
-      'Wireframe revision target:',
-      '- Apply this request to the currently loaded design version only.',
-      '- Treat earlier wireframe versions as immutable history.',
-      '- Create a new design iteration derived from the selected version.',
-      '',
-      'Selected loaded version:',
-      JSON.stringify(selectedWireframeIteration.design),
-      '',
-      'User request:',
-      trimmedPrompt
-    ].join('\n');
+    if (!activeConversationHasWireframeArtifacts) {
+      return buildWireframeScaffoldPrompt(trimmedPrompt);
+    }
+
+    return trimmedPrompt;
   }
 
   function resolveWireframeModeForConversation(conversationId: string | null): ComposerMode {
@@ -1418,8 +1433,10 @@ export function ChatPage() {
                 ) : null}
 
                 <ChatComposer
+                  activePersonaName={activePersona?.name ?? null}
                   activeWorkspaceName={activeWorkspace?.name ?? null}
                   attachments={composerAttachments}
+                  availableSkills={availableSkills}
                   disabled={
                     composerMode === 'image'
                       ? !imageGenerationAvailable || streaming || submitInFlight
@@ -1483,6 +1500,7 @@ export function ChatPage() {
         </div>
 
         <StatusBar
+          activePersonaName={activePersona?.name ?? null}
           activeTextBackend={activeTextBackend}
           availableModels={availableModels}
           onOpenAgents={() => toggleAgentsDrawer()}
@@ -1490,9 +1508,11 @@ export function ChatPage() {
           onOpenPlan={() => togglePlanDrawer()}
           onOpenQueue={() => toggleQueueDrawer()}
           onOpenSkills={() => toggleSkillsDrawer()}
+          onOpenPersonas={() => togglePersonasDrawer()}
           onOpenSettings={() => toggleSettingsDrawer(true)}
           agentsOpen={agentsDrawerOpen}
           galleryOpen={galleryDrawerOpen}
+          personasOpen={personasDrawerOpen}
           onSelectedModelChange={setSelectedModel}
           onSelectedThinkModeChange={(value) => setSelectedThinkMode(value as '' | 'off' | 'on' | 'low' | 'medium' | 'high')}
           onTextBackendChange={(backend) => void handleTextBackendChange(backend)}
@@ -1583,6 +1603,25 @@ export function ChatPage() {
         onUpdateSkill={(input) => handleUpdateSkill(input)}
         open={skillsDrawerOpen}
         skills={availableSkills}
+      />
+
+      <PersonasDrawer
+        activePersonaId={activePersonaId}
+        onClose={() => togglePersonasDrawer(false)}
+        onCreatePersona={async (input) => {
+          await createPersona(input);
+        }}
+        onDeletePersona={async (personaId) => {
+          await deletePersona(personaId);
+        }}
+        onSetActivePersona={async (personaId) => {
+          await setActivePersona(personaId);
+        }}
+        onUpdatePersona={async (input) => {
+          await updatePersona(input);
+        }}
+        open={personasDrawerOpen}
+        personas={personas}
       />
 
       <StreamingMascot active={streaming && (settings?.streamingMascotEnabled ?? true)} />

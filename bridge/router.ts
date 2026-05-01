@@ -5,6 +5,7 @@ import type {
   UserSettings
 } from '@bridge/ipc/contracts';
 import type { Logger } from 'pino';
+import { VisionCapabilityCache } from './ollama/vision-cache';
 
 interface SkillIntent {
   skillId: string;
@@ -134,11 +135,33 @@ function looksLikeWorkspaceSearchPrompt(prompt: string): boolean {
 }
 
 function looksLikeWebSearchPrompt(prompt: string): boolean {
+  const text = prompt.trim();
+
+  const explicitWebIntent =
+    /\b(search|find|look up|lookup|check|browse)\s+(the\s+)?(web|internet|online)\b/i.test(text) ||
+    /\b(web search|internet search|online search|browse online)\b/i.test(text);
+
+  const onlineSourceIntent =
+    /\b(official docs|docs online|online documentation|release notes|latest release|latest version|current version|news)\b/i.test(text);
+
+  const localIntent =
+    /\b(repo|repository|workspace|codebase|project|solution|application|app|local|folder|directory|file|files|source code|current state)\b/i.test(text);
+
+  /**
+   * If prompt is clearly about local files/repo/project,
+   * do NOT treat it as web search unless web/online is explicitly mentioned.
+   */
+  if (localIntent && !explicitWebIntent && !onlineSourceIntent) {
+    return false;
+  }
+
+  if (explicitWebIntent) {
+    return true;
+  }
+
   return (
-    /\b(search the web|search online|look online|look up online|browse the web|web search)\b/i
-      .test(prompt) ||
-    (/\b(latest|current|today|news|release notes|docs online|official docs)\b/i.test(prompt) &&
-      /\b(search|find|look up|what(?:'s| is)|check)\b/i.test(prompt))
+    onlineSourceIntent &&
+    /\b(search|find|look up|lookup|what(?:'s| is)|check|get|fetch)\b/i.test(text)
   );
 }
 
@@ -273,181 +296,8 @@ function pickAvailableModel(
   return undefined;
 }
 
-function isVisionCapableModel(model: string): boolean {
-  return /(vl|vision|llava)/i.test(model);
-}
-
 function isCodingCapableModel(model: string): boolean {
   return /(coder|code)/i.test(model);
-}
-
-function findPreferredModel(
-  availableModels: string[],
-  settings: UserSettings,
-  options: {
-    requestedModel?: string | undefined;
-    needsVision: boolean;
-    prefersCode: boolean;
-  }
-): { selectedModel: string; fallbackModel: string | null; reason: string } {
-  const requestedModel = options.requestedModel?.trim();
-  const normalizedAvailableModels = Array.from(
-    new Set(availableModels.map((model) => model.trim()).filter(Boolean))
-  );
-  const requestedModelAvailable =
-    requestedModel && normalizedAvailableModels.includes(requestedModel)
-      ? requestedModel
-      : null;
-
-  const requestedModelUnavailable =
-    requestedModel && !requestedModelAvailable
-      ? requestedModel
-      : null;
-  const generalModel = pickAvailableModel(normalizedAvailableModels, [
-    settings.defaultModel,
-    normalizedAvailableModels[0]
-  ]);
-
-  if (options.needsVision) {
-    if (requestedModelAvailable && isVisionCapableModel(requestedModelAvailable)) {
-      return {
-        selectedModel: requestedModelAvailable,
-        fallbackModel: null,
-        reason: 'user-selected-model'
-      };
-    }
-
-    const visionModel = pickAvailableModel(normalizedAvailableModels, [
-      settings.visionModel,
-      normalizedAvailableModels.find((model) => /(vl|vision|llava)/i.test(model))
-    ]);
-
-    if (visionModel) {
-      return {
-        selectedModel: visionModel,
-        fallbackModel:
-          requestedModelUnavailable ??
-          (requestedModelAvailable && requestedModelAvailable !== visionModel
-            ? requestedModelAvailable
-            : null) ??
-          (generalModel && generalModel !== visionModel ? generalModel : null),
-        reason:
-          requestedModelUnavailable !== null
-            ? 'requested-model-unavailable'
-            : requestedModelAvailable !== null
-              ? 'vision-attachment-routing'
-              : settings.visionModel.trim() &&
-                  visionModel === settings.visionModel.trim()
-              ? 'settings-vision-model'
-              : 'vision-attachment-routing'
-      };
-    }
-
-    if (requestedModelAvailable) {
-      return {
-        selectedModel: requestedModelAvailable,
-        fallbackModel: requestedModelUnavailable ?? null,
-        reason: 'user-selected-model'
-      };
-    }
-
-    if (generalModel) {
-      return {
-        selectedModel: generalModel,
-        fallbackModel:
-          requestedModelUnavailable ??
-          (settings.visionModel.trim() || null),
-        reason:
-          requestedModelUnavailable !== null
-            ? 'requested-model-unavailable'
-            : 'vision-routed-to-general'
-      };
-    }
-  }
-
-  if (options.prefersCode) {
-    if (requestedModelAvailable && isCodingCapableModel(requestedModelAvailable)) {
-      return {
-        selectedModel: requestedModelAvailable,
-        fallbackModel: null,
-        reason: 'user-selected-model'
-      };
-    }
-
-    const codingModel = pickAvailableModel(normalizedAvailableModels, [
-      settings.codingModel,
-      normalizedAvailableModels.find((model) => /(coder|code)/i.test(model))
-    ]);
-
-    if (codingModel) {
-      return {
-        selectedModel: codingModel,
-        fallbackModel:
-          requestedModelUnavailable ??
-          (requestedModelAvailable && requestedModelAvailable !== codingModel
-            ? requestedModelAvailable
-            : null) ??
-          (generalModel && generalModel !== codingModel ? generalModel : null),
-        reason:
-          requestedModelUnavailable !== null
-            ? 'requested-model-unavailable'
-            : requestedModelAvailable !== null
-              ? 'code-intent-routing'
-              : settings.codingModel.trim() &&
-                  codingModel === settings.codingModel.trim()
-              ? 'settings-coding-model'
-              : 'code-intent-routing'
-      };
-    }
-
-    if (requestedModelAvailable) {
-      return {
-        selectedModel: requestedModelAvailable,
-        fallbackModel: requestedModelUnavailable ?? null,
-        reason: 'user-selected-model'
-      };
-    }
-
-    if (generalModel) {
-      return {
-        selectedModel: generalModel,
-        fallbackModel:
-          requestedModelUnavailable ??
-          (settings.codingModel.trim() || null),
-        reason:
-          requestedModelUnavailable !== null
-            ? 'requested-model-unavailable'
-            : 'coding-routed-to-general'
-      };
-    }
-  }
-
-  if (requestedModelAvailable) {
-    return {
-      selectedModel: requestedModelAvailable,
-      fallbackModel: null,
-      reason: 'user-selected-model'
-    };
-  }
-
-  const selectedModel = generalModel;
-
-  if (!selectedModel) {
-    throw new Error(
-      'No Ollama model is configured. Set a default model in Settings or pull one with Ollama.'
-    );
-  }
-
-  return {
-    selectedModel,
-    fallbackModel: requestedModelUnavailable,
-    reason:
-      requestedModelUnavailable !== null
-        ? 'requested-model-unavailable'
-        : settings.defaultModel.trim() && selectedModel === settings.defaultModel.trim()
-          ? 'settings-general-model'
-          : 'first-available-model'
-  };
 }
 
 function detectAutoSkillIntent(
@@ -579,7 +429,10 @@ export interface RouteDecision {
 }
 
 export class ChatRouter {
-  constructor(private readonly logger: Logger) {}
+  constructor(
+    private readonly logger: Logger,
+    private readonly visionCache: VisionCapabilityCache
+  ) {}
 
   decide(
     input: RouteInput,
@@ -587,7 +440,7 @@ export class ChatRouter {
     availableModels: string[]
   ): RouteDecision {
     if (input.wireframeMode) {
-      const modelSelection = findPreferredModel(availableModels, settings, {
+      const modelSelection = this.findPreferredModel(availableModels, settings, {
         requestedModel: input.requestedModel,
         needsVision: input.attachments.some(
           (attachment) => attachment.mimeType?.startsWith('image/') === true
@@ -712,12 +565,16 @@ export class ChatRouter {
       );
     const prefersCode =
       trustedModelAnalysis?.prefersCode ?? looksLikeCodePrompt(input.prompt);
+    const hasDocumentAttachments = input.attachments.some(
+      (a) => !a.mimeType?.startsWith('image/') && a.extractedText
+    );
     const shouldUseRag =
       activeToolId === 'knowledge-search'
         ? false
         : input.workspaceHasKnowledge &&
           (activeSkillId === 'grounded' ||
             Boolean(trustedModelAnalysis?.useWorkspaceKnowledge) ||
+            hasDocumentAttachments ||
             (shouldUseHeuristics &&
               (/\b(source|doc|document|knowledge|reference|according to)\b/i.test(input.prompt) ||
                 (followUp && Boolean(latestAssistantRoute?.usedRag)))));
@@ -785,7 +642,7 @@ export class ChatRouter {
       const modelSelection =
         strategy === 'tool'
           ? null
-          : findPreferredModel(availableModels, settings, {
+          : this.findPreferredModel(availableModels, settings, {
               requestedModel: input.requestedModel,
               needsVision,
               prefersCode
@@ -815,7 +672,7 @@ export class ChatRouter {
       };
     }
 
-    const modelSelection = findPreferredModel(availableModels, settings, {
+    const modelSelection = this.findPreferredModel(availableModels, settings, {
       requestedModel: input.requestedModel,
       needsVision,
       prefersCode
@@ -856,6 +713,175 @@ export class ChatRouter {
       activeToolId: null,
       useRag: shouldUseRag,
       useTools: false
+    };
+  }
+
+  private findPreferredModel(
+    availableModels: string[],
+    settings: UserSettings,
+    options: {
+      requestedModel?: string | undefined;
+      needsVision: boolean;
+      prefersCode: boolean;
+    }
+  ): { selectedModel: string; fallbackModel: string | null; reason: string } {
+    const requestedModel = options.requestedModel?.trim();
+    const normalizedAvailableModels = Array.from(
+      new Set(availableModels.map((model) => model.trim()).filter(Boolean))
+    );
+    const requestedModelAvailable =
+      requestedModel && normalizedAvailableModels.includes(requestedModel)
+        ? requestedModel
+        : null;
+
+    const requestedModelUnavailable =
+      requestedModel && !requestedModelAvailable
+        ? requestedModel
+        : null;
+    const generalModel = pickAvailableModel(normalizedAvailableModels, [
+      settings.defaultModel,
+      normalizedAvailableModels[0]
+    ]);
+
+    if (options.needsVision) {
+      if (requestedModelAvailable && this.visionCache.isVisionCapable(requestedModelAvailable)) {
+        return {
+          selectedModel: requestedModelAvailable,
+          fallbackModel: null,
+          reason: 'user-selected-model'
+        };
+      }
+
+      const visionModel = pickAvailableModel(normalizedAvailableModels, [
+        settings.visionModel,
+        normalizedAvailableModels.find((model) => this.visionCache.isVisionCapable(model))
+      ]);
+
+      if (visionModel) {
+        return {
+          selectedModel: visionModel,
+          fallbackModel:
+            requestedModelUnavailable ??
+            (requestedModelAvailable && requestedModelAvailable !== visionModel
+              ? requestedModelAvailable
+              : null) ??
+            (generalModel && generalModel !== visionModel ? generalModel : null),
+          reason:
+            requestedModelUnavailable !== null
+              ? 'requested-model-unavailable'
+              : requestedModelAvailable !== null
+                ? 'vision-attachment-routing'
+                : settings.visionModel.trim() &&
+                    visionModel === settings.visionModel.trim()
+                ? 'settings-vision-model'
+                : 'vision-attachment-routing'
+        };
+      }
+
+      if (requestedModelAvailable) {
+        return {
+          selectedModel: requestedModelAvailable,
+          fallbackModel: requestedModelUnavailable ?? null,
+          reason: 'user-selected-model'
+        };
+      }
+
+      if (generalModel) {
+        return {
+          selectedModel: generalModel,
+          fallbackModel:
+            requestedModelUnavailable ??
+            (settings.visionModel.trim() || null),
+          reason:
+            requestedModelUnavailable !== null
+              ? 'requested-model-unavailable'
+              : 'vision-routed-to-general'
+        };
+      }
+    }
+
+    if (options.prefersCode) {
+      if (requestedModelAvailable && isCodingCapableModel(requestedModelAvailable)) {
+        return {
+          selectedModel: requestedModelAvailable,
+          fallbackModel: null,
+          reason: 'user-selected-model'
+        };
+      }
+
+      const codingModel = pickAvailableModel(normalizedAvailableModels, [
+        settings.codingModel,
+        normalizedAvailableModels.find((model) => /(coder|code)/i.test(model))
+      ]);
+
+      if (codingModel) {
+        return {
+          selectedModel: codingModel,
+          fallbackModel:
+            requestedModelUnavailable ??
+            (requestedModelAvailable && requestedModelAvailable !== codingModel
+              ? requestedModelAvailable
+              : null) ??
+            (generalModel && generalModel !== codingModel ? generalModel : null),
+          reason:
+            requestedModelUnavailable !== null
+              ? 'requested-model-unavailable'
+              : requestedModelAvailable !== null
+                ? 'code-intent-routing'
+                : settings.codingModel.trim() &&
+                    codingModel === settings.codingModel.trim()
+                ? 'settings-coding-model'
+                : 'code-intent-routing'
+        };
+      }
+
+      if (requestedModelAvailable) {
+        return {
+          selectedModel: requestedModelAvailable,
+          fallbackModel: requestedModelUnavailable ?? null,
+          reason: 'user-selected-model'
+        };
+      }
+
+      if (generalModel) {
+        return {
+          selectedModel: generalModel,
+          fallbackModel:
+            requestedModelUnavailable ??
+            (settings.codingModel.trim() || null),
+          reason:
+            requestedModelUnavailable !== null
+              ? 'requested-model-unavailable'
+              : 'coding-routed-to-general'
+        };
+      }
+    }
+
+    if (requestedModelAvailable) {
+      return {
+        selectedModel: requestedModelAvailable,
+        fallbackModel: null,
+        reason: 'user-selected-model'
+      };
+    }
+
+    const selectedModel = generalModel;
+
+    if (!selectedModel) {
+      throw new Error(
+        'No Ollama model is configured. Set a default model in Settings or pull one with Ollama.'
+      );
+    }
+
+    return {
+      selectedModel,
+      fallbackModel: requestedModelUnavailable,
+      reason:
+        requestedModelUnavailable !== null
+          ? 'requested-model-unavailable'
+          : settings.defaultModel.trim() && selectedModel === settings.defaultModel.trim()
+            ? 'settings-general-model'
+            : 'first-available-model'
     };
   }
 }

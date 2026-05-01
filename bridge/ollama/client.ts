@@ -50,7 +50,7 @@ const OLLAMA_CHAT_FETCH_RETRY_DELAY_MS = 750;
 const OLLAMA_CHAT_HEADERS_TIMEOUT_MS = 30 * 60 * 1000;
 const OLLAMA_CHAT_CONNECT_TIMEOUT_MS = 30 * 1000;
 const MIN_DYNAMIC_OLLAMA_NUM_CTX = 4_096;
-const MAX_FALLBACK_OLLAMA_NUM_CTX = 131_072;
+const MAX_FALLBACK_OLLAMA_NUM_CTX = 262_144;
 
 const ollamaChatDispatcher = new Agent({
   connectTimeout: OLLAMA_CHAT_CONNECT_TIMEOUT_MS,
@@ -65,6 +65,18 @@ export interface OllamaToolDefinition {
     description: string;
     parameters: Record<string, unknown>;
   };
+}
+
+interface OllamaShowResponse {
+  details?: {
+    families?: string[];
+    parent_model?: string;
+    format?: string;
+    family?: string;
+    parameter_size?: string;
+    quantization_level?: string;
+  };
+  [key: string]: unknown;
 }
 
 export interface OllamaChatMessage {
@@ -677,5 +689,22 @@ export class OllamaClient {
       ...(input.tools && input.tools.length > 0 ? { tools: input.tools } : {}),
       ...(input.think !== undefined ? { think: input.think } : {})
     };
+  }
+
+  async showModel(
+    baseUrl: string,
+    modelName: string
+  ): Promise<OllamaShowResponse> {
+    const response = await fetch(new URL('/api/show', baseUrl), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: modelName })
+    });
+
+    if (!response.ok) {
+      throw new Error(`Ollama /api/show failed with status ${response.status}.`);
+    }
+
+    return (await response.json()) as OllamaShowResponse;
   }
 }

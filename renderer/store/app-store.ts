@@ -32,6 +32,9 @@ import type {
   UpdateSkillInput,
   UpdateUserSettings,
   UserSettings,
+  PersonaDefinition,
+  CreatePersonaInput,
+  UpdatePersonaInput,
   WorktreeSession,
   WorkspaceSummary
 } from '@bridge/ipc/contracts';
@@ -538,6 +541,15 @@ interface AppStoreState {
   createSkill: (input: CreateSkillInput) => Promise<SkillDefinition>;
   updateSkill: (input: UpdateSkillInput) => Promise<SkillDefinition>;
   deleteSkill: (input: DeleteSkillInput) => Promise<void>;
+  personas: PersonaDefinition[];
+  activePersonaId: string | null;
+  personasDrawerOpen: boolean;
+  refreshPersonas: () => Promise<void>;
+  createPersona: (input: CreatePersonaInput) => Promise<PersonaDefinition>;
+  updatePersona: (input: UpdatePersonaInput) => Promise<PersonaDefinition>;
+  deletePersona: (personaId: string) => Promise<void>;
+  setActivePersona: (personaId: string | null) => Promise<void>;
+  togglePersonasDrawer: (open?: boolean) => void;
   grantCapabilityPermission: (capabilityId: string) => Promise<void>;
   revokeCapabilityPermission: (capabilityId: string) => Promise<void>;
   deleteTask: (taskId: string) => Promise<void>;
@@ -615,6 +627,9 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
   pendingStreamEventsByAssistantId: {},
   lastExportPath: null,
   lastImportPath: null,
+  personas: [],
+  activePersonaId: null,
+  personasDrawerOpen: false,
 
   loadInitialData: async () => {
     const api = getDesktopApi();
@@ -635,7 +650,9 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
         capabilityAgents,
         capabilityTeams,
         capabilityWorktrees,
-        capabilityAuditEvents
+        capabilityAuditEvents,
+        personas,
+        activePersona
       ] =
         await Promise.all([
           api.system.getStatus(),
@@ -653,7 +670,9 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
           api.capabilities.listAgents(),
           api.capabilities.listTeams(),
           api.capabilities.listWorktrees(),
-          api.capabilities.listAuditEvents()
+          api.capabilities.listAuditEvents(),
+          api.personas.list(),
+          api.personas.getActive()
         ]);
       let activeWorkspaceId = workspaces[0]?.id ?? null;
       let activeConversationId: string | null;
@@ -721,7 +740,9 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
             ? {}
             : { [activeConversationId]: messages },
         selectedModel: '',
-        selectedThinkMode: ''
+        selectedThinkMode: '',
+        personas,
+        activePersonaId: activePersona?.id ?? null
       });
     } catch (error) {
       set({
@@ -864,13 +885,6 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
       activeConversationId: nextConversationId,
       pendingGenerationConfirmation: null
     });
-
-    if (nextConversationId && workspaceId) {
-      void getDesktopApi().appState.setLastSession({
-        conversationId: nextConversationId,
-        workspaceId
-      }).catch(() => undefined);
-    }
 
     if (nextConversationId === null) {
       if (workspaceId && !(workspaceId in state.knowledgeDocumentsByWorkspace)) {
@@ -1037,11 +1051,6 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
       pendingGenerationConfirmation: null
     });
 
-    void getDesktopApi().appState.setLastSession({
-      conversationId,
-      workspaceId: workspaceId ?? ''
-    }).catch(() => undefined);
-
     if (existing) {
       return;
     }
@@ -1159,6 +1168,49 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
     await getDesktopApi().chat.deleteSkill(input);
     set((state) => ({
       availableSkills: state.availableSkills.filter((skill) => skill.id !== input.skillId)
+    }));
+  },
+
+  refreshPersonas: async () => {
+    const [personas, activePersona] = await Promise.all([
+      getDesktopApi().personas.list(),
+      getDesktopApi().personas.getActive()
+    ]);
+    set({ personas, activePersonaId: activePersona?.id ?? null });
+  },
+
+  createPersona: async (input) => {
+    const persona = await getDesktopApi().personas.create(input);
+    set((state) => ({
+      personas: [...state.personas, persona]
+    }));
+    return persona;
+  },
+
+  updatePersona: async (input) => {
+    const persona = await getDesktopApi().personas.update(input);
+    set((state) => ({
+      personas: state.personas.map((p) => (p.id === persona.id ? persona : p))
+    }));
+    return persona;
+  },
+
+  deletePersona: async (personaId) => {
+    await getDesktopApi().personas.delete({ personaId });
+    set((state) => ({
+      personas: state.personas.filter((p) => p.id !== personaId),
+      activePersonaId: state.activePersonaId === personaId ? null : state.activePersonaId
+    }));
+  },
+
+  setActivePersona: async (personaId) => {
+    await getDesktopApi().personas.setActive({ personaId });
+    set({ activePersonaId: personaId });
+  },
+
+  togglePersonasDrawer: (open) => {
+    set((state) => ({
+      personasDrawerOpen: open === undefined ? !state.personasDrawerOpen : open
     }));
   },
 
@@ -1718,3 +1770,45 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
     void get().refreshGenerationGallery();
   }
 }));
+
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+let lastPersistedSession: { conversationId: string; workspaceId: string } | null = null;
+
+useAppStore.subscribe((state, prevState) => {
+  const { activeConversationId, activeWorkspaceId } = state;
+
+  if (
+    activeConversationId === prevState.activeConversationId &&
+    activeWorkspaceId === prevState.activeWorkspaceId
+  ) {
+    return;
+  }
+
+  if (
+    !activeConversationId ||
+    !activeWorkspaceId ||
+    !UUID_REGEX.test(activeConversationId) ||
+    !UUID_REGEX.test(activeWorkspaceId)
+  ) {
+    return;
+  }
+
+  if (
+    lastPersistedSession?.conversationId === activeConversationId &&
+    lastPersistedSession.workspaceId === activeWorkspaceId
+  ) {
+    return;
+  }
+
+  lastPersistedSession = {
+    conversationId: activeConversationId,
+    workspaceId: activeWorkspaceId
+  };
+
+  void getDesktopApi()
+    .appState.setLastSession({
+      conversationId: activeConversationId,
+      workspaceId: activeWorkspaceId
+    })
+    .catch(() => undefined);
+});

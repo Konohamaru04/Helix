@@ -146,7 +146,8 @@ describe('buildConversationContext', () => {
     expect(result.messages[0]?.content).toContain('`builder`');
     expect(result.messages[0]?.content).toContain('Builder Mode.');
     expect(result.messages[1]?.content).toContain('Workspace prompt');
-    expect(result.messages[2]?.content).toContain('Active skill prompt');
+    expect(result.messages[2]?.content).toContain('Active turn instructions');
+    expect(result.messages[2]?.content).toContain('If they specify exact response text');
     expect(result.messages[3]?.content).toContain('Pinned memory');
     expect(result.messages[4]?.content).toContain('[Source 2]');
     expect(result.messages[5]?.content).toContain('Summarized conversation memory');
@@ -166,5 +167,76 @@ describe('buildConversationContext', () => {
     expect(result.observability.usedRag).toBe(true);
     expect(result.observability.dedupedItemCount).toBe(1);
     expect(result.observability.excludedCount).toBe(1);
+  });
+
+  it('replaces the identity line in the base system prompt when personaPrompt is provided', () => {
+    const result = buildConversationContext({
+      recentMessages: [
+        {
+          ...baseMessage,
+          id: '10000000-0000-4000-8000-000000000001',
+          role: 'user',
+          content: 'Hello',
+          status: 'completed'
+        }
+      ],
+      pinnedMessages: [],
+      retrievedSources: [],
+      workspacePrompt: null,
+      skillPrompt: null,
+      personaPrompt: 'Speak like a pirate.',
+      maxMessages: 10
+    });
+
+    expect(result.messages[0]?.role).toBe('system');
+    expect(result.messages[0]?.content).toContain('Speak like a pirate.');
+    expect(result.messages[0]?.content).not.toContain('You are Helix');
+    expect(result.messages[1]?.role).toBe('user');
+    expect(result.observability.usedPersona).toBe(true);
+  });
+
+  it('keeps the default identity line when personaPrompt is null or empty', () => {
+    const withNull = buildConversationContext({
+      recentMessages: [
+        {
+          ...baseMessage,
+          id: '10000000-0000-4000-8000-000000000001',
+          role: 'user',
+          content: 'Hello',
+          status: 'completed'
+        }
+      ],
+      pinnedMessages: [],
+      retrievedSources: [],
+      workspacePrompt: null,
+      skillPrompt: null,
+      personaPrompt: null,
+      maxMessages: 10
+    });
+
+    const withEmpty = buildConversationContext({
+      recentMessages: [
+        {
+          ...baseMessage,
+          id: '10000000-0000-4000-8000-000000000002',
+          role: 'user',
+          content: 'Hello',
+          status: 'completed'
+        }
+      ],
+      pinnedMessages: [],
+      retrievedSources: [],
+      workspacePrompt: null,
+      skillPrompt: null,
+      personaPrompt: '   ',
+      maxMessages: 10
+    });
+
+    expect(withNull.messages).toHaveLength(2);
+    expect(withNull.observability.usedPersona).toBe(false);
+    expect(withNull.messages[0]?.content).toContain('You are Helix');
+    expect(withEmpty.messages).toHaveLength(2);
+    expect(withEmpty.observability.usedPersona).toBe(false);
+    expect(withEmpty.messages[0]?.content).toContain('You are Helix');
   });
 });

@@ -19,6 +19,7 @@ import conversationsWorkspaceCascadeMigration from './migrations/014_conversatio
 import skillRegistryMigration from './migrations/015_skill_registry.sql?raw';
 import generationVideoJobsMigration from './migrations/016_generation_video_jobs.sql?raw';
 import appStateAndDraftsMigration from './migrations/017_app_state_and_drafts.sql?raw';
+import personasMigration from './migrations/018_personas.sql?raw';
 
 const bundledMigrations = [
   {
@@ -88,6 +89,10 @@ const bundledMigrations = [
   {
     version: '017_app_state_and_drafts.sql',
     sql: appStateAndDraftsMigration
+  },
+  {
+    version: '018_personas.sql',
+    sql: personasMigration
   }
 ];
 

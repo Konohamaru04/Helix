@@ -109,9 +109,149 @@ function parseQuestion(value: unknown, index: number): WireframeQuestion | null 
   };
 }
 
+function tryParseJsonRecord(raw: string): Record<string, unknown> | null {
+  try {
+    return asRecord(JSON.parse(raw));
+  } catch {
+    return null;
+  }
+}
+
+function jsonStringUnescape(raw: string): string {
+  let out = '';
+  let i = 0;
+
+  while (i < raw.length) {
+    const ch = raw[i];
+
+    if (ch === '\\' && i + 1 < raw.length) {
+      const next = raw[i + 1];
+
+      switch (next) {
+        case 'n':
+          out += '\n';
+          i += 2;
+          continue;
+        case 'r':
+          out += '\r';
+          i += 2;
+          continue;
+        case 't':
+          out += '\t';
+          i += 2;
+          continue;
+        case '"':
+          out += '"';
+          i += 2;
+          continue;
+        case '\\':
+          out += '\\';
+          i += 2;
+          continue;
+        case '/':
+          out += '/';
+          i += 2;
+          continue;
+        case 'b':
+          out += '\b';
+          i += 2;
+          continue;
+        case 'f':
+          out += '\f';
+          i += 2;
+          continue;
+        case 'u': {
+          const hex = raw.slice(i + 2, i + 6);
+
+          if (/^[0-9a-fA-F]{4}$/.test(hex)) {
+            out += String.fromCharCode(parseInt(hex, 16));
+            i += 6;
+            continue;
+          }
+          break;
+        }
+        default:
+          break;
+      }
+    }
+
+    out += ch;
+    i += 1;
+  }
+
+  return out;
+}
+
+function extractLenientDesignFields(
+  body: string
+): { title: string; html: string; css: string; js: string } | null {
+  const htmlAnchor = '"html":"';
+  const cssAnchor = '","css":"';
+  const jsAnchor = '","js":"';
+  const closingAnchor = '"}';
+  const htmlStart = body.indexOf(htmlAnchor);
+  const cssStart = body.indexOf(cssAnchor, htmlStart + htmlAnchor.length);
+
+  if (htmlStart === -1 || cssStart === -1) {
+    return null;
+  }
+
+  const jsStart = body.indexOf(jsAnchor, cssStart + cssAnchor.length);
+  const tailEnd = body.lastIndexOf(closingAnchor);
+
+  if (tailEnd <= cssStart) {
+    return null;
+  }
+
+  const htmlRaw = body.slice(htmlStart + htmlAnchor.length, cssStart);
+  const cssRaw =
+    jsStart === -1
+      ? body.slice(cssStart + cssAnchor.length, tailEnd)
+      : body.slice(cssStart + cssAnchor.length, jsStart);
+  const jsRaw =
+    jsStart === -1 ? '' : body.slice(jsStart + jsAnchor.length, tailEnd);
+
+  const titleMatch = body.match(/"title"\s*:\s*"((?:\\.|[^"\\])*)"/);
+  const title = titleMatch ? jsonStringUnescape(titleMatch[1] ?? '').trim() : '';
+
+  return {
+    title: title || 'Wireframe',
+    html: jsonStringUnescape(htmlRaw),
+    css: jsonStringUnescape(cssRaw),
+    js: jsonStringUnescape(jsRaw)
+  };
+}
+
 function parseArtifactJson(rawJson: string): WireframeArtifact | null {
   try {
-    const parsed = asRecord(JSON.parse(rawJson));
+    const trimmed = rawJson.trim();
+    let parsed = tryParseJsonRecord(trimmed);
+
+    if (!parsed) {
+      const start = trimmed.indexOf('{');
+
+      if (start !== -1) {
+        const balanced = findBalancedJsonObject(trimmed, start);
+
+        if (balanced) {
+          parsed = tryParseJsonRecord(balanced);
+        }
+      }
+    }
+
+    if (!parsed && /"type"\s*:\s*"design"/.test(trimmed)) {
+      const lenient = extractLenientDesignFields(trimmed);
+
+      if (lenient && isPreviewableHtml(lenient.html)) {
+        return {
+          type: 'design',
+          title: lenient.title,
+          html: lenient.html.trim(),
+          css: lenient.css,
+          js: lenient.js
+        };
+      }
+    }
 
     if (!parsed) {
       return null;
@@ -412,6 +552,61 @@ export function stripWireframeBlocks(content: string): string {
     .replace(WIREFRAME_BLOCK_PATTERN, '')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+}
+
+export const WIREFRAME_SCAFFOLD_DESIGN: WireframeDesignArtifact = {
+  type: 'design',
+  title: 'Wireframe scaffold',
+  html: [
+    '<main class="screen-set">',
+    '  <figure class="frame">',
+    '    <figcaption>Screen 1</figcaption>',
+    '    <section class="phone-screen">',
+    '      <header class="screen-header">Screen title</header>',
+    '      <div class="screen-body">Replace this placeholder with real content.</div>',
+    '      <nav class="bottom-nav">Tab · Tab · Tab</nav>',
+    '    </section>',
+    '  </figure>',
+    '  <figure class="frame">',
+    '    <figcaption>Screen 2</figcaption>',
+    '    <section class="phone-screen">',
+    '      <header class="screen-header">Screen title</header>',
+    '      <div class="screen-body">Replace this placeholder with real content.</div>',
+    '      <nav class="bottom-nav">Tab · Tab · Tab</nav>',
+    '    </section>',
+    '  </figure>',
+    '</main>'
+  ].join('\n'),
+  css: [
+    'html, body { margin: 0; background: transparent; overflow: hidden; }',
+    '.screen-set { display: grid; grid-template-columns: repeat(4, minmax(260px, 1fr)); gap: 32px 24px; padding: 32px; max-width: 1280px; background: transparent; }',
+    '.frame { margin: 0; background: transparent; }',
+    '.frame figcaption { color: #94a3b8; font: 12px/1.4 ui-sans-serif, system-ui, sans-serif; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.12em; }',
+    '.phone-screen { width: 100%; max-width: 280px; height: 560px; border-radius: 32px; background: #0f172a; color: #e2e8f0; padding: 20px; box-shadow: 0 16px 40px rgba(0,0,0,0.4); overflow: hidden; display: flex; flex-direction: column; }',
+    '.screen-header { font-size: 16px; font-weight: 600; margin-bottom: 12px; }',
+    '.screen-body { flex: 1; font-size: 13px; line-height: 1.5; color: #cbd5e1; }',
+    '.bottom-nav { margin-top: auto; padding: 12px 0; border-top: 1px solid #1e293b; font-size: 12px; color: #94a3b8; }'
+  ].join('\n'),
+  js: ''
+};
+
+export function buildWireframeScaffoldPrompt(userRequest: string): string {
+  return [
+    'Wireframe scaffold to extend (do NOT start from scratch — edit this base):',
+    '```wireframe',
+    JSON.stringify(WIREFRAME_SCAFFOLD_DESIGN),
+    '```',
+    '',
+    'Scaffold rules:',
+    '- Keep `<main class="screen-set">` as the only top-level wrapper.',
+    '- Preserve the existing `html, body { background: transparent }` reset and the `.screen-set` CSS grid (`repeat(4, minmax(260px, 1fr))`); only the screen content inside `.phone-screen` gets visible chrome.',
+    '- Replace the placeholder screens with at least 4 sibling `.phone-screen` frames (typical 5-8) covering the brief, each inside its own `<figure class="frame"><figcaption>Name</figcaption>...</figure>`.',
+    '- Add new CSS rules below the scaffold base; do not remove the transparent wrapper rules.',
+    '- Output exactly one fenced ```wireframe JSON `type:"design"` artifact when generating, or one `type:"questions"` artifact when more requirements are needed.',
+    '',
+    'User request:',
+    userRequest
+  ].join('\n');
 }
 
 export function buildWireframeAnswerPrompt(input: {

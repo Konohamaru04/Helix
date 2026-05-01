@@ -9,11 +9,13 @@ interface StatusBarProps {
   planOpen?: boolean;
   agentsOpen?: boolean;
   skillsOpen?: boolean;
+  personasOpen?: boolean;
   onOpenQueue: () => void;
   onOpenGallery: () => void;
   onOpenPlan: () => void;
   onOpenAgents: () => void;
   onOpenSkills: () => void;
+  onOpenPersonas: () => void;
   onOpenSettings: () => void;
   activeTextBackend: 'ollama' | 'nvidia';
   onTextBackendChange: (backend: 'ollama' | 'nvidia') => void;
@@ -24,6 +26,7 @@ interface StatusBarProps {
   onSelectedThinkModeChange: (thinkMode: string) => void;
   thinkModeDisabled?: boolean;
   settingsOpen?: boolean;
+  activePersonaName?: string | null;
 }
 
 const THINK_MODE_OPTIONS = [
@@ -249,6 +252,19 @@ export function StatusBar(props: StatusBarProps) {
           type="button"
         >
           Skills
+        </button>
+        <button
+          className={`motion-interactive flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 ${props.personasOpen ? activeButtonClass : idleButtonClass}`}
+          onClick={props.onOpenPersonas}
+          title={props.activePersonaName ? `Active: ${props.activePersonaName}` : 'Personas'}
+          type="button"
+        >
+          Personas
+          {props.activePersonaName ? (
+            <span className="rounded-full bg-cyan-400/20 px-1.5 py-0.5 text-[10px] font-medium text-cyan-200">
+              {props.activePersonaName}
+            </span>
+          ) : null}
         </button>
         <button
           className={`motion-interactive rounded-full border px-3 py-1.5 text-xs font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 ${props.queueOpen ? activeButtonClass : idleButtonClass}`}

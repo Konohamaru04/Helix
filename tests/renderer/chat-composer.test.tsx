@@ -12,6 +12,7 @@ function renderComposer(
   const props: ComponentProps<typeof ChatComposer> = {
     activeWorkspaceName: 'General',
     attachments: [],
+    availableSkills: [],
     disabled: false,
     editing: false,
     generationMode: 'chat',

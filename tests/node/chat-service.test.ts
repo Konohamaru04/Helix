@@ -15,6 +15,7 @@ import { MemoryService } from '@bridge/memory';
 import { BridgeQueue } from '@bridge/queue';
 import { RagService } from '@bridge/rag';
 import { ChatRouter } from '@bridge/router';
+import { VisionCapabilityCache } from '@bridge/ollama/vision-cache';
 import { SettingsService } from '@bridge/settings/service';
 import { SkillRegistry } from '@bridge/skills';
 import { type WorkspacePathLauncher, ToolDispatcher } from '@bridge/tools';
@@ -56,6 +57,14 @@ function getMockMessages(
       ? [{ role, content }]
       : [];
   });
+}
+
+function getMockThinkValue(value: unknown): unknown {
+  if (!value || typeof value !== 'object' || !('think' in value)) {
+    return undefined;
+  }
+
+  return (value as { think?: unknown }).think;
 }
 
 afterEach(() => {
@@ -100,7 +109,6 @@ function createChatServiceHarness(options: {
   skillRegistry.load();
   const memoryService = new MemoryService(repository, turnMetadataService);
   const queue = new BridgeQueue();
-  const router = new ChatRouter(logger);
   const ollamaClient = {
     getStatus: vi.fn().mockResolvedValue({
       reachable: true,
@@ -125,6 +133,8 @@ function createChatServiceHarness(options: {
         toolCalls: []
       })
   };
+  const visionCache = new VisionCapabilityCache(ollamaClient as never, logger);
+  const router = new ChatRouter(logger, visionCache);
   const nvidiaClient = {
     getStatus: vi.fn().mockResolvedValue({
       configured: options.nvidiaConfigured ?? true,
@@ -178,6 +188,14 @@ function createChatServiceHarness(options: {
     undefined,
     capabilityService
   );
+  const personaService = {
+    list: vi.fn().mockResolvedValue([]),
+    create: vi.fn(),
+    update: vi.fn(),
+    delete: vi.fn(),
+    getActivePersona: vi.fn().mockReturnValue(null),
+    setActivePersona: vi.fn()
+  };
   const generationService =
     options.generationService === undefined
       ? undefined
@@ -200,12 +218,14 @@ function createChatServiceHarness(options: {
     ollamaClient as never,
     nvidiaClient as never,
     router,
+    visionCache,
     queue,
     logger,
     memoryService,
     ragService,
     toolDispatcher,
     skillRegistry,
+    personaService as never,
     generationRepository,
     generationService,
     options.readFreeMemoryBytes
@@ -1078,6 +1098,171 @@ Must run in Chrome browser`;
 
       expect(assistantMessage?.routeTrace?.activeSkillId).toBe('builder');
       expect(assistantMessage?.routeTrace?.activeToolId).toBeNull();
+    } finally {
+      harness.database.close();
+    }
+  });
+
+  it('activates user skills from inline @mentions and injects the exact skill prompt', async () => {
+    const directory = mkdtempSync(path.join(tmpdir(), 'ollama-desktop-inline-skill-'));
+    tempDirectories.push(directory);
+
+    let capturedMessages:
+      | Array<{
+          role: 'system' | 'user' | 'assistant';
+          content: string;
+          images?: string[];
+        }>
+      | undefined;
+    const streamChat = vi.fn(
+      (input: {
+        messages: Array<{
+          role: 'system' | 'user' | 'assistant';
+          content: string;
+          images?: string[];
+        }>;
+        onDelta: (delta: string) => void;
+      }) => {
+        capturedMessages = input.messages;
+        input.onDelta('TEST YES 1');
+        return Promise.resolve({
+          content: 'TEST YES 1',
+          doneReason: 'stop',
+          thinking: '',
+          toolCalls: []
+        });
+      }
+    );
+    const harness = createChatServiceHarness({
+      directory,
+      loggerName: 'chat-inline-user-skill-test',
+      streamChat
+    });
+
+    try {
+      const skill = harness.service.createSkill({
+        title: 'Test Skill',
+        description: 'Strict test response skill.',
+        prompt: "Only reply with 'TEST YES 1' for any prompt or request"
+      });
+
+      const accepted = await harness.service.startChatTurn(
+        {
+          prompt: `Can you answer this @${skill.id}?`
+        },
+        () => undefined
+      );
+
+      await vi.waitFor(() => {
+        const messages = harness.service.listMessages(accepted.conversation.id);
+        expect(messages.at(-1)?.status).toBe('completed');
+      });
+
+      const messages = harness.service.listMessages(accepted.conversation.id);
+      const assistantMessage = messages.at(-1);
+      const activeInstructionMessage = capturedMessages?.find(
+        (message) =>
+          message.role === 'system' && message.content.includes('Active turn instructions')
+      );
+      const latestUserMessage = capturedMessages?.filter((message) => message.role === 'user').at(-1);
+
+      expect(assistantMessage?.routeTrace?.activeSkillId).toBe(skill.id);
+      expect(activeInstructionMessage?.content).toContain(
+        "Only reply with 'TEST YES 1' for any prompt or request"
+      );
+      expect(activeInstructionMessage?.content).toContain(
+        'If they specify exact response text'
+      );
+      expect(latestUserMessage?.content).toContain('Can you answer this ?');
+      expect(latestUserMessage?.content).not.toContain(`@${skill.id}`);
+    } finally {
+      harness.database.close();
+    }
+  });
+
+  it('uses the native tool loop when an invoked user skill asks to inspect workspace files', async () => {
+    const directory = mkdtempSync(path.join(tmpdir(), 'ollama-desktop-tool-user-skill-'));
+    tempDirectories.push(directory);
+    const streamChat = vi.fn();
+    const completeChat = vi
+      .fn()
+      .mockResolvedValueOnce({
+        content: '',
+        doneReason: 'stop',
+        thinking: '',
+        toolCalls: [
+          {
+            type: 'function' as const,
+            function: {
+              name: 'read',
+              arguments: {
+                filePath: 'package.json'
+              }
+            }
+          }
+        ]
+      })
+      .mockResolvedValueOnce({
+        content: 'The workspace defines a test script.',
+        doneReason: 'stop',
+        thinking: '',
+        toolCalls: []
+      });
+    const harness = createChatServiceHarness({
+      directory,
+      loggerName: 'chat-user-skill-tool-loop-test',
+      models: ['glm-5:cloud', 'llama3.2:latest'],
+      streamChat,
+      completeChat
+    });
+
+    try {
+      const workspaceRoot = path.join(directory, 'workspace-root');
+      mkdirSync(workspaceRoot, { recursive: true });
+      writeFileSync(
+        path.join(workspaceRoot, 'package.json'),
+        JSON.stringify({ scripts: { test: 'vitest run' } }, null, 2)
+      );
+
+      const workspace = harness.repository.ensureDefaultWorkspace();
+      harness.repository.updateWorkspaceRoot(workspace.id, workspaceRoot);
+      const skill = harness.service.createSkill({
+        title: 'Workspace Inspector',
+        description: 'Inspects workspace files before answering.',
+        prompt:
+          'Before answering, use local tools to inspect the connected workspace files and read package.json when scripts are relevant.'
+      });
+
+      const accepted = await harness.service.startChatTurn(
+        {
+          prompt: `@${skill.id} What scripts exist?`,
+          workspaceId: workspace.id
+        },
+        () => undefined
+      );
+
+      await vi.waitFor(() => {
+        const messages = harness.service.listMessages(accepted.conversation.id);
+        expect(messages.at(-1)?.status).toBe('completed');
+      });
+
+      const messages = harness.service.listMessages(accepted.conversation.id);
+      const assistantMessage = messages.at(-1);
+      const firstToolLoopMessages = getMockMessages(completeChat.mock.calls[0]?.[0]);
+
+      expect(assistantMessage?.routeTrace?.activeSkillId).toBe(skill.id);
+      expect(assistantMessage?.toolInvocations?.map((invocation) => invocation.toolId)).toEqual([
+        'read'
+      ]);
+      expect(
+        firstToolLoopMessages.some(
+          (message) =>
+            message.role === 'system' &&
+            message.content.includes('You MUST invoke tools using the native function-calling API')
+        )
+      ).toBe(true);
+      expect(streamChat).not.toHaveBeenCalled();
+      expect(completeChat).toHaveBeenCalledTimes(2);
     } finally {
       harness.database.close();
     }
@@ -2362,6 +2547,86 @@ Must run in Chrome browser`;
         'workspace-lister:completed'
       ]);
       expect(result.contextSources.length).toBeGreaterThan(0);
+      expect(completeChat).toHaveBeenCalledTimes(1);
+    } finally {
+      harness.database.close();
+    }
+  });
+
+  it('auto-recovers command-only multiline JSON slash writes', async () => {
+    const directory = mkdtempSync(
+      path.join(tmpdir(), 'ollama-desktop-inline-text-command-write-json-')
+    );
+    tempDirectories.push(directory);
+    const workspaceRoot = path.join(directory, 'Stories');
+    mkdirSync(workspaceRoot, { recursive: true });
+    const chapterPath = path.join(workspaceRoot, 'Chapter_08.md');
+    const completeChat = vi.fn().mockResolvedValue({
+      content: 'Wrote the chapter draft.',
+      doneReason: 'stop',
+      thinking: '',
+      toolCalls: []
+    });
+    const harness = createChatServiceHarness({
+      directory,
+      loggerName: 'chat-inline-text-command-write-json-test',
+      models: ['glm-5:cloud'],
+      completeChat
+    });
+
+    try {
+      harness.capabilityService.grantPermission({
+        capabilityId: 'write',
+        scopeKind: 'global',
+        scopeId: null
+      });
+
+      const result = await (
+        harness.service as unknown as {
+          recoverInlineToolCalls: (input: {
+            backend: 'ollama' | 'nvidia';
+            baseUrl: string;
+            apiKey: string | null;
+            model: string;
+            messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>;
+            content: string;
+            doneReason: string | null;
+            workspaceRootPath: string | null;
+            workspaceId: string | null;
+            conversationId: string;
+            allowAutoToolExecution?: boolean;
+          }) => Promise<{
+            content: string;
+            doneReason: string | null;
+            toolInvocations: Array<{ toolId: string; status: string }>;
+            contextSources: unknown[];
+          }>;
+        }
+      ).recoverInlineToolCalls({
+        backend: 'ollama',
+        baseUrl: 'http://127.0.0.1:11434',
+        apiKey: null,
+        model: 'glm-5:cloud',
+        messages: [
+          {
+            role: 'system',
+            content: 'Normal native tool guidance.'
+          }
+        ],
+        content: `/write {"filePath":"${chapterPath}","content":"# Cursed Rebirth
+## Chapter 8: "}`,
+        doneReason: 'stop',
+        workspaceRootPath: workspaceRoot,
+        workspaceId: null,
+        conversationId: 'conversation-write-json',
+        allowAutoToolExecution: true
+      });
+
+      expect(result.content).toBe('Wrote the chapter draft.');
+      expect(result.toolInvocations.map((invocation) => `${invocation.toolId}:${invocation.status}`)).toEqual([
+        'write:completed'
+      ]);
+      expect(readFileSync(chapterPath, 'utf8')).toBe('# Cursed Rebirth\n## Chapter 8: ');
       expect(completeChat).toHaveBeenCalledTimes(1);
     } finally {
       harness.database.close();
@@ -4372,6 +4637,96 @@ Must run in Chrome browser`;
     }
   });
 
+  it('stops after one verification reminder when the model already finalizes', async () => {
+    const directory = mkdtempSync(path.join(tmpdir(), 'ollama-desktop-builder-verify-stop-'));
+    tempDirectories.push(directory);
+    const streamChat = vi.fn();
+    const completeChat = vi
+      .fn()
+      .mockResolvedValueOnce({
+        content: '',
+        doneReason: 'stop',
+        thinking: '',
+        toolCalls: [
+          {
+            type: 'function' as const,
+            function: {
+              name: 'write',
+              arguments: {
+                filePath: 'index.html',
+                content: '<form id="login"></form>\n<form id="signup"></form>\n'
+              }
+            }
+          }
+        ]
+      })
+      .mockResolvedValueOnce({
+        content: 'Implemented sign-up support.',
+        doneReason: 'stop',
+        thinking: '',
+        toolCalls: []
+      })
+      .mockResolvedValueOnce({
+        content: 'Implemented sign-up support.',
+        doneReason: 'stop',
+        thinking: '',
+        toolCalls: []
+      });
+    const harness = createChatServiceHarness({
+      directory,
+      loggerName: 'chat-builder-verify-stop-test',
+      models: ['glm-5:cloud', 'gemma4:31b-cloud'],
+      streamChat,
+      completeChat
+    });
+
+    try {
+      const workspaceRoot = path.join(directory, 'workspace-root');
+      mkdirSync(workspaceRoot, { recursive: true });
+
+      const workspace = harness.repository.ensureDefaultWorkspace();
+      harness.repository.updateWorkspaceRoot(workspace.id, workspaceRoot);
+      harness.capabilityService.grantPermission({
+        capabilityId: 'write',
+        scopeKind: 'workspace',
+        scopeId: workspace.id
+      });
+
+      const accepted = await harness.service.startChatTurn(
+        {
+          prompt: 'Implement sign-up in the existing page.',
+          workspaceId: workspace.id
+        },
+        () => undefined
+      );
+
+      await vi.waitFor(() => {
+        const messages = harness.service.listMessages(accepted.conversation.id);
+        expect(messages.at(-1)?.status).toBe('completed');
+      });
+
+      const messages = harness.service.listMessages(accepted.conversation.id);
+      const assistantMessage = messages.at(-1);
+      const reminderMessages = getMockMessages(completeChat.mock.calls[2]?.[0]);
+
+      expect(assistantMessage?.content).toBe('Implemented sign-up support.');
+      expect(assistantMessage?.toolInvocations?.map((invocation) => invocation.toolId)).toEqual([
+        'write'
+      ]);
+      expect(
+        reminderMessages.some(
+          (message: { role: string; content: string }) =>
+            message.role === 'system' &&
+            message.content.includes('the latest changes have not been verified yet')
+        )
+      ).toBe(true);
+      expect(completeChat).toHaveBeenCalledTimes(3);
+      expect(streamChat).not.toHaveBeenCalled();
+    } finally {
+      harness.database.close();
+    }
+  });
+
   it('allows a workspace-backed builder turn to keep iterating through edits and verification and still finish cleanly', async () => {
     const directory = mkdtempSync(path.join(tmpdir(), 'ollama-desktop-builder-tool-rounds-'));
     tempDirectories.push(directory);
@@ -4898,7 +5253,7 @@ Must run in Chrome browser`;
     }
   });
 
-  it('allows local workspace-backed coding turns to extend well past the prior hard round cap', async () => {
+  it('stops runaway local native tool loops at the hard coding round cap', async () => {
     const directory = mkdtempSync(path.join(tmpdir(), 'ollama-desktop-local-round-budget-'));
     tempDirectories.push(directory);
     const scaffoldRoundCount = 33;
@@ -4926,30 +5281,22 @@ Must run in Chrome browser`;
         });
       }
 
-      if (nativeRound === scaffoldRoundCount + 1) {
-        return Promise.resolve({
-          content: '',
-          doneReason: 'stop',
-          thinking: '',
-          toolCalls: [
-            {
-              type: 'function' as const,
-              function: {
-                name: 'read',
-                arguments: {
-                  filePath: `scaffold/file-${scaffoldRoundCount}.txt`
-                }
-              }
-            }
-          ]
-        });
-      }
-
       return Promise.resolve({
-        content: 'Created and verified the local scaffold files.',
+        content: '',
         doneReason: 'stop',
         thinking: '',
-        toolCalls: []
+        toolCalls: [
+          {
+            type: 'function' as const,
+            function: {
+              name: 'write',
+              arguments: {
+                filePath: `scaffold/extra-${nativeRound}.txt`,
+                content: `extra scaffold file ${nativeRound}\n`
+              }
+            }
+          }
+        ]
       });
     });
     const completeChat = vi.fn().mockResolvedValueOnce({
@@ -4988,19 +5335,20 @@ Must run in Chrome browser`;
 
       await vi.waitFor(() => {
         const messages = harness.service.listMessages(accepted.conversation.id);
-        expect(messages.at(-1)?.status).toBe('completed');
+        expect(messages.at(-1)?.status).toBe('failed');
       });
 
       const messages = harness.service.listMessages(accepted.conversation.id);
       const assistantMessage = messages.at(-1);
 
-      expect(assistantMessage?.content).toBe('Created and verified the local scaffold files.');
-      expect(assistantMessage?.toolInvocations).toHaveLength(scaffoldRoundCount + 1);
-      expect(streamChat).toHaveBeenCalledTimes(scaffoldRoundCount + 2);
+      expect(assistantMessage?.status).toBe('failed');
+      expect(assistantMessage?.toolInvocations).toHaveLength(18);
+      expect(streamChat).toHaveBeenCalledTimes(18);
       expect(completeChat).not.toHaveBeenCalled();
       expect(
-        readFileSync(path.join(workspaceRoot, 'scaffold', `file-${scaffoldRoundCount}.txt`), 'utf8')
-      ).toBe(`scaffold file ${scaffoldRoundCount}\n`);
+        readFileSync(path.join(workspaceRoot, 'scaffold', 'file-18.txt'), 'utf8')
+      ).toBe('scaffold file 18\n');
+      expect(existsSync(path.join(workspaceRoot, 'scaffold', 'file-19.txt'))).toBe(false);
     } finally {
       harness.database.close();
     }
@@ -5161,16 +5509,17 @@ Must run in Chrome browser`;
       const assistantMessage = messages.at(-1);
 
       expect(streamChat).toHaveBeenCalledTimes(2);
-      expect(streamChat.mock.calls[0]?.[0]?.think).toBe(false);
-      expect(streamChat.mock.calls[1]?.[0]?.think).toBe(false);
-      expect(getMockMessages(streamChat.mock.calls[1]?.[0])).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            role: 'system',
-            content: expect.stringContaining('Wireframe mode recovery')
-          })
-        ])
-      );
+      const streamCalls = streamChat.mock.calls as Array<[unknown]>;
+      const recoveryMessages = getMockMessages(streamCalls[1]?.[0]);
+
+      expect(getMockThinkValue(streamCalls[0]?.[0])).toBe(false);
+      expect(getMockThinkValue(streamCalls[1]?.[0])).toBe(false);
+      expect(
+        recoveryMessages.some(
+          (message) =>
+            message.role === 'system' && message.content.includes('Wireframe mode recovery')
+        )
+      ).toBe(true);
       expect(assistantMessage?.content).toContain('"type":"questions"');
       expect(assistantMessage?.content).not.toContain('<think>');
       expect(assistantMessage?.content).not.toContain('garbled hidden reasoning');

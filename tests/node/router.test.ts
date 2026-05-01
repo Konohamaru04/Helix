@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { createLogger } from '@bridge/logging/logger';
 import { ChatRouter } from '@bridge/router';
+import { VisionCapabilityCache } from '@bridge/ollama/vision-cache';
+import { OllamaClient } from '@bridge/ollama/client';
 import { defaultUserSettings } from '@bridge/settings/service';
+
+const testLogger = createLogger('router-test');
+const testVisionCache = new VisionCapabilityCache(
+  { showModel: () => Promise.resolve({ details: { families: [] } }) } as unknown as OllamaClient,
+  testLogger
+);
 
 const imageAttachment = {
   id: '70000000-0000-4000-8000-000000000001',
@@ -41,7 +49,7 @@ const assistantMessageWithRoute = {
 
 describe('ChatRouter', () => {
   it('prefers the explicit request model over saved defaults', () => {
-    const router = new ChatRouter(createLogger('router-test'));
+    const router = new ChatRouter(testLogger, testVisionCache);
 
     const decision = router.decide(
       {
@@ -67,7 +75,7 @@ describe('ChatRouter', () => {
   });
 
   it('uses the configured coding model for code-oriented prompts in auto mode', () => {
-    const router = new ChatRouter(createLogger('router-coding-test'));
+    const router = new ChatRouter(testLogger, testVisionCache);
 
     const decision = router.decide(
       {
@@ -93,7 +101,7 @@ describe('ChatRouter', () => {
   });
 
   it('keeps wireframe mode on the plain chat route even for HTML design prompts', () => {
-    const router = new ChatRouter(createLogger('router-wireframe-test'));
+    const router = new ChatRouter(testLogger, testVisionCache);
 
     const decision = router.decide(
       {
@@ -121,7 +129,7 @@ describe('ChatRouter', () => {
   });
 
   it('uses the configured vision model for image attachments in auto mode', () => {
-    const router = new ChatRouter(createLogger('router-vision-test'));
+    const router = new ChatRouter(testLogger, testVisionCache);
 
     const decision = router.decide(
       {
@@ -146,7 +154,7 @@ describe('ChatRouter', () => {
   });
 
   it('keeps specialist routing for image attachments even when a general model is selected', () => {
-    const router = new ChatRouter(createLogger('router-vision-selected-general-test'));
+    const router = new ChatRouter(testLogger, testVisionCache);
 
     const decision = router.decide(
       {
@@ -172,7 +180,7 @@ describe('ChatRouter', () => {
   });
 
   it('falls back to the general model when a configured coding model is unavailable', () => {
-    const router = new ChatRouter(createLogger('router-coding-fallback-test'));
+    const router = new ChatRouter(testLogger, testVisionCache);
 
     const decision = router.decide(
       {
@@ -199,7 +207,7 @@ describe('ChatRouter', () => {
   });
 
   it('keeps specialist routing for coding prompts even when a general model is selected', () => {
-    const router = new ChatRouter(createLogger('router-coding-selected-general-test'));
+    const router = new ChatRouter(testLogger, testVisionCache);
 
     const decision = router.decide(
       {
@@ -226,7 +234,7 @@ describe('ChatRouter', () => {
   });
 
   it('prefers model-assisted tool routing when the classifier selects a tool', () => {
-    const router = new ChatRouter(createLogger('router-model-tool-test'));
+    const router = new ChatRouter(testLogger, testVisionCache);
 
     const decision = router.decide(
       {
@@ -258,7 +266,7 @@ describe('ChatRouter', () => {
   });
 
   it('prefers model-assisted skill routing when the classifier selects a coding skill', () => {
-    const router = new ChatRouter(createLogger('router-model-skill-test'));
+    const router = new ChatRouter(testLogger, testVisionCache);
 
     const decision = router.decide(
       {
@@ -295,7 +303,7 @@ describe('ChatRouter', () => {
   });
 
   it('suppresses model-assisted workspace search when the prompt is actually a code modification request', () => {
-    const router = new ChatRouter(createLogger('router-suppress-workspace-search-test'));
+    const router = new ChatRouter(testLogger, testVisionCache);
 
     const decision = router.decide(
       {
@@ -331,7 +339,7 @@ describe('ChatRouter', () => {
   });
 
   it('suppresses model-assisted workspace listing when the prompt is actually a code modification request', () => {
-    const router = new ChatRouter(createLogger('router-suppress-workspace-lister-test'));
+    const router = new ChatRouter(testLogger, testVisionCache);
 
     const decision = router.decide(
       {
@@ -367,7 +375,7 @@ describe('ChatRouter', () => {
   });
 
   it('keeps Wan 2.2 prompt-authoring requests on the chat path even with a connected workspace', () => {
-    const router = new ChatRouter(createLogger('router-wan-prompt-authoring-test'));
+    const router = new ChatRouter(testLogger, testVisionCache);
 
     const decision = router.decide(
       {
@@ -390,7 +398,7 @@ describe('ChatRouter', () => {
   });
 
   it('does not treat "start with" inside prompt-authoring text as a workspace opener request', () => {
-    const router = new ChatRouter(createLogger('router-prompt-authoring-start-with-test'));
+    const router = new ChatRouter(testLogger, testVisionCache);
 
     const decision = router.decide(
       {
@@ -413,7 +421,7 @@ describe('ChatRouter', () => {
   });
 
   it('keeps attached-image prompt-authoring requests on the chat path', () => {
-    const router = new ChatRouter(createLogger('router-image-prompt-authoring-test'));
+    const router = new ChatRouter(testLogger, testVisionCache);
 
     const decision = router.decide(
       {
@@ -438,7 +446,7 @@ describe('ChatRouter', () => {
   });
 
   it('does not route file mutation prompts to the file reader heuristically', () => {
-    const router = new ChatRouter(createLogger('router-file-mutation-heuristic-test'));
+    const router = new ChatRouter(testLogger, testVisionCache);
 
     const decision = router.decide(
       {
@@ -465,7 +473,7 @@ describe('ChatRouter', () => {
   });
 
   it('suppresses model-assisted file reader routing when the prompt requests fixing and saving a file', () => {
-    const router = new ChatRouter(createLogger('router-file-reader-suppression-test'));
+    const router = new ChatRouter(testLogger, testVisionCache);
 
     const decision = router.decide(
       {
@@ -502,7 +510,7 @@ describe('ChatRouter', () => {
   });
 
   it('carries grounded skill routing forward on follow-up prompts', () => {
-    const router = new ChatRouter(createLogger('router-followup-test'));
+    const router = new ChatRouter(testLogger, testVisionCache);
 
     const decision = router.decide(
       {
@@ -524,7 +532,7 @@ describe('ChatRouter', () => {
   });
 
   it('uses tool-chat for heuristic math prompts so the model can incorporate tool results', () => {
-    const router = new ChatRouter(createLogger('router-tool-test'));
+    const router = new ChatRouter(testLogger, testVisionCache);
 
     const decision = router.decide(
       {
@@ -546,7 +554,7 @@ describe('ChatRouter', () => {
   });
 
   it('does not misroute plain identity questions into the calculator tool', () => {
-    const router = new ChatRouter(createLogger('router-non-math-identity-test'));
+    const router = new ChatRouter(testLogger, testVisionCache);
 
     const decision = router.decide(
       {
@@ -567,7 +575,7 @@ describe('ChatRouter', () => {
   });
 
   it('uses a direct tool route for explicit slash-tool activation', () => {
-    const router = new ChatRouter(createLogger('router-explicit-tool-test'));
+    const router = new ChatRouter(testLogger, testVisionCache);
 
     const decision = router.decide(
       {
@@ -589,7 +597,7 @@ describe('ChatRouter', () => {
   });
 
   it('does not heuristically route workspace structure prompts — the model decides via native tool-calls', () => {
-    const router = new ChatRouter(createLogger('router-workspace-lister-test'));
+    const router = new ChatRouter(testLogger, testVisionCache);
 
     const decision = router.decide(
       {
@@ -609,7 +617,7 @@ describe('ChatRouter', () => {
   });
 
   it('suppresses workspace inspection tools when no workspace folder is connected', () => {
-    const router = new ChatRouter(createLogger('router-rootless-workspace-tool-test'));
+    const router = new ChatRouter(testLogger, testVisionCache);
 
     const decision = router.decide(
       {
@@ -642,7 +650,7 @@ describe('ChatRouter', () => {
   });
 
   it('routes play/open media prompts to the direct workspace opener tool', () => {
-    const router = new ChatRouter(createLogger('router-workspace-opener-test'));
+    const router = new ChatRouter(testLogger, testVisionCache);
 
     const decision = router.decide(
       {
@@ -664,7 +672,7 @@ describe('ChatRouter', () => {
   });
 
   it('carries workspace tool routing forward for corrected directory replies', () => {
-    const router = new ChatRouter(createLogger('router-workspace-lister-follow-up-test'));
+    const router = new ChatRouter(testLogger, testVisionCache);
     const assistantToolMessage = {
       ...assistantMessageWithRoute,
       routeTrace: {
@@ -697,7 +705,7 @@ describe('ChatRouter', () => {
   });
 
   it('routes workspace lookup prompts to the workspace search tool', () => {
-    const router = new ChatRouter(createLogger('router-workspace-search-test'));
+    const router = new ChatRouter(testLogger, testVisionCache);
 
     const decision = router.decide(
       {
@@ -722,7 +730,7 @@ describe('ChatRouter', () => {
   });
 
   it('routes explicit knowledge lookups to the knowledge-search tool', () => {
-    const router = new ChatRouter(createLogger('router-knowledge-search-test'));
+    const router = new ChatRouter(testLogger, testVisionCache);
 
     const decision = router.decide(
       {
@@ -744,7 +752,7 @@ describe('ChatRouter', () => {
   });
 
   it('routes explicit current-events web prompts to the web-search tool', () => {
-    const router = new ChatRouter(createLogger('router-web-search-test'));
+    const router = new ChatRouter(testLogger, testVisionCache);
 
     const decision = router.decide(
       {
@@ -764,8 +772,30 @@ describe('ChatRouter', () => {
     expect(decision.reason).toBe('web-search-tool-routing');
   });
 
+  it('does not route local repository current-state prompts to web search', () => {
+    const router = new ChatRouter(testLogger, testVisionCache);
+
+    const decision = router.decide(
+      {
+        prompt: 'Check the current state of the repository and identify issues.',
+        attachments: [],
+        recentMessages: [],
+        workspaceHasKnowledge: false,
+        workspaceRootConnected: true,
+        explicitSkillId: null,
+        explicitToolId: null
+      },
+      defaultUserSettings,
+      ['llama3.2:latest']
+    );
+
+    expect(decision.activeToolId).toBeNull();
+    expect(decision.activeSkillId).toBe('reviewer');
+    expect(decision.strategy).toBe('skill-chat');
+  });
+
   it('routes runnable JavaScript prompts to the code runner tool', () => {
-    const router = new ChatRouter(createLogger('router-code-runner-test'));
+    const router = new ChatRouter(testLogger, testVisionCache);
 
     const decision = router.decide(
       {
@@ -790,7 +820,7 @@ describe('ChatRouter', () => {
   });
 
   it('keeps browser-app implementation prompts on builder routing instead of the code runner', () => {
-    const router = new ChatRouter(createLogger('router-builder-browser-os-test'));
+    const router = new ChatRouter(testLogger, testVisionCache);
 
     const decision = router.decide(
       {
@@ -824,7 +854,7 @@ Must run in Chrome browser`,
   });
 
   it('auto-activates reviewer skill for review-style prompts without forcing a tool', () => {
-    const router = new ChatRouter(createLogger('router-review-skill-test'));
+    const router = new ChatRouter(testLogger, testVisionCache);
 
     const decision = router.decide(
       {
@@ -846,7 +876,7 @@ Must run in Chrome browser`,
   });
 
   it('auto-activates debugger skill for failure analysis prompts', () => {
-    const router = new ChatRouter(createLogger('router-debug-skill-test'));
+    const router = new ChatRouter(testLogger, testVisionCache);
 
     const decision = router.decide(
       {
@@ -871,7 +901,7 @@ Must run in Chrome browser`,
   });
 
   it('auto-activates builder skill for implementation prompts', () => {
-    const router = new ChatRouter(createLogger('router-builder-skill-test'));
+    const router = new ChatRouter(testLogger, testVisionCache);
 
     const decision = router.decide(
       {

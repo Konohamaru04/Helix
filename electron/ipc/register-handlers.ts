@@ -26,6 +26,11 @@ import {
   createWorkspaceInputSchema,
   deleteGenerationArtifactInputSchema,
   deleteSkillInputSchema,
+  personaDefinitionSchema,
+  createPersonaInputSchema,
+  updatePersonaInputSchema,
+  deletePersonaInputSchema,
+  setActivePersonaInputSchema,
   deleteWorkspaceInputSchema,
   deleteConversationInputSchema,
   editMessageInputSchema,
@@ -535,6 +540,35 @@ export function registerIpcHandlers(context: DesktopAppContext): void {
   ipcMain.handle(IpcChannels.chatDeleteSkill, (event, payload) => {
     validateSender(event);
     context.chatService.deleteSkill(deleteSkillInputSchema.parse(payload));
+  });
+
+  ipcMain.handle(IpcChannels.personaList, () =>
+    context.personaService.list().map((persona) => personaDefinitionSchema.parse(persona))
+  );
+  ipcMain.handle(IpcChannels.personaCreate, (event, payload) => {
+    validateSender(event);
+    return personaDefinitionSchema.parse(
+      context.personaService.create(createPersonaInputSchema.parse(payload))
+    );
+  });
+  ipcMain.handle(IpcChannels.personaUpdate, (event, payload) => {
+    validateSender(event);
+    return personaDefinitionSchema.parse(
+      context.personaService.update(updatePersonaInputSchema.parse(payload))
+    );
+  });
+  ipcMain.handle(IpcChannels.personaDelete, (event, payload) => {
+    validateSender(event);
+    context.personaService.delete(deletePersonaInputSchema.parse(payload).personaId);
+  });
+  ipcMain.handle(IpcChannels.personaGetActive, () => {
+    const active = context.personaService.getActivePersona();
+    return active ? personaDefinitionSchema.parse(active) : null;
+  });
+  ipcMain.handle(IpcChannels.personaSetActive, (event, payload) => {
+    validateSender(event);
+    const input = setActivePersonaInputSchema.parse(payload);
+    context.personaService.setActivePersona(input.personaId);
   });
 
   ipcMain.handle(IpcChannels.chatListKnowledgeDocuments, (_event, payload) =>

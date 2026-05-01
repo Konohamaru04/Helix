@@ -22,6 +22,11 @@ import {
   createSkillInputSchema,
   deleteConversationInputSchema,
   deleteSkillInputSchema,
+  personaDefinitionSchema,
+  createPersonaInputSchema,
+  updatePersonaInputSchema,
+  deletePersonaInputSchema,
+  setActivePersonaInputSchema,
   editMessageInputSchema,
   generationJobSchema,
   generationGalleryItemSchema,
@@ -383,6 +388,42 @@ const desktopApi: DesktopApi = {
       return () => {
         ipcRenderer.removeListener(IpcChannels.chatStreamEvent, handler);
       };
+    }
+  },
+  personas: {
+    list: async () => {
+      const payload = (await ipcRenderer.invoke(IpcChannels.personaList)) as unknown[];
+      return payload.map((persona) => personaDefinitionSchema.parse(persona));
+    },
+    create: async (input) =>
+      personaDefinitionSchema.parse(
+        await ipcRenderer.invoke(
+          IpcChannels.personaCreate,
+          createPersonaInputSchema.parse(input)
+        )
+      ),
+    update: async (input) =>
+      personaDefinitionSchema.parse(
+        await ipcRenderer.invoke(
+          IpcChannels.personaUpdate,
+          updatePersonaInputSchema.parse(input)
+        )
+      ),
+    delete: async (input) => {
+      await ipcRenderer.invoke(
+        IpcChannels.personaDelete,
+        deletePersonaInputSchema.parse(input)
+      );
+    },
+    getActive: async () => {
+      const payload: unknown = await ipcRenderer.invoke(IpcChannels.personaGetActive);
+      return payload ? personaDefinitionSchema.parse(payload) : null;
+    },
+    setActive: async (input) => {
+      await ipcRenderer.invoke(
+        IpcChannels.personaSetActive,
+        setActivePersonaInputSchema.parse(input)
+      );
     }
   },
   update: {

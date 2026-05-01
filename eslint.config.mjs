@@ -12,6 +12,8 @@ export default tseslint.config(
       'coverage/**',
       '**/*.d.ts',
       '**/*.js',
+      '**/*.mjs',
+      '**/*.cjs',
       'eslint.config.mjs',
       'postcss.config.cjs',
       'python_embeded/Include/**',

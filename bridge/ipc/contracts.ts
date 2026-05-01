@@ -172,6 +172,15 @@ export const skillDefinitionSchema = z.object({
   updatedAt: timestampSchema.optional()
 });
 
+export const personaDefinitionSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  prompt: z.string().min(1),
+  source: z.enum(['builtin', 'user']),
+  createdAt: timestampSchema,
+  updatedAt: timestampSchema
+});
+
 export const toolInvocationSchema = z.object({
   id: uuidSchema,
   toolId: z.string().min(1),
@@ -632,6 +641,23 @@ export const deleteSkillInputSchema = z.object({
   skillId: skillIdSchema
 });
 
+export const createPersonaInputSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  prompt: z.string().trim().min(1).max(50_000)
+});
+
+export const updatePersonaInputSchema = createPersonaInputSchema.extend({
+  personaId: z.string().min(1)
+});
+
+export const deletePersonaInputSchema = z.object({
+  personaId: z.string().min(1)
+});
+
+export const setActivePersonaInputSchema = z.object({
+  personaId: z.string().min(1).nullable()
+});
+
 export const capabilityPermissionInputSchema = z.object({
   capabilityId: z.string().trim().min(1),
   scopeKind: permissionScopeKindSchema,
@@ -941,6 +967,11 @@ export type ConversationSearchResult = z.infer<typeof conversationSearchResultSc
 export type MessageAttachment = z.infer<typeof messageAttachmentSchema>;
 export type ToolDefinition = z.infer<typeof toolDefinitionSchema>;
 export type SkillDefinition = z.infer<typeof skillDefinitionSchema>;
+export type PersonaDefinition = z.infer<typeof personaDefinitionSchema>;
+export type CreatePersonaInput = z.infer<typeof createPersonaInputSchema>;
+export type UpdatePersonaInput = z.infer<typeof updatePersonaInputSchema>;
+export type DeletePersonaInput = z.infer<typeof deletePersonaInputSchema>;
+export type SetActivePersonaInput = z.infer<typeof setActivePersonaInputSchema>;
 export type ToolInvocation = z.infer<typeof toolInvocationSchema>;
 export type ContextSource = z.infer<typeof contextSourceSchema>;
 export type MessageUsage = z.infer<typeof messageUsageSchema>;
@@ -1078,6 +1109,12 @@ export const IpcChannels = {
   chatCreateSkill: 'chat:create-skill',
   chatUpdateSkill: 'chat:update-skill',
   chatDeleteSkill: 'chat:delete-skill',
+  personaList: 'persona:list',
+  personaCreate: 'persona:create',
+  personaUpdate: 'persona:update',
+  personaDelete: 'persona:delete',
+  personaGetActive: 'persona:get-active',
+  personaSetActive: 'persona:set-active',
   chatListKnowledgeDocuments: 'chat:list-knowledge-documents',
   chatImportWorkspaceKnowledge: 'chat:import-workspace-knowledge',
   chatImportConversation: 'chat:import-conversation',
@@ -1133,6 +1170,14 @@ export interface DesktopApi {
     retryJob: (input: RetryGenerationJobInput) => Promise<ImageGenerationStartResult>;
     deleteArtifact: (input: DeleteGenerationArtifactInput) => Promise<void>;
     onJobEvent: (listener: (event: GenerationStreamEvent) => void) => Unsubscribe;
+  };
+  personas: {
+    list: () => Promise<PersonaDefinition[]>;
+    create: (input: CreatePersonaInput) => Promise<PersonaDefinition>;
+    update: (input: UpdatePersonaInput) => Promise<PersonaDefinition>;
+    delete: (input: DeletePersonaInput) => Promise<void>;
+    getActive: () => Promise<PersonaDefinition | null>;
+    setActive: (input: SetActivePersonaInput) => Promise<void>;
   };
   chat: {
     start: (input: ChatTurnRequest) => Promise<ChatStartAccepted>;

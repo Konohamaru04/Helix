@@ -30,6 +30,7 @@ export interface ContextAssemblyResult {
     usedPinnedMessages: boolean;
     usedMemorySummary: boolean;
     usedRag: boolean;
+    usedPersona: boolean;
   };
   usageEstimate: {
     promptTokens: number;
@@ -153,6 +154,7 @@ export function buildConversationContext(input: {
   excludedRecentMessageCount?: number;
   maxMessages?: number;
   includeBaseSystemPrompt?: boolean;
+  personaPrompt?: string | null;
 }): ContextAssemblyResult {
   const maxMessages = input.maxMessages ?? 20;
   const eligibleRecentMessages = input.recentMessages.filter(
@@ -194,7 +196,8 @@ export function buildConversationContext(input: {
       role: 'system',
       content: buildPrimarySystemPrompt({
         availableTools,
-        availableSkills
+        availableSkills,
+        personaPrompt: input.personaPrompt
       }),
       imageAttachments: []
     });
@@ -211,7 +214,13 @@ export function buildConversationContext(input: {
   if (input.skillPrompt?.trim()) {
     systemMessages.push({
       role: 'system',
-      content: `Active skill prompt:\n${input.skillPrompt.trim()}`,
+      content: [
+        'Active turn instructions:',
+        'Follow these instructions for this turn unless they conflict with higher-priority app safety, tool policy, or workspace instructions.',
+        'If they specify exact response text or an exact output format, produce that exactly in the final answer with no extra text. This does not prohibit required tool calls before the final answer.',
+        '',
+        input.skillPrompt.trim()
+      ].join('\n'),
       imageAttachments: []
     });
   }
@@ -303,7 +312,8 @@ export function buildConversationContext(input: {
       usedSkillPrompt: Boolean(input.skillPrompt?.trim()),
       usedPinnedMessages: pinnedMessagesForSystemBlock.length > 0,
       usedMemorySummary: Boolean(input.memorySummary?.trim()),
-      usedRag: sources.length > 0
+      usedRag: dedupedRetrievedSources.length > 0,
+      usedPersona: Boolean(input.personaPrompt?.trim())
     },
     usageEstimate: {
       promptTokens

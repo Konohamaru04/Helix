@@ -8,6 +8,36 @@ import {
 } from '@renderer/lib/wireframe';
 
 describe('wireframe helpers', () => {
+  it('recovers design fields when html string contains unescaped quotes', () => {
+    const broken = `\`\`\`wireframe
+{"type":"design","title":"Aether","html":"<div class=\\"x av-1\"></div>","css":".x{color:red}","js":""}
+\`\`\``;
+
+    const artifact = parseWireframeArtifact(broken);
+
+    expect(artifact).toEqual({
+      type: 'design',
+      title: 'Aether',
+      html: '<div class="x av-1"></div>',
+      css: '.x{color:red}',
+      js: ''
+    });
+  });
+
+  it('parses fenced design artifact with trailing garbage after closing brace', () => {
+    const artifact = parseWireframeArtifact(`\`\`\`wireframe
+{"type":"design","title":"Trail Demo","html":"<main><section class=\\"phone-screen\\">Hi</section></main>","css":".phone-screen{padding:8px}","js":""}'}
+\`\`\``);
+
+    expect(artifact).toEqual({
+      type: 'design',
+      title: 'Trail Demo',
+      html: '<main><section class="phone-screen">Hi</section></main>',
+      css: '.phone-screen{padding:8px}',
+      js: ''
+    });
+  });
+
   it('parses structured multiple-choice questions', () => {
     const artifact = parseWireframeArtifact(`Pick a direction.
 

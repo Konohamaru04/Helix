@@ -125,7 +125,7 @@ Context assembly is currently deterministic and observable:
 - pinned memory is promoted into a system block and tracked as provenance
 - duplicate retrieved chunks are removed
 - prompt token estimates are recorded for the UI
-- chat requests now derive `num_ctx` dynamically from the assembled prompt instead of sending a fixed default; cloud models are capped at 200k per request with a 1M cumulative conversation budget, while local models scale against free host RAM and the selected Ollama model size
+- chat requests now derive `num_ctx` dynamically from the assembled prompt instead of sending a fixed default; cloud models are capped at 200k per request with a 1M cumulative conversation budget, while local models scale up to 256K against free host RAM and the selected Ollama model size
 - included and excluded context ids are logged
 
 ## Persistence

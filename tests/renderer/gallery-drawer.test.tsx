@@ -114,6 +114,14 @@ describe('GalleryDrawer', () => {
         }),
         listAuditEvents: vi.fn().mockResolvedValue([])
       },
+      personas: {
+        list: vi.fn().mockResolvedValue([]),
+        create: vi.fn(),
+        update: vi.fn(),
+        delete: vi.fn(),
+        getActive: vi.fn().mockResolvedValue(null),
+        setActive: vi.fn()
+      },
       appState: {
         getLastSession: vi.fn().mockResolvedValue(null),
         setLastSession: vi.fn().mockResolvedValue(undefined)

@@ -80,8 +80,10 @@ import {
 import { parseJsonishRecord } from '@bridge/jsonish';
 import type { SettingsService } from '@bridge/settings/service';
 import type { SkillRegistry } from '@bridge/skills';
+import type { PersonaService } from '@bridge/personas/service';
 import type { ToolDispatcher } from '@bridge/tools';
 import { WIREFRAME_MODE_SYSTEM_PROMPT } from '@bridge/wireframe/prompt';
+import type { VisionCapabilityCache } from '@bridge/ollama/vision-cache';
 import type { Logger } from 'pino';
 import type { ChatRepository } from './repository';
 
@@ -126,31 +128,32 @@ const CODE_IMPLEMENTATION_STACK_PATTERN =
 const CODE_IMPLEMENTATION_RUNTIME_PATTERN =
   /\b(?:single file|single script|one file|must run|run in chrome|run in (?:the )?browser|chrome browser|browser app|web app|webpage|website)\b/i;
 const MAX_LOGGED_TEXT_CHARS = 4_000;
-const DEFAULT_MAX_NATIVE_TOOL_CALL_ROUNDS = Number.MAX_SAFE_INTEGER;
-const MAX_LOCAL_NATIVE_TOOL_CALL_ROUNDS = Number.MAX_SAFE_INTEGER;
-const REPOSITORY_ANALYSIS_NATIVE_TOOL_CALL_ROUNDS = Number.MAX_SAFE_INTEGER;
-const LOCAL_REPOSITORY_ANALYSIS_NATIVE_TOOL_CALL_ROUNDS = Number.MAX_SAFE_INTEGER;
-const CODING_NATIVE_TOOL_CALL_ROUNDS = Number.MAX_SAFE_INTEGER;
-const LOCAL_CODING_NATIVE_TOOL_CALL_ROUNDS = Number.MAX_SAFE_INTEGER;
-const MAX_REPOSITORY_ANALYSIS_NATIVE_TOOL_CALL_ROUNDS = Number.MAX_SAFE_INTEGER;
-const MAX_CODING_NATIVE_TOOL_CALL_ROUNDS = Number.MAX_SAFE_INTEGER;
-const MAX_LOCAL_REPOSITORY_ANALYSIS_NATIVE_TOOL_CALL_ROUNDS = Number.MAX_SAFE_INTEGER;
-const MAX_LOCAL_CODING_NATIVE_TOOL_CALL_ROUNDS = Number.MAX_SAFE_INTEGER;
-const CODING_NATIVE_TOOL_ROUND_EXTENSION = Number.MAX_SAFE_INTEGER;
-const LOCAL_CODING_NATIVE_TOOL_ROUND_EXTENSION = Number.MAX_SAFE_INTEGER;
-const MAX_MISSING_TOOL_CALL_REMINDERS = 2;
-const MAX_FAILED_TOOL_RECOVERY_REMINDERS = 2;
+const DEFAULT_MAX_NATIVE_TOOL_CALL_ROUNDS = 6;
+const MAX_LOCAL_NATIVE_TOOL_CALL_ROUNDS = 6;
+const REPOSITORY_ANALYSIS_NATIVE_TOOL_CALL_ROUNDS = 10;
+const LOCAL_REPOSITORY_ANALYSIS_NATIVE_TOOL_CALL_ROUNDS = 10;
+const CODING_NATIVE_TOOL_CALL_ROUNDS = 12;
+const LOCAL_CODING_NATIVE_TOOL_CALL_ROUNDS = 12;
+const MAX_REPOSITORY_ANALYSIS_NATIVE_TOOL_CALL_ROUNDS = 16;
+const MAX_CODING_NATIVE_TOOL_CALL_ROUNDS = 18;
+const MAX_LOCAL_REPOSITORY_ANALYSIS_NATIVE_TOOL_CALL_ROUNDS = 16;
+const MAX_LOCAL_CODING_NATIVE_TOOL_CALL_ROUNDS = 18;
+const CODING_NATIVE_TOOL_ROUND_EXTENSION = 3;
+const LOCAL_CODING_NATIVE_TOOL_ROUND_EXTENSION = 3;
+const MAX_CODING_VERIFICATION_REMINDERS = 1;
+const MAX_MISSING_TOOL_CALL_REMINDERS = 1;
+const MAX_FAILED_TOOL_RECOVERY_REMINDERS = 1;
 const MIN_DYNAMIC_NUM_CTX = 32_768;
 const CLOUD_NUM_CTX_LIMIT = 200_000;
 const CLOUD_SESSION_TOKEN_LIMIT = 1_000_000;
 const CLOUD_NUM_CTX_MIN_HEADROOM = 4_096;
-const LOCAL_NUM_CTX_MAX = 131_072;
+const LOCAL_NUM_CTX_MAX = 262_144;
 const LOCAL_NUM_CTX_MIN_HEADROOM = 2_048;
 const LOCAL_NUM_CTX_SYSTEM_HEADROOM_BYTES = 2 * 1024 ** 3;
 const LOCAL_NUM_CTX_BYTES_PER_TOKEN = 256 * 1024;
 const LOCAL_NUM_CTX_MODEL_PENALTY_PER_GIB = 1_024;
 const BYTES_PER_GIB = 1024 ** 3;
-const INLINE_TOOL_CALL_ROUND_LIMIT = Number.MAX_SAFE_INTEGER;
+const INLINE_TOOL_CALL_ROUND_LIMIT = 6;
 const INLINE_TOOL_CALL_SEGMENT_PATTERN =
   /<\|?tool_call_begin\|?>\s*functions?\.(?<tool>[A-Za-z0-9_-]+)(?:\.\d+)?\s*<\|?tool_call_argument_begin\|?>\s*(?<args>[\s\S]*?)\s*<\|?tool_call_end\|?>/gi;
 const INLINE_TOOL_CALL_WRAPPER_PATTERN = /<\|?tool_calls_section_(?:begin|end)\|?>/gi;
@@ -162,6 +165,7 @@ Work efficiently:
 - For small, targeted changes use edit({filePath, startLine, endLine, newText}) — read the file first to get exact line numbers.
 - For changes that touch most of a file, use write({filePath, content}) with the complete new file contents in the same call. Never call write with only a path.
 - Batch independent tool calls in one response instead of one call per turn.
+- Do not start follow-up tasks, optional polish, broad refactors, or extra files that the user did not ask for.
 - When the task is done, stop calling tools and answer the user directly with a concise summary of what changed and why.`;
 const CODING_NATIVE_TOOL_LOOP_SYSTEM_PROMPT = `For coding tasks in the connected workspace, follow an implement-verify loop. Always use tool_calls objects — never plain-text commands:
 - Before modifying, read the target file and any direct callers or imports that the change will affect.
@@ -170,7 +174,7 @@ const CODING_NATIVE_TOOL_LOOP_SYSTEM_PROMPT = `For coding tasks in the connected
 - For larger scaffolds, batch several related edits or writes in the same response instead of one file per round.
 - After modifying, re-read every changed section to confirm correctness before proceeding.
 - Run the most relevant bounded validation command (typecheck, lint, or targeted test) before stopping.
-- If validation fails due to your changes, diagnose the error message, fix the root cause, and re-run — do not stop on a failing result.
+- If validation fails due to your changes, diagnose the error message, fix the root cause, and re-run within the current round budget.
 - If automated validation is unavailable, re-read all changed files and explicitly confirm the stated requirement is met.`;
 const REPOSITORY_ANALYSIS_NATIVE_TOOL_LOOP_SYSTEM_PROMPT = `For repository or codebase analysis tasks, always use tool_calls — never plain-text commands:
 - Do not stop after listing directories.
@@ -222,14 +226,14 @@ const INTERCEPTED_TOOL_CALL_CONTINUATION_SYSTEM_PROMPT = `A tool call in your pr
 - Do not repeat the same tool call.
 - If you still need another tool, respond with a tool_calls object — not plain-text commands or slash commands.
 - When the task is complete, answer in plain text with no further tool calls.`;
-const TOOL_FAILURE_RECOVERY_SYSTEM_PROMPT = `The latest tool call failed and the task is not complete. Do not stop.
-Retry with corrected arguments using a tool_calls object, or choose a better tool for the next step.`;
+const TOOL_FAILURE_RECOVERY_SYSTEM_PROMPT = `The latest tool call failed and the task is not complete.
+Make one corrective tool-call attempt with corrected arguments, or answer with the concrete blocker if you cannot recover.`;
 const CODING_VERIFICATION_REMINDER_SYSTEM_PROMPT = `You already modified files in this coding turn, but the latest changes have not been verified yet.
 Before you finish:
 - inspect the updated files,
 - run the most relevant bounded validation command when practical,
 - and if validation fails because of your changes, continue fixing and re-checking.
-Do not end the turn yet; keep using tools until the latest changes are verified or you can report a concrete blocker.`;
+Use one verification pass now. If you cannot verify with available tools, answer with the concrete blocker instead of inventing more work.`;
 const CODING_MUTATION_TOOL_IDS = new Set(['write', 'edit', 'notebook-edit']);
 const CODING_VERIFICATION_TOOL_IDS = new Set([
   'read',
@@ -281,6 +285,8 @@ const NATIVE_TOOL_CALLING_PATTERN =
   /\b(read|open|list|show|search|find|grep|glob|fetch|download|task|tasks|schedule|cron|worktree|definition|references|diagnostics|calculate|compute|powershell|command|tool|tools|agent|subagent|team|todo|checklist|milestone|notebook|resource|mcp|clarify|skill)\b|plan mode|https?:\/\/|[A-Za-z]:\\|\.{1,2}[\\/]/i;
 const NATIVE_FILE_MUTATION_PATTERN =
   /\b(write|save|create|update|modify|change|fix|rewrite|correct|repair)\b[\s\S]{0,64}(?:\b(file|folder|directory|document|notebook|markdown|json|yaml|yml|toml|txt|ts|tsx|js|jsx|py|sql|css|html|md|readme)\b|(?:[A-Za-z]:\\|\.{0,2}[\\/]|\/)?[A-Za-z0-9_.-]+\.(?:md|json|yaml|yml|toml|txt|ts|tsx|js|jsx|py|sql|css|html))\b/i;
+const EXACT_FINAL_RESPONSE_SKILL_PATTERN =
+  /\b(?:only|always)\s+(?:reply|respond|answer)\s+(?:with|as)\b|\b(?:reply|respond|answer|output)\s+(?:exactly|only)\b|\bno extra (?:text|words|commentary)\b/i;
 type NativeToolWorkflowMode = 'default' | 'coding';
 type CapabilitySurfaceSnapshot = {
   capabilityTasks: CapabilityTask[];
@@ -373,10 +379,6 @@ function buildFallbackWireframeQuestionsArtifact(): string {
 
 function isImageAttachment(attachment: MessageAttachment): boolean {
   return attachment.mimeType?.startsWith('image/') === true || isImageFilePath(attachment.fileName);
-}
-
-function isVisionCapableChatModel(model: string): boolean {
-  return /(vl|vision|llava)/i.test(model);
 }
 
 function looksLikeImageAnalysisPrompt(prompt: string): boolean {
@@ -496,6 +498,34 @@ function looksLikeNativeFileMutationPrompt(prompt: string): boolean {
     );
 
   return !looksLikeDirectoryCorrectionOnly;
+}
+
+function getSkillRoutingText(skill: SkillDefinition | null): string {
+  if (!skill) {
+    return '';
+  }
+
+  return [skill.title, skill.description, skill.prompt].join('\n');
+}
+
+function skillLooksLikeExactFinalResponse(skill: SkillDefinition | null): boolean {
+  return Boolean(skill?.prompt && EXACT_FINAL_RESPONSE_SKILL_PATTERN.test(skill.prompt));
+}
+
+function skillLooksLikeToolWorkflow(skill: SkillDefinition | null): boolean {
+  if (!skill || skillLooksLikeExactFinalResponse(skill)) {
+    return false;
+  }
+
+  const routingText = getSkillRoutingText(skill);
+
+  return (
+    NATIVE_TOOL_CALLING_PATTERN.test(routingText) ||
+    looksLikeNativeFileMutationPrompt(routingText) ||
+    looksLikeWorkspaceInspectionPrompt(routingText) ||
+    looksLikeRepositoryAnalysisPrompt(routingText) ||
+    looksLikeCodingTaskPrompt(routingText)
+  );
 }
 
 function getImageAttachmentKey(attachment: MessageAttachment): string {
@@ -1502,6 +1532,62 @@ function extractSlashCommandAlias(value: string): string | null {
   return match?.[1] ?? null;
 }
 
+function findBalancedJsonObjectEnd(value: string, startIndex: number): number | null {
+  if (value[startIndex] !== '{') {
+    return null;
+  }
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = startIndex; index < value.length; index += 1) {
+    const char = value[index];
+
+    if (char === undefined) {
+      break;
+    }
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+
+      if (char === '\\') {
+        escaped = true;
+        continue;
+      }
+
+      if (char === '"') {
+        inString = false;
+      }
+
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+
+    if (char === '{') {
+      depth += 1;
+      continue;
+    }
+
+    if (char === '}') {
+      depth -= 1;
+
+      if (depth === 0) {
+        return index + 1;
+      }
+    }
+  }
+
+  return null;
+}
+
 function extractInlineMarkupToolCalls(content: string): {
   cleanedContent: string;
   toolCalls: InlineMarkupToolCall[];
@@ -1642,7 +1728,37 @@ function extractTextCommandToolCalls(content: string): {
     CODE_BLOCK_PATTERN.lastIndex = 0; // reset after content mutation
   }
 
-  // Phase 2: Extract one-line /command invocations.
+  // Phase 2: Extract /command followed by a balanced JSON object, including
+  // JSON with embedded newlines in string values.
+  const JSON_COMMAND_PATTERN = /(?:^|\n)\s*\/([\w-]+)\s*(?=\{)/g;
+  while ((match = JSON_COMMAND_PATTERN.exec(remaining)) !== null) {
+    const cmd = match[1] as string;
+    const toolName = commandMap[cmd];
+
+    if (!toolName) {
+      continue;
+    }
+
+    const jsonStart = match.index + match[0].length;
+    const jsonEnd = findBalancedJsonObjectEnd(remaining, jsonStart);
+
+    if (jsonEnd === null) {
+      continue;
+    }
+
+    const rawArgs = remaining.slice(jsonStart, jsonEnd);
+    const parsedArgs = parseJsonishRecord(rawArgs);
+
+    if (!parsedArgs) {
+      continue;
+    }
+
+    toolCalls.push({ toolName, arguments: parsedArgs });
+    remaining = `${remaining.slice(0, match.index)}${remaining.slice(jsonEnd)}`;
+    JSON_COMMAND_PATTERN.lastIndex = 0;
+  }
+
+  // Phase 3: Extract one-line /command invocations.
   const lines = remaining.split(/\r?\n/);
   const cleanedLines: string[] = [];
 
@@ -1845,12 +1961,14 @@ export class ChatService {
     private readonly ollamaClient: OllamaClient,
     private readonly nvidiaClient: NvidiaClient,
     private readonly router: ChatRouter,
+    private readonly visionCache: VisionCapabilityCache,
     private readonly queue: BridgeQueue,
     private readonly logger: Logger,
     private readonly memoryService: MemoryService,
     private readonly ragService: RagService,
     private readonly toolDispatcher: ToolDispatcher,
     private readonly skillRegistry: SkillRegistry,
+    private readonly personaService: PersonaService,
     private readonly generationRepository?: GenerationRepository,
     private readonly generationService?: Pick<
       GenerationService,
@@ -2407,6 +2525,10 @@ export class ChatService {
       throw new Error(`Conversation ${targetMessage.conversationId} was not found.`);
     }
 
+    const conversationWasWireframe = this.isConversationInWireframeMode(
+      conversation.id,
+      [targetMessage.id]
+    );
     this.repository.deleteMessagesAfter(targetMessage.id);
     const importedKnowledge = conversation.workspaceId
       ? this.importWorkspaceKnowledge(conversation.workspaceId, request.attachments ?? [])
@@ -2419,7 +2541,8 @@ export class ChatService {
       conversationId: conversation.id,
       workspaceId: conversation.workspaceId,
       importedKnowledge,
-      excludeMessageIds: [targetMessage.id]
+      excludeMessageIds: [targetMessage.id],
+      wireframeMode: conversationWasWireframe
     });
     const userMessage = this.repository.updateMessage(targetMessage.id, {
       content: request.prompt,
@@ -2476,6 +2599,12 @@ export class ChatService {
       throw new Error('No preceding user message was found for regeneration.');
     }
 
+    const wasWireframeTurn =
+      assistantMessage.routeTrace?.reason === 'wireframe-mode' ||
+      this.isConversationInWireframeMode(assistantMessage.conversationId, [
+        assistantMessage.id,
+        userMessage.id
+      ]);
     this.repository.deleteMessagesAfter(assistantMessage.id, { includeTarget: true });
     const routePlan = await this.resolveTurnPlan({
       prompt: userMessage.content,
@@ -2486,7 +2615,8 @@ export class ChatService {
       workspaceId:
         this.repository.getConversation(assistantMessage.conversationId)?.workspaceId ?? null,
       importedKnowledge: null,
-      excludeMessageIds: [userMessage.id]
+      excludeMessageIds: [userMessage.id],
+      wireframeMode: wasWireframeTurn
     });
 
     this.logger.info(
@@ -3008,6 +3138,25 @@ export class ChatService {
     return null;
   }
 
+  private isConversationInWireframeMode(
+    conversationId: string,
+    excludeMessageIds: string[] = []
+  ): boolean {
+    const messages = this.listMessages(conversationId).filter(
+      (message) => !excludeMessageIds.includes(message.id)
+    );
+
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const message = messages[i];
+
+      if (message?.role === 'assistant' && message.routeTrace?.reason === 'wireframe-mode') {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   private async resolveTurnPlan(input: {
     prompt: string;
     requestedModel?: string | undefined;
@@ -3084,7 +3233,9 @@ export class ChatService {
       wireframeMode: input.wireframeMode === true,
       thinkMode:
         activeTextBackend.backend === 'ollama'
-          ? resolveOllamaThinkValue(input.requestedThinkMode)
+          ? input.wireframeMode === true
+            ? false
+            : resolveOllamaThinkValue(input.requestedThinkMode)
           : undefined,
       toolExecutionPrompt: this.resolveToolExecutionPrompt({
         cleanedPrompt: directives.cleanedPrompt,
@@ -3490,6 +3641,7 @@ export class ChatService {
       input.routePlan.wireframeMode ? WIREFRAME_MODE_SYSTEM_PROMPT : null,
       toolContextPrompt
     ].filter((prompt): prompt is string => Boolean(prompt?.trim()));
+    const activePersona = this.personaService.getActivePersona();
     const context = buildConversationContext({
       recentMessages: memoryContext.recentMessages,
       pinnedMessages,
@@ -3506,7 +3658,8 @@ export class ChatService {
       memorySummary: memoryContext.summaryText,
       summarizedMessageIds: memoryContext.summarizedMessageIds,
       excludedRecentMessageCount: memoryContext.excludedMessageCount,
-      maxMessages: 20
+      maxMessages: 20,
+      personaPrompt: activePersona?.id === 'default' ? null : activePersona?.prompt ?? null
     });
     let routeTrace = this.createRouteTrace(input.routePlan.routeDecision, {
       usedWorkspacePrompt: context.observability.usedWorkspacePrompt,
@@ -3669,7 +3822,9 @@ export class ChatService {
 
     try {
       const canSendImageBytes =
-        input.routePlan.backend === 'ollama' && isVisionCapableChatModel(accepted.model);
+        input.routePlan.backend === 'ollama' &&
+        input.routePlan.routeDecision.selectedModel !== null &&
+        this.visionCache.isVisionCapable(input.routePlan.routeDecision.selectedModel);
 
       const ollamaMessages = await Promise.all(
         context.messages.map(async (message) => {
@@ -3728,17 +3883,20 @@ export class ChatService {
         this.shouldOfferNativeToolCalling({
           prompt: input.routePlan.cleanedPrompt,
           routeDecision: input.routePlan.routeDecision,
+          activeSkill: input.routePlan.activeSkill,
           toolDefinitions: nativeToolDefinitions,
           workspaceRootPath: workspace?.rootPath ?? null
         });
       const nativeToolWorkflowMode = this.resolveNativeToolWorkflowMode({
         prompt: input.routePlan.cleanedPrompt,
         routeDecision: input.routePlan.routeDecision,
+        activeSkill: input.routePlan.activeSkill,
         workspaceRootPath: workspace?.rootPath ?? null
       });
       const includeRepositoryAnalysisGuidance =
         this.shouldUseRepositoryAnalysisNativeToolGuidance({
           prompt: input.routePlan.cleanedPrompt,
+          activeSkill: input.routePlan.activeSkill,
           workspaceRootPath: workspace?.rootPath ?? null
         });
       const allowInlineToolCallAutoRecovery =
@@ -3746,24 +3904,28 @@ export class ChatService {
         this.shouldAllowInlineToolCallAutoRecovery({
           prompt: input.routePlan.cleanedPrompt,
           routeDecision: input.routePlan.routeDecision,
+          activeSkill: input.routePlan.activeSkill,
           workspaceRootPath: workspace?.rootPath ?? null
         });
       const nativeToolCallRoundLimit = this.resolveNativeToolCallRoundLimit({
         model: accepted.model,
         prompt: input.routePlan.cleanedPrompt,
         routeDecision: input.routePlan.routeDecision,
+        activeSkill: input.routePlan.activeSkill,
         workspaceRootPath: workspace?.rootPath ?? null
       });
       const nativeToolCallHardLimit = this.resolveNativeToolCallHardLimit({
         model: accepted.model,
         prompt: input.routePlan.cleanedPrompt,
         routeDecision: input.routePlan.routeDecision,
+        activeSkill: input.routePlan.activeSkill,
         workspaceRootPath: workspace?.rootPath ?? null
       });
       const nativeToolCallRoundExtension = this.resolveNativeToolCallRoundExtension({
         model: accepted.model,
         prompt: input.routePlan.cleanedPrompt,
         routeDecision: input.routePlan.routeDecision,
+        activeSkill: input.routePlan.activeSkill,
         workspaceRootPath: workspace?.rootPath ?? null
       });
 
@@ -4368,6 +4530,7 @@ export class ChatService {
   private shouldOfferNativeToolCalling(input: {
     prompt: string;
     routeDecision: RouteDecision;
+    activeSkill: SkillDefinition | null;
     toolDefinitions: OllamaToolDefinition[];
     workspaceRootPath: string | null;
   }): boolean {
@@ -4408,20 +4571,25 @@ export class ChatService {
       looksLikeNativeFileMutationPrompt(input.prompt) ||
       (input.workspaceRootPath !== null && looksLikeCodingTaskPrompt(input.prompt)) ||
       (input.workspaceRootPath !== null && looksLikeRepositoryAnalysisPrompt(input.prompt)) ||
-      NATIVE_TOOL_LOOP_SKILL_IDS.has(input.routeDecision.activeSkillId ?? '')
+      NATIVE_TOOL_LOOP_SKILL_IDS.has(input.routeDecision.activeSkillId ?? '') ||
+      (input.workspaceRootPath !== null && skillLooksLikeToolWorkflow(input.activeSkill))
     );
   }
 
   private shouldAllowInlineToolCallAutoRecovery(input: {
     prompt: string;
     routeDecision: RouteDecision;
+    activeSkill?: SkillDefinition | null;
     workspaceRootPath: string | null;
   }): boolean {
     if (input.routeDecision.useTools) {
       return true;
     }
 
-    if (NATIVE_TOOL_LOOP_SKILL_IDS.has(input.routeDecision.activeSkillId ?? '')) {
+    if (
+      NATIVE_TOOL_LOOP_SKILL_IDS.has(input.routeDecision.activeSkillId ?? '') ||
+      skillLooksLikeToolWorkflow(input.activeSkill ?? null)
+    ) {
       return true;
     }
 
@@ -4792,22 +4960,34 @@ export class ChatService {
   private resolveNativeToolWorkflowMode(input: {
     prompt: string;
     routeDecision: RouteDecision;
+    activeSkill?: SkillDefinition | null;
     workspaceRootPath: string | null;
   }): NativeToolWorkflowMode {
+    const skillRoutingText = getSkillRoutingText(input.activeSkill ?? null);
+
     return input.workspaceRootPath !== null &&
       (['builder', 'debugger'].includes(input.routeDecision.activeSkillId ?? '') ||
         looksLikeNativeFileMutationPrompt(input.prompt) ||
-        looksLikeCodingTaskPrompt(input.prompt))
+        looksLikeCodingTaskPrompt(input.prompt) ||
+        (!skillLooksLikeExactFinalResponse(input.activeSkill ?? null) &&
+          (looksLikeNativeFileMutationPrompt(skillRoutingText) ||
+            looksLikeCodingTaskPrompt(skillRoutingText))))
       ? 'coding'
       : 'default';
   }
 
   private shouldUseRepositoryAnalysisNativeToolGuidance(input: {
     prompt: string;
+    activeSkill?: SkillDefinition | null;
     workspaceRootPath: string | null;
   }): boolean {
+    const skillRoutingText = getSkillRoutingText(input.activeSkill ?? null);
+
     return (
-      input.workspaceRootPath !== null && looksLikeRepositoryAnalysisPrompt(input.prompt)
+      input.workspaceRootPath !== null &&
+      (looksLikeRepositoryAnalysisPrompt(input.prompt) ||
+        (!skillLooksLikeExactFinalResponse(input.activeSkill ?? null) &&
+          looksLikeRepositoryAnalysisPrompt(skillRoutingText)))
     );
   }
 
@@ -4815,6 +4995,7 @@ export class ChatService {
     model: string;
     prompt: string;
     routeDecision: RouteDecision;
+    activeSkill?: SkillDefinition | null;
     workspaceRootPath: string | null;
   }): number {
     if (this.resolveNativeToolWorkflowMode(input) === 'coding') {
@@ -4838,6 +5019,7 @@ export class ChatService {
     model: string;
     prompt: string;
     routeDecision: RouteDecision;
+    activeSkill?: SkillDefinition | null;
     workspaceRootPath: string | null;
   }): number {
     if (this.resolveNativeToolWorkflowMode(input) === 'coding') {
@@ -4861,6 +5043,7 @@ export class ChatService {
     model: string;
     prompt: string;
     routeDecision: RouteDecision;
+    activeSkill?: SkillDefinition | null;
     workspaceRootPath: string | null;
   }): number {
     if (this.resolveNativeToolWorkflowMode(input) !== 'coding') {
@@ -4987,6 +5170,7 @@ export class ChatService {
     let lastRoundExtensionProgressIndex = 0;
     let missingToolCallReminderCount = 0;
     let failedToolRecoveryReminderCount = 0;
+    let codingVerificationReminderCount = 0;
 
     for (let round = 0; round < hardMaxRounds; round += 1) {
       if (round >= currentMaxRounds) {
@@ -5166,13 +5350,16 @@ export class ChatService {
 
         if (
           input.workflowMode === 'coding' &&
-          !hasCodingVerificationAfterLatestMutation(toolInvocations)
+          !hasCodingVerificationAfterLatestMutation(toolInvocations) &&
+          codingVerificationReminderCount < MAX_CODING_VERIFICATION_REMINDERS
         ) {
+          codingVerificationReminderCount += 1;
           this.logger.info(
             {
               conversationId: input.conversationId,
               model: input.model,
               completedToolCount: toolInvocations.length,
+              codingVerificationReminderCount,
               pendingMutationTargets: listRecentCodingMutationTargets(toolInvocations)
             },
             'Continuing coding turn because the latest file changes have not been verified yet'
@@ -5195,6 +5382,22 @@ export class ChatService {
             thinking: roundThinking
           });
           continue;
+        }
+
+        if (
+          input.workflowMode === 'coding' &&
+          !hasCodingVerificationAfterLatestMutation(toolInvocations)
+        ) {
+          this.logger.warn(
+            {
+              conversationId: input.conversationId,
+              model: input.model,
+              completedToolCount: toolInvocations.length,
+              codingVerificationReminderCount,
+              pendingMutationTargets: listRecentCodingMutationTargets(toolInvocations)
+            },
+            'Stopping coding tool loop after final answer without verification to avoid runaway continuation'
+          );
         }
 
         return {
@@ -5467,8 +5670,35 @@ export class ChatService {
       break;
     }
 
+    if (explicitSkillId === null) {
+      const inlineSkillPattern = /(^|\s)@([A-Za-z0-9][A-Za-z0-9_-]*)(?=$|\s|[.,!?;:)\]])/g;
+      let inlineSkillMatch: RegExpExecArray | null;
+
+      while ((inlineSkillMatch = inlineSkillPattern.exec(remaining)) !== null) {
+        const skillId = inlineSkillMatch[2];
+        const skill = skillId ? this.skillRegistry.getById(skillId) : null;
+
+        if (!skill) {
+          continue;
+        }
+
+        const matchedText = inlineSkillMatch[0] ?? '';
+        const leadingSpace = inlineSkillMatch[1] ?? '';
+
+        explicitSkillId = skill.id;
+        remaining = `${remaining.slice(0, inlineSkillMatch.index)}${leadingSpace}${remaining.slice(
+          inlineSkillMatch.index + matchedText.length
+        )}`
+          .replace(/\s{2,}/g, ' ')
+          .trim();
+        break;
+      }
+    }
+
     return {
-      cleanedPrompt: remaining || prompt.trim(),
+      cleanedPrompt:
+        remaining ||
+        (explicitSkillId ? 'Use the active skill for this turn.' : prompt.trim()),
       explicitSkillId,
       explicitToolId
     };

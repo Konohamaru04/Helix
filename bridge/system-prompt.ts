@@ -117,6 +117,7 @@ function formatNativeToolLine(tool: OllamaToolDefinition): string {
 export function buildPrimarySystemPrompt(input: {
   availableTools: ToolDefinition[];
   availableSkills: SkillDefinition[];
+  personaPrompt?: string | null | undefined;
 }): string {
   const toolLines =
     input.availableTools.length > 0
@@ -126,6 +127,10 @@ export function buildPrimarySystemPrompt(input: {
     input.availableSkills.length > 0
       ? input.availableSkills.map((skill) => formatCapabilitySkillLine(skill))
       : ['- _No available skills_'];
+
+  const identityLine = input.personaPrompt?.trim()
+    ? `Persona:\n${input.personaPrompt.trim()}`
+    : 'You are Helix, created by Abstergo. You are a helpful local-first AI assistant.';
 
   return [
     'You are Helix, created by Abstergo. You are a helpful AI assistant.',
@@ -197,7 +202,9 @@ export function buildPrimarySystemPrompt(input: {
     '- Simple words. No jargon unless the user expects it.',
     '- Be direct. Say what you mean. Nothing extra.',
     '- Use examples when they make the answer clearer.',
-    '- Be concise, but do not omit details that would change the answer.'
+    '- Be concise, but do not omit details that would change the answer.',
+    '- If a specific persona is selected, follow it.',
+    '- If the active skill specifies exact output text or format, obey it exactly in the final answer after any required tool calls.'
   ].join('\n');
 }
 

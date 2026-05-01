@@ -1,5 +1,5 @@
 import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from 'react';
-import type { MessageAttachment } from '@bridge/ipc/contracts';
+import type { MessageAttachment, SkillDefinition } from '@bridge/ipc/contracts';
 import { APP_DISPLAY_NAME } from '@bridge/branding';
 import { AttachmentCard } from '@renderer/components/attachment-card';
 
@@ -22,6 +22,8 @@ interface ChatComposerProps {
   workspaceRootPath: string | null;
   knowledgeDocumentCount: number;
   workspaceActionsEnabled: boolean;
+  availableSkills: SkillDefinition[];
+  activePersonaName?: string | null;
   onPromptChange: (prompt: string) => void;
   onAttach: () => Promise<void>;
   onEnterImageMode: () => void;
@@ -38,16 +40,56 @@ interface ChatComposerProps {
 
 type ComposerMenu = 'add' | 'workspace' | null;
 
+interface MentionState {
+  open: boolean;
+  query: string;
+  index: number;
+  start: number;
+}
+
+function getMentionQueryAtCursor(
+  value: string,
+  cursor: number
+): { query: string; start: number } | null {
+  let index = cursor - 1;
+
+  while (index >= 0 && /\S/.test(value[index] ?? '')) {
+    index -= 1;
+  }
+
+  const word = value.slice(index + 1, cursor);
+
+  if (!word.startsWith('@')) {
+    return null;
+  }
+
+  return {
+    query: word.slice(1).toLowerCase(),
+    start: index + 1
+  };
+}
+
 export function ChatComposer(props: ChatComposerProps) {
   const formRef = useRef<HTMLFormElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const mentionRef = useRef<HTMLDivElement | null>(null);
   const [activeMenu, setActiveMenu] = useState<ComposerMenu>(null);
+  const [mention, setMention] = useState<MentionState>({
+    open: false,
+    query: '',
+    index: 0,
+    start: 0
+  });
 
   useEffect(() => {
     function handlePointerDown(event: PointerEvent) {
       if (!menuRef.current?.contains(event.target as Node)) {
         setActiveMenu(null);
+      }
+
+      if (!mentionRef.current?.contains(event.target as Node)) {
+        setMention((current) => ({ ...current, open: false }));
       }
     }
 
@@ -56,6 +98,110 @@ export function ChatComposer(props: ChatComposerProps) {
       window.removeEventListener('pointerdown', handlePointerDown);
     };
   }, []);
+
+  const filteredSkills = props.availableSkills.filter((skill) =>
+    skill.id.toLowerCase().includes(mention.query) ||
+    skill.title.toLowerCase().includes(mention.query)
+  );
+
+  function openMention(query: string, start: number) {
+    setMention({
+      open: true,
+      query,
+      index: 0,
+      start
+    });
+  }
+
+  function closeMention() {
+    setMention((current) => ({ ...current, open: false }));
+  }
+
+  function insertMention(skill: SkillDefinition) {
+    const textarea = textareaRef.current;
+
+    if (!textarea) {
+      return;
+    }
+
+    const before = props.prompt.slice(0, mention.start);
+    const after = props.prompt.slice(textarea.selectionStart);
+    const replacement = `@${skill.id} `;
+    const nextPrompt = before + replacement + after;
+
+    props.onPromptChange(nextPrompt);
+    closeMention();
+
+    requestAnimationFrame(() => {
+      const cursorPosition = before.length + replacement.length;
+      textarea.focus();
+      textarea.setSelectionRange(cursorPosition, cursorPosition);
+    });
+  }
+
+  function handlePromptChange(value: string) {
+    const textarea = textareaRef.current;
+
+    if (!textarea) {
+      props.onPromptChange(value);
+      return;
+    }
+
+    const cursor = textarea.selectionStart;
+    const result = getMentionQueryAtCursor(value, cursor);
+
+    if (result) {
+      openMention(result.query, result.start);
+    } else {
+      closeMention();
+    }
+
+    props.onPromptChange(value);
+  }
+
+  function handleMentionKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (!mention.open || filteredSkills.length === 0) {
+      return false;
+    }
+
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      setMention((current) => ({
+        ...current,
+        index: (current.index + 1) % filteredSkills.length
+      }));
+      return true;
+    }
+
+    if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      setMention((current) => ({
+        ...current,
+        index:
+          (current.index - 1 + filteredSkills.length) % filteredSkills.length
+      }));
+      return true;
+    }
+
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      const selected = filteredSkills[mention.index];
+
+      if (selected) {
+        insertMention(selected);
+      }
+
+      return true;
+    }
+
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeMention();
+      return true;
+    }
+
+    return false;
+  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -69,6 +215,10 @@ export function ChatComposer(props: ChatComposerProps) {
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (handleMentionKeyDown(event)) {
+      return;
+    }
+
     if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) {
       return;
     }
@@ -98,6 +248,7 @@ export function ChatComposer(props: ChatComposerProps) {
     setActiveMenu(null);
     await props.onImportWorkspaceKnowledge();
   }
+
   const visibleSubmitLabel =
     props.submitLabel ??
     (props.generationMode === 'image'
@@ -224,14 +375,14 @@ export function ChatComposer(props: ChatComposerProps) {
           </div>
         ) : null}
 
-        <div className="motion-focus-ring rounded-[1.75rem] border border-white/10 bg-slate-900/70 p-3 shadow-panel">
+        <div className="motion-focus-ring rounded-[1.75rem] border border-white/10 bg-slate-900/70 p-3 shadow-panel relative">
           <textarea
             ref={textareaRef}
             id="chat-prompt"
             aria-label="Message prompt"
             className="h-28 w-full resize-none overflow-y-auto rounded-[1.35rem] border border-transparent bg-transparent px-3 py-3 text-sm leading-6 text-slate-100 placeholder:text-slate-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
             disabled={props.disabled}
-            onChange={(event) => props.onPromptChange(event.target.value)}
+            onChange={(event) => handlePromptChange(event.target.value)}
             onKeyDown={handleKeyDown}
             placeholder={
               props.generationMode === 'image'
@@ -245,6 +396,46 @@ export function ChatComposer(props: ChatComposerProps) {
             rows={4}
             value={props.prompt}
           />
+
+          {mention.open && filteredSkills.length > 0 ? (
+            <div
+              ref={mentionRef}
+              className="absolute bottom-full left-0 z-30 mb-2 w-full max-w-sm rounded-2xl border border-white/10 bg-slate-950/95 p-2 shadow-panel backdrop-blur"
+              role="listbox"
+              aria-label="Skill suggestions"
+            >
+              <div className="max-h-48 overflow-y-auto space-y-0.5">
+                {filteredSkills.map((skill, index) => (
+                  <button
+                    key={skill.id}
+                    className={`motion-interactive flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 ${
+                      index === mention.index
+                        ? 'bg-white/5 text-cyan-50'
+                        : 'text-slate-100 hover:bg-white/5'
+                    }`}
+                    onClick={() => insertMention(skill)}
+                    onMouseEnter={() =>
+                      setMention((current) => ({ ...current, index }))
+                    }
+                    role="option"
+                    aria-selected={index === mention.index}
+                    type="button"
+                  >
+                    <span className="font-medium">@{skill.id}</span>
+                    <span
+                      className={`ml-auto rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
+                        skill.source === 'builtin'
+                          ? 'bg-cyan-400/15 text-cyan-200'
+                          : 'bg-emerald-400/15 text-emerald-200'
+                      }`}
+                    >
+                      {skill.source}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
 
           {props.submitting ? (
             <div
@@ -403,6 +594,11 @@ export function ChatComposer(props: ChatComposerProps) {
                 ) : null}
               </div>
 
+              {props.activePersonaName ? (
+                <span className="inline-flex h-10 items-center rounded-full border border-cyan-300/20 bg-cyan-400/10 px-3 text-xs font-medium text-cyan-100">
+                  {props.activePersonaName}
+                </span>
+              ) : null}
               <button
                 aria-pressed={props.generationMode === 'wireframe'}
                 aria-label={
